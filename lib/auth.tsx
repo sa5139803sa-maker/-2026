@@ -19,6 +19,11 @@ export type Profile = {
   role: AppRole;
 };
 
+export type SignUpResult = {
+  error: string | null;
+  notice: string | null;
+};
+
 type AuthContextValue = {
   session: Session | null;
   profile: Profile | null;
@@ -30,7 +35,8 @@ type AuthContextValue = {
     organizationName: string,
     email: string,
     password: string,
-  ) => Promise<string | null>;
+  ) => Promise<SignUpResult>;
+  completeOnboarding: (organizationName: string) => Promise<string | null>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 };
@@ -52,6 +58,10 @@ function friendlyAuthError(): string {
   return "تعذر إكمال العملية. تحقق من البيانات واتصال الإنترنت ثم حاول مرة أخرى.";
 }
 
+function friendlyOrganizationError(): string {
+  return "تعذر إنشاء المؤسسة الآن. تحقق من الاتصال ثم أعد المحاولة؛ لن تحتاج إلى إنشاء حساب جديد.";
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -59,24 +69,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileError, setProfileError] = useState<string | null>(null);
   const observedUserId = useRef<string | null>(null);
   const profileRequestSequence = useRef(0);
-
   const userId = session?.user.id ?? null;
 
-  // Keep the auth event callback synchronous. Supabase Auth can hold an
-  // internal lock while notifying subscribers; profile queries belong in
-  // the effect below, after the callback has returned.
+  // Keep the auth event callback synchronous. Profile I/O belongs in the
+  // effect below, after Supabase's auth notification callback has returned.
   useEffect(() => {
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       const nextUserId = nextSession?.user.id ?? null;
       const identityChanged = observedUserId.current !== nextUserId;
-
       observedUserId.current = nextUserId;
       setSession(nextSession);
 
-      if (identityChanged) {
-        // Invalidate any in-flight profile response from the previous identity.
-        profileRequestSequence.current += 1;
-      }
+      if (identityChanged) profileRequestSequence.current += 1;
 
       if (!nextUserId) {
         setProfile(null);
@@ -92,12 +96,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    return () => {
-      data.subscription.unsubscribe();
-    };
+    return () => data.subscription.unsubscribe();
   }, []);
 
-  // Profile I/O is deliberately separated from onAuthStateChange.
   useEffect(() => {
     if (!userId) {
       profileRequestSequence.current += 1;
@@ -136,6 +137,65 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [userId]);
 
+  const createOrganizationForUser = useCallback(
+    async (targetUserId: string, organizationName: string): Promise<string | null> => {
+      const normalizedName = organizationName.trim();
+      if (normalizedName.length < 2 || normalizedName.length > 120) {
+        return "يجب أن يتراوح اسم المؤسسة بين حرفين و120 حرفًا.";
+      }
+
+      // Do not complete setup for a previous account if the session changed.
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || sessionData.session?.user.id !== targetUserId) {
+        return "انتهت جلسة الدخول. سجّل الدخول مجددًا لإكمال إعداد المؤسسة.";
+      }
+
+      const { error: organizationError } = await supabase.rpc(
+        "create_organization",
+        { p_name: normalizedName },
+      );
+
+      // The RPC may have committed even if the client lost its response.
+      // Read the server-owned profile before deciding that a retry is needed.
+      const requestId = ++profileRequestSequence.current;
+      try {
+        const latestProfile = await loadProfile(targetUserId);
+        if (
+          requestId === profileRequestSequence.current &&
+          observedUserId.current === targetUserId
+        ) {
+          setProfile(latestProfile);
+          setProfileError(null);
+        }
+        if (latestProfile?.organization_id) return null;
+      } catch (profileLoadError) {
+        console.error("profile reload after organization setup failed", profileLoadError);
+        if (
+          requestId === profileRequestSequence.current &&
+          observedUserId.current === targetUserId
+        ) {
+          setProfileError("تعذر التحقق من إعداد المؤسسة. أعد تحميل بيانات الحساب.");
+        }
+      }
+
+      if (organizationError) {
+        console.error("organization creation failed", organizationError);
+        return friendlyOrganizationError();
+      }
+
+      return "تمت العملية لكن لم يظهر ارتباط المؤسسة في الحساب بعد. حدّث بيانات الحساب ثم حاول مرة أخرى.";
+    },
+    [],
+  );
+
+  const completeOnboarding = useCallback(
+    async (organizationName: string) => {
+      if (!userId) return "يجب تسجيل الدخول قبل إنشاء المؤسسة.";
+      return createOrganizationForUser(userId, organizationName);
+    },
+    [userId, createOrganizationForUser],
+  );
+
   const refreshProfile = useCallback(async () => {
     if (!userId) {
       profileRequestSequence.current += 1;
@@ -166,6 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       profileError,
       refreshProfile,
+      completeOnboarding,
       signIn: async (email, password) => {
         const { error } = await supabase.auth.signInWithPassword({
           email: email.trim(),
@@ -174,59 +235,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return error ? friendlyAuthError() : null;
       },
       signUp: async (displayName, organizationName, email, password) => {
+        const normalizedDisplayName = displayName.trim();
+        const normalizedOrganizationName = organizationName.trim();
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { data: { display_name: displayName.trim() } },
+          options: {
+            // This is only a form hint after email confirmation, never an
+            // authorization source. The server RPC creates the organization.
+            data: {
+              display_name: normalizedDisplayName,
+              organization_name: normalizedOrganizationName,
+            },
+          },
         });
 
-        if (error) return friendlyAuthError();
+        if (error) return { error: friendlyAuthError(), notice: null };
+
         if (!data.session) {
-          return "تم إنشاء الحساب. تحقق من بريدك الإلكتروني ثم سجّل الدخول.";
+          return {
+            error: null,
+            notice:
+              "تم إنشاء الحساب. افتح رسالة التأكيد المرسلة إلى بريدك الإلكتروني، ثم عُد إلى التطبيق وسجّل الدخول لإكمال إعداد المؤسسة. احتفظنا باسم المؤسسة لتعبئته لك.",
+          };
         }
 
-        const { error: organizationError } = await supabase.rpc(
-          "create_organization",
-          { p_name: organizationName.trim() },
+        const organizationError = await createOrganizationForUser(
+          data.session.user.id,
+          normalizedOrganizationName,
         );
 
         if (organizationError) {
-          console.error("organization creation failed", organizationError);
           await supabase.auth.signOut();
-          return "تم إنشاء الحساب لكن تعذر إنشاء المؤسسة. حاول التسجيل مرة أخرى.";
+          return { error: organizationError, notice: null };
         }
 
-        // The auth event may have loaded the profile before the organization
-        // RPC completed. Refresh it now so organization_id is not left stale.
-        const signedUpUserId = data.session.user.id;
-        const requestId = ++profileRequestSequence.current;
-        try {
-          const createdProfile = await loadProfile(signedUpUserId);
-          if (
-            requestId === profileRequestSequence.current &&
-            observedUserId.current === signedUpUserId
-          ) {
-            setProfile(createdProfile);
-            setProfileError(null);
-          }
-        } catch (profileLoadError) {
-          console.error("profile reload after organization creation failed", profileLoadError);
-          if (
-            requestId === profileRequestSequence.current &&
-            observedUserId.current === signedUpUserId
-          ) {
-            setProfileError("تم إنشاء المؤسسة، لكن تعذر تحديث الملف الشخصي. سجّل الدخول مجددًا.");
-          }
-        }
-
-        return null;
+        return { error: null, notice: null };
       },
       signOut: async () => {
         const { error } = await supabase.auth.signOut();
         if (error) console.error("sign out failed", error);
       },
     }),
-    [session, profile, loading, profileError, refreshProfile],
+    [
+      session,
+      profile,
+      loading,
+      profileError,
+      refreshProfile,
+      completeOnboarding,
+      createOrganizationForUser,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
