@@ -9,6 +9,7 @@ import {
   PreviewBanner,
   SearchField,
   TextField,
+  RoleGate,
 } from "@/components/ui";
 import { colors, radius, spacing, typography } from "@/constants/theme";
 
@@ -21,6 +22,14 @@ const previewCollections = [
 const paymentMethods = ["نقداً", "جوال باي", "تحويل بنكي"] as const;
 
 export default function CollectionsScreen() {
+  return (
+    <RoleGate roles={["manager", "collector"]} featureName="التحصيل">
+      <CollectionsScreenContent />
+    </RoleGate>
+  );
+}
+
+function CollectionsScreenContent() {
   const [method, setMethod] = useState<(typeof paymentMethods)[number]>("نقداً");
   const [subscriberSearch, setSubscriberSearch] = useState("");
   const [amount, setAmount] = useState("");

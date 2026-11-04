@@ -1,7 +1,13 @@
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { ChevronLeft, Pause, Waves } from "lucide-react-native";
 import { SectionTitle, StatusBadge } from "@/components/UI";
-import { Button, Card, PreviewBanner, TimeDisplay } from "@/components/ui";
+import {
+  Button,
+  Card,
+  PreviewBanner,
+  TimeDisplay,
+  RoleGate,
+} from "@/components/ui";
 import { colors, radius, spacing, typography } from "@/constants/theme";
 
 const previewQueue = [
@@ -12,6 +18,14 @@ const previewQueue = [
 ];
 
 export default function OperationsScreen() {
+  return (
+    <RoleGate roles={["manager", "operator"]} featureName="التشغيل">
+      <OperationsScreenContent />
+    </RoleGate>
+  );
+}
+
+function OperationsScreenContent() {
   return (
     <ScrollView
       style={styles.screen}

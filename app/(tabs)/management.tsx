@@ -3,7 +3,10 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { ChevronDown, Droplets, Plus, UsersRound, X } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { SectionTitle, StatusBadge } from '@/components/UI';
-import { TextField } from '@/components/ui';
+import {
+  TextField,
+  RoleGate,
+} from '@/components/ui';
 import { colors, radius, spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
@@ -13,6 +16,14 @@ type Subscriber = { id: string; full_name: string; phone: string | null; is_acti
 type ModalMode = 'pump' | 'subscriber' | null;
 
 export default function ManagementScreen() {
+  return (
+    <RoleGate roles={["manager"]} featureName="إدارة الغواطس والمشتركين">
+      <ManagementScreenContent />
+    </RoleGate>
+  );
+}
+
+function ManagementScreenContent() {
   const { profile } = useAuth();
   const [pumps, setPumps] = useState<Pump[]>([]);
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
