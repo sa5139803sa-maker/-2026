@@ -7,6 +7,7 @@ import { Card } from '@/components/ui';
 import { colors, radius, spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
+import { canAccessFeature } from '@/lib/permissions';
 
 const previewActivities = [
   { time: '10:24 ص', pump: 'الغطاس #1', subscriber: 'أحمد محمد', type: 'تعبئة عادية', status: 'مكتملة', tone: 'success' as const },
@@ -16,7 +17,7 @@ const previewActivities = [
 
 export default function DashboardScreen() {
   const { profile } = useAuth();
-  const canViewOrganizationStats = profile?.role === 'manager';
+  const canViewOrganizationStats = canAccessFeature(profile?.role, "dashboardStats");
   const [stats, setStats] = useState({ pumps: 0, subscribers: 0 });
   const [dataError, setDataError] = useState<string | null>(null);
 
