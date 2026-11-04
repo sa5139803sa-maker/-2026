@@ -21,7 +21,11 @@ export default function DashboardScreen() {
   const [dataError, setDataError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!profile?.organization_id || !canViewOrganizationStats) return;
+    if (!profile?.organization_id || !canViewOrganizationStats) {
+      setStats({ pumps: 0, subscribers: 0 });
+      setDataError(null);
+      return;
+    }
     let active = true;
     const loadStats = async () => {
       const [pumpsResult, subscribersResult] = await Promise.all([
