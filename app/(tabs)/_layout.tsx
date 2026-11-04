@@ -10,6 +10,7 @@ import {
 import { ErrorState } from "@/components/ui";
 import { colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth";
+import { canAccessFeature } from "@/lib/permissions";
 
 export default function TabLayout() {
   const { session, profile, loading, profileError, refreshProfile } = useAuth();
@@ -42,8 +43,8 @@ export default function TabLayout() {
   }
 
   // Navigation visibility improves UX; RLS is still the real security boundary.
-  const canOperate = profile.role === "manager" || profile.role === "operator";
-  const canCollect = profile.role === "manager" || profile.role === "collector";
+  const canOperate = canAccessFeature(profile.role, "operations");
+  const canCollect = canAccessFeature(profile.role, "collections");
 
   return (
     <Tabs
