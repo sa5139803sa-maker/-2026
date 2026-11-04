@@ -1,6 +1,6 @@
 /** Base spacing unit: 4 logical pixels. */
 export const spacing = {
-  xxs: 2,
+  xxs: 4,
   xs: 4,
   sm: 8,
   md: 16,
