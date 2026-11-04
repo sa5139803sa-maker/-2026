@@ -20,6 +20,8 @@
 - [قواعد مكونات الإدخال والجدولة](components/ui/README.md)
 - [دليل الهوية البصرية](docs/VISUAL_IDENTITY_AR.md)
 - [المراجعة الأمنية لقاعدة Supabase](docs/SUPABASE_SECURITY_REVIEW_AR.md)
+- [تقرير تدقيق اعتماديات npm](docs/DEPENDENCY_AUDIT_AR.md)
+- [خطة ترحيل Expo SDK 58](docs/EXPO_SDK_58_MIGRATION_AR.md)
 
 ## المرجع البصري
 
