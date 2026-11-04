@@ -260,17 +260,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           };
         }
 
-        const organizationError = await createOrganizationForUser(
-          data.session.user.id,
-          normalizedOrganizationName,
-        );
-
-        if (organizationError) {
-          await supabase.auth.signOut();
-          return { error: organizationError, notice: null };
-        }
-
-        return { error: null, notice: null };
+        // Both immediate-session and email-confirmation signups use the same
+        // onboarding screen; organization creation happens there exactly once.
+        return {
+          error: null,
+          notice: "تم إنشاء الحساب. أكمل إعداد المؤسسة للبدء باستخدام التطبيق.",
+        };
       },
       signOut: async () => {
         const { error } = await supabase.auth.signOut();

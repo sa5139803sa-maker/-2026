@@ -27,8 +27,11 @@ export default function OnboardingScreen() {
       : "";
 
   useEffect(() => {
-    setOrganizationName((current) => current || suggestedName);
-  }, [suggestedName]);
+    // Reset the suggestion when a different account enters this route so
+    // another user's draft organization name is never reused.
+    setOrganizationName(suggestedName);
+    setError(null);
+  }, [session?.user.id, suggestedName]);
 
   useEffect(() => {
     if (!loading && !session) router.replace("/sign-in");
