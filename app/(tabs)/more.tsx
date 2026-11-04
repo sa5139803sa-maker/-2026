@@ -51,6 +51,7 @@ export default function MoreScreen() {
   const { profile, signOut } = useAuth();
   const displayName = profile?.display_name?.trim() || "المستخدم";
   const roleLabel = profile ? roleLabels[profile.role] : "دور غير محدد";
+  const visibleItems = items.filter((item) => item.label !== "المشتركون والغواطس" || profile?.role === "manager");
   const initial = displayName.charAt(0) || "؟";
 
   return (
@@ -77,7 +78,7 @@ export default function MoreScreen() {
       <Text style={styles.heading}>الإدارة والإعدادات</Text>
 
       <Card style={styles.menu}>
-        {items.map(({ label, detail, icon: Icon, enabled }, index) => (
+        {visibleItems.map(({ label, detail, icon: Icon, enabled }, index) => (
           <Pressable
             key={label}
             accessibilityRole="button"
