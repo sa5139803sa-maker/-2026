@@ -1,17 +1,17 @@
 # ملفات المرجع البصري
 
 المسار المعتمد للصورة المرجعية:
-\`docs/assets/water-management-reference-board.jpg\`
+`docs/assets/water-management-reference-board.jpg`
 
 **حالة الملف في Git عند 2026-11-04:** لم يُرفع الملف الثنائي بعد. وجود هذا الملف النصي أو المسار أعلاه لا يعني أن الصورة محفوظة داخل المستودع.
 
 المطلوب قبل إغلاق هذه المهمة:
 1. رفع نسخة JPG من لوحة التصميم إلى المسار المحدد.
 2. فتح الصورة من GitHub للتأكد من سلامة الملف وظهوره.
-3. تعديل \`docs/VISUAL_IDENTITY_AR.md\` لإظهار الصورة باستخدام:
+3. تعديل `docs/VISUAL_IDENTITY_AR.md` لإظهار الصورة باستخدام:
    
-   \`![لوحة المرجع البصري لإدارة المياه](assets/water-management-reference-board.jpg)\`
+   `![لوحة المرجع البصري لإدارة المياه](assets/water-management-reference-board.jpg)`
 
-4. إضافة الإنجاز وCommit SHA إلى \`docs/EXECUTION_LOG.md\`.
+4. إضافة الإنجاز وCommit SHA إلى `docs/EXECUTION_LOG.md`.
 
 هذا الملف يوضح موقع الأصل وحالته ولا يحل محل الصورة نفسها.
