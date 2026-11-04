@@ -75,11 +75,8 @@ ALTER TABLE public.pump_assignments
   ADD CONSTRAINT pump_assignments_user_tenant_role_fkey
   FOREIGN KEY (user_id, organization_id, assignment_role)
   REFERENCES public.profiles (id, organization_id, role)
-  ON DELETE CASCADE,
-  ADD CONSTRAINT pump_assignments_organization_id_fkey
-  FOREIGN KEY (organization_id)
-  REFERENCES public.organizations (id)
-  ON DELETE CASCADE;
+  ON DELETE CASCADE
+  DEFERRABLE INITIALLY DEFERRED;
 
 CREATE UNIQUE INDEX pump_assignments_one_operator_per_pump_idx
   ON public.pump_assignments (pump_id)

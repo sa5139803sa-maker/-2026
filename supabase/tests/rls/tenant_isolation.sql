@@ -292,4 +292,39 @@ BEGIN
 END;
 $delete_behavior$;
 
+-- Organization deletion must cascade organization-owned rows while retaining auth profiles.
+DELETE FROM public.organizations
+WHERE id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+DO $organization_delete$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.pumps
+    WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  ) OR EXISTS (
+    SELECT 1 FROM public.subscribers
+    WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  ) OR EXISTS (
+    SELECT 1 FROM public.pump_assignments
+    WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  ) THEN
+    RAISE EXCEPTION 'Deleting an organization did not cascade its tenant-owned records';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id IN (
+      '10000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000002',
+      '10000000-0000-4000-8000-000000000003',
+      '10000000-0000-4000-8000-000000000004',
+      '10000000-0000-4000-8000-000000000005'
+    )
+    AND organization_id IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'Deleting an organization did not detach member profiles safely';
+  END IF;
+END;
+$organization_delete$;
+
 ROLLBACK;
