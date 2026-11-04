@@ -3,16 +3,17 @@ import { LockKeyhole } from "lucide-react-native";
 import { EmptyState } from "./EmptyState";
 import { ErrorState } from "./ErrorState";
 import { LoadingState } from "./LoadingState";
-import { useAuth, type AppRole } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
+import { canAccessFeature, type ProtectedFeature } from "@/lib/permissions";
 
 type RoleGateProps = {
-  roles: readonly AppRole[];
+  feature: ProtectedFeature;
   children: ReactNode;
   featureName?: string;
 };
 
 export function RoleGate({
-  roles,
+  feature,
   children,
   featureName = "هذه الشاشة",
 }: RoleGateProps) {
@@ -33,7 +34,7 @@ export function RoleGate({
     );
   }
 
-  if (!roles.includes(profile.role)) {
+  if (!canAccessFeature(profile.role, feature)) {
     return (
       <EmptyState
         title="لا تملك صلاحية فتح هذه الشاشة"
