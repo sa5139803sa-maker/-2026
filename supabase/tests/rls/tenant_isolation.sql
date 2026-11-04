@@ -37,7 +37,7 @@ GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 CREATE FUNCTION water_management_private.default_acl_probe()
 RETURNS boolean
 LANGUAGE sql
-AS $ SELECT true $;
+AS $$ SELECT true $$;
 
 DO $private_schema_acl$
 BEGIN
