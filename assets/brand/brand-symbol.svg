@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" role="img" aria-labelledby="title desc">
+  <title id="title">إدارة المياه — رمز القطرة</title>
+  <desc id="desc">قطرة ماء هندسية تتوسطها موجتان منحنـيتان.</desc>
+  <defs>
+    <linearGradient id="water" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1B9AAA"/>
+      <stop offset="0.52" stop-color="#087FA8"/>
+      <stop offset="1" stop-color="#145B7A"/>
+    </linearGradient>
+    <clipPath id="dropClip">
+      <path d="M160 18C140 55 75 126 75 188c0 52 38 94 85 94s85-42 85-94C245 126 180 55 160 18Z"/>
+    </clipPath>
+  </defs>
+  <path fill="url(#water)" d="M160 18C140 55 75 126 75 188c0 52 38 94 85 94s85-42 85-94C245 126 180 55 160 18Z"/>
+  <g clip-path="url(#dropClip)" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M67 165c27-25 53-28 79-13 24 14 48 16 77-7 12-10 25-14 39-12" stroke-width="18"/>
+    <path d="M58 199c31-27 58-29 87-13 28 16 54 14 83-10 12-10 24-13 37-11" stroke-width="18"/>
+  </g>
+</svg>
