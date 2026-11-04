@@ -17,7 +17,7 @@ type ModalMode = 'pump' | 'subscriber' | null;
 
 export default function ManagementScreen() {
   return (
-    <RoleGate roles={["manager"]} featureName="إدارة الغواطس والمشتركين">
+    <RoleGate feature="management" featureName="إدارة الغواطس والمشتركين">
       <ManagementScreenContent />
     </RoleGate>
   );
