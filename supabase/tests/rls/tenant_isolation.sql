@@ -33,14 +33,34 @@ GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 \ir ../../migrations/20261104120514_tighten_water_management_grants.sql
 \ir ../../migrations/20261104160000_secure_tenant_boundaries.sql
 
--- Future helper functions in the private schema must not inherit API-role EXECUTE.
+-- Future helper functions must inherit the dedicated owner's closed default ACL.
+SET LOCAL ROLE water_management_authz;
 CREATE FUNCTION water_management_private.default_acl_probe()
 RETURNS boolean
 LANGUAGE sql
 AS $$ SELECT true $$;
+RESET ROLE;
 
 DO $private_schema_acl$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+    WHERE rolname = 'water_management_authz'
+      AND rolcanlogin = false
+      AND rolbypassrls = true
+  ) THEN
+    RAISE EXCEPTION 'Authorization function owner must be NOLOGIN and BYPASSRLS';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'water_management_private'
+      AND p.proname = 'current_user_role'
+      AND pg_catalog.pg_get_userbyid(p.proowner) = 'water_management_authz'
+  ) THEN
+    RAISE EXCEPTION 'Private authorization helper has an unexpected owner';
+  END IF;
   IF NOT pg_catalog.has_schema_privilege('authenticated', 'water_management_private', 'USAGE') THEN
     RAISE EXCEPTION 'Authenticated role cannot use the private authorization schema';
   END IF;

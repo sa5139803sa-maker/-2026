@@ -105,12 +105,31 @@ COMMENT ON CONSTRAINT subscribers_pump_tenant_fkey ON public.subscribers IS
   'Prevents cross-organization pump references while preserving subscriber.organization_id when a pump is deleted.';
 
 CREATE SCHEMA IF NOT EXISTS water_management_private;
-REVOKE ALL ON SCHEMA water_management_private FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON SCHEMA water_management_private FROM PUBLIC, anon, authenticated, service_role;
 GRANT USAGE ON SCHEMA water_management_private TO authenticated;
 
--- New helper functions in this app-only schema must be deny-by-default.
--- Grant EXECUTE explicitly to individual functions after reviewing their purpose.
-ALTER DEFAULT PRIVILEGES IN SCHEMA water_management_private
+-- Own authorization helpers with a dedicated NOLOGIN role, not postgres.
+-- It can bypass RLS only to read profiles, which is required to avoid policy recursion.
+DO $authz_role$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'water_management_authz'
+  ) THEN
+    CREATE ROLE water_management_authz NOLOGIN BYPASSRLS;
+  END IF;
+END;
+$authz_role$;
+ALTER ROLE water_management_authz NOLOGIN BYPASSRLS;
+
+GRANT USAGE ON SCHEMA public, auth TO water_management_authz;
+GRANT SELECT ON TABLE public.profiles TO water_management_authz;
+GRANT USAGE ON TYPE public.app_role TO water_management_authz;
+GRANT EXECUTE ON FUNCTION auth.uid() TO water_management_authz;
+GRANT CREATE ON SCHEMA water_management_private TO water_management_authz;
+
+-- This owner is dedicated to this application's helper functions, so its global
+-- function defaults can be closed without changing postgres defaults for other apps.
+ALTER DEFAULT PRIVILEGES FOR ROLE water_management_authz
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION water_management_private.current_user_organization_id()
@@ -133,8 +152,10 @@ AS $$
   WHERE p.id = (SELECT auth.uid())
 $$;
 
-REVOKE ALL ON FUNCTION water_management_private.current_user_organization_id() FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION water_management_private.current_user_role() FROM PUBLIC, anon, authenticated;
+ALTER FUNCTION water_management_private.current_user_organization_id() OWNER TO water_management_authz;
+ALTER FUNCTION water_management_private.current_user_role() OWNER TO water_management_authz;
+REVOKE ALL ON FUNCTION water_management_private.current_user_organization_id() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION water_management_private.current_user_role() FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION water_management_private.current_user_organization_id() TO authenticated;
 GRANT EXECUTE ON FUNCTION water_management_private.current_user_role() TO authenticated;
 
