@@ -351,4 +351,5 @@ BEGIN
 END;
 $organization_delete$;
 
+SET CONSTRAINTS ALL IMMEDIATE;
 ROLLBACK;
