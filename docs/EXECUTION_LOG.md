@@ -93,7 +93,7 @@
 ### 2026-11-04 — إنشاء نواة مكتبة مكونات الواجهة وإعداد CI
 - **المرحلة:** 1 — الهوية ونظام التصميم.
 - **الحالة:** جزئية؛ المكونات أضيفت ولم تُختبر عبر build بعد.
-- **Commit:** `6466f15640a5fa14fe0f9f74d5ba86283639c199`
+- **Commit:** `174da74c2991d037ba7b06aa905ff6e7b994a936`
 - **الهدف:** توحيد مكونات الواجهة وإضافة فحوص آلية قابلة للتشغيل على GitHub.
 - **ما تغير:** إضافة Button وIconButton وCard وSectionHeader وStatusBadge وLoadingState وEmptyState وErrorState وSyncIndicator وMoneyDisplay وTimeDisplay وملف تصدير ومذكرة استخدام؛ تحديث `components/UI.tsx` للحفاظ على التوافق مع الاستيرادات القديمة؛ إضافة GitHub Actions workflow لفحص TypeScript وتصدير الويب.
 - **التحقق:** تمت مراجعة الملفات وظهورها في GitHub؛ لم تظهر نتيجة CI بعد في وقت كتابة السجل.
