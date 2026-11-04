@@ -1,0 +1,84 @@
+name: Dependency remediation preview
+
+on:
+  push:
+    branches:
+      - chore/npm-audit-remediation
+
+permissions:
+  contents: read
+
+jobs:
+  remediation-preview:
+    name: Safe npm audit fix preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          package-manager-cache: false
+
+      - name: Install current lockfile
+        run: npm ci
+
+      - name: Apply only semver-compatible audit fixes
+        shell: bash
+        run: |
+          npm audit fix --package-lock-only --ignore-scripts || true
+
+      - name: Install remediated lockfile
+        run: npm ci
+
+      - name: Create audit report and lockfile artifact
+        shell: bash
+        run: |
+          mkdir -p dependency-remediation-output
+          cp package.json package-lock.json dependency-remediation-output/
+          npm audit --json > dependency-remediation-output/npm-audit-after.json || true
+          node <<'NODE'
+          const fs = require("node:fs");
+          const audit = JSON.parse(fs.readFileSync("dependency-remediation-output/npm-audit-after.json", "utf8"));
+          console.log("AFTER_AUDIT_COUNTS", JSON.stringify(audit.metadata?.vulnerabilities ?? {}));
+          for (const [name, item] of Object.entries(audit.vulnerabilities ?? {})) {
+            const via = (item.via ?? []).map((entry) =>
+              typeof entry === "string"
+                ? entry
+                : { title: entry.title, url: entry.url, range: entry.range }
+            );
+            console.log("AFTER_AUDIT_PACKAGE", JSON.stringify({
+              name,
+              severity: item.severity,
+              isDirect: item.isDirect,
+              range: item.range,
+              fixAvailable: item.fixAvailable,
+              via,
+              nodes: item.nodes,
+            }));
+          }
+          NODE
+
+      - name: Upload candidate package files for review
+        uses: actions/upload-artifact@v7
+        with:
+          name: dependency-remediation-preview
+          path: dependency-remediation-output/
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Unit tests
+        run: npm test
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Export web bundle
+        run: npm run build:web
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-public-anon-key
