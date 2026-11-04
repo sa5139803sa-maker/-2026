@@ -6,6 +6,7 @@ type MoneyDisplayProps = {
   currencyLabel: string;
   locale?: string;
   emphasis?: "normal" | "strong";
+  inverse?: boolean;
 };
 
 export function MoneyDisplay({
@@ -13,6 +14,7 @@ export function MoneyDisplay({
   currencyLabel,
   locale = "ar",
   emphasis = "normal",
+  inverse = false,
 }: MoneyDisplayProps) {
   const formattedAmount = Number.isFinite(amount)
     ? new Intl.NumberFormat(locale, {
@@ -27,10 +29,10 @@ export function MoneyDisplay({
       accessibilityLabel={`${formattedAmount} ${currencyLabel}`}
       style={styles.container}
     >
-      <Text style={[styles.amount, emphasis === "strong" && styles.strong]}>
+      <Text style={[styles.amount, emphasis === "strong" && styles.strong, inverse && styles.inverse]}>
         {formattedAmount}
       </Text>
-      <Text style={styles.currency}>{currencyLabel}</Text>
+      <Text style={[styles.currency, inverse && styles.currencyInverse]}>{currencyLabel}</Text>
     </View>
   );
 }
@@ -48,9 +50,11 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize["2xl"],
     fontFamily: typography.fontFamily.bold,
   },
+  inverse: { color: colors.text.inverse },
   currency: {
     color: colors.text.secondary,
     fontSize: typography.fontSize.sm,
     fontFamily: typography.fontFamily.medium,
   },
+  currencyInverse: { color: "#C3D4DC" },
 });

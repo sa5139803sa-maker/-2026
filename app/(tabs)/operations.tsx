@@ -38,7 +38,7 @@ export default function OperationsScreen() {
 
         <View style={styles.timer}>
           <Text style={styles.timerLabel}>الوقت المتبقي — مثال</Text>
-          <TimeDisplay totalSeconds={45 * 60} />
+          <TimeDisplay totalSeconds={45 * 60} inverse />
           <View style={styles.progressTrack}>
             <View style={styles.progressFill} />
           </View>

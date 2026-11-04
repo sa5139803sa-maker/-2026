@@ -50,7 +50,7 @@ export default function SubscriberPortalScreen() {
           <StatusBadge label="حساب تجريبي" status="warning" />
         </View>
         <Text style={styles.balanceLabel}>مثال للمبلغ المستحق</Text>
-        <MoneyDisplay amount={450} currencyLabel="ر.س" emphasis="strong" />
+        <MoneyDisplay amount={450} currencyLabel="ر.س" emphasis="strong" inverse />
         <Text style={styles.balanceMeta}>قيمة توضيحية — لا يوجد تحديث حساب فعلي</Text>
         <Button
           label="إشعار التحويل غير متاح في النموذج"

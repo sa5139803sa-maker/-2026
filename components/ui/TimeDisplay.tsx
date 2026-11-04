@@ -5,13 +5,14 @@ import { formatDuration } from "./formatters";
 type TimeDisplayProps = {
   totalSeconds: number;
   compact?: boolean;
+  inverse?: boolean;
 };
 
 
-export function TimeDisplay({ totalSeconds, compact = false }: TimeDisplayProps) {
+export function TimeDisplay({ totalSeconds, compact = false, inverse = false }: TimeDisplayProps) {
   return (
     <View accessibilityRole="text" accessibilityLabel={formatDuration(totalSeconds)}>
-      <Text style={[styles.value, compact && styles.compact]}>
+      <Text style={[styles.value, compact && styles.compact, inverse && styles.inverse]}>
         {formatDuration(totalSeconds)}
       </Text>
     </View>
@@ -27,4 +28,5 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   compact: { fontSize: typography.fontSize.xl },
+  inverse: { color: colors.text.inverse },
 });
