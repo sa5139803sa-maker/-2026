@@ -157,7 +157,7 @@ BEGIN
   v_rejected := false;
   BEGIN
     INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
-    VALUES ('20000000-0000-4000-8000-000000000001',
+    VALUES ('20000000-0000-4000-8000-000000000002',
             '10000000-0000-4000-8000-000000000007',
             'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'operator');
   EXCEPTION WHEN foreign_key_violation THEN v_rejected := true;
@@ -183,7 +183,9 @@ BEGIN
 
   v_rejected := false;
   BEGIN
-    UPDATE public.pump_assignments SET user_id = '10000000-0000-4000-8000-000000000007'
+    UPDATE public.pump_assignments
+    SET pump_id = '20000000-0000-4000-8000-000000000002',
+        user_id = '10000000-0000-4000-8000-000000000007'
     WHERE pump_id = '20000000-0000-4000-8000-000000000001'
       AND user_id = '10000000-0000-4000-8000-000000000002';
   EXCEPTION WHEN foreign_key_violation THEN v_rejected := true;
