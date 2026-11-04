@@ -1,16 +1,240 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { router } from 'expo-router';
-import { Bell, ChevronLeft, FileText, Settings, ShieldCheck, UsersRound } from 'lucide-react-native';
-import { BrandMark } from '@/components/BrandMark';
-import { StatusBadge } from '@/components/UI';
-import { colors, radius, spacing } from '@/constants/theme';
-import { useAuth } from '@/lib/auth';
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { router } from "expo-router";
+import {
+  ChevronLeft,
+  FileText,
+  Settings,
+  ShieldCheck,
+  UsersRound,
+} from "lucide-react-native";
+import { BrandMark } from "@/components/BrandMark";
+import { StatusBadge } from "@/components/UI";
+import { Button, Card, PreviewBanner } from "@/components/ui";
+import { colors, spacing, typography } from "@/constants/theme";
+import { useAuth, type AppRole } from "@/lib/auth";
 
-const items = [{ label: 'المشتركون', detail: '1,240 مشترك نشط', icon: UsersRound }, { label: 'التقارير', detail: 'التقارير اليومية والمالية', icon: FileText }, { label: 'الإشعارات', detail: '3 إشعارات تحتاج مراجعة', icon: Bell }, { label: 'المستخدمون والصلاحيات', detail: 'إدارة الوصول والأدوار', icon: ShieldCheck }, { label: 'الإعدادات', detail: 'تفضيلات التطبيق والمزامنة', icon: Settings }];
+const roleLabels: Record<AppRole, string> = {
+  manager: "مدير المؤسسة",
+  operator: "مشغّل",
+  collector: "محصّل",
+  supervisor: "مشرف",
+};
+
+const items = [
+  {
+    label: "المشتركون والغواطس",
+    detail: "إدارة بيانات المشتركين والغواطس",
+    icon: UsersRound,
+    enabled: true,
+  },
+  {
+    label: "التقارير",
+    detail: "قيد التطوير",
+    icon: FileText,
+    enabled: false,
+  },
+  {
+    label: "المستخدمون والصلاحيات",
+    detail: "قيد التطوير",
+    icon: ShieldCheck,
+    enabled: false,
+  },
+  {
+    label: "الإعدادات",
+    detail: "قيد التطوير",
+    icon: Settings,
+    enabled: false,
+  },
+];
 
 export default function MoreScreen() {
-  const { signOut } = useAuth();
-  return <ScrollView style={styles.screen} contentContainerStyle={styles.content}><BrandMark /><View style={styles.profile}><View style={styles.avatar}><Text style={styles.avatarText}>أ</Text></View><View style={styles.profileBody}><Text style={styles.profileName}>أحمد المدير</Text><Text style={styles.profileMeta}>مدير المؤسسة · آخر دخول اليوم 08:42 ص</Text></View><StatusBadge label="نشط" status="success" /></View><Text style={styles.heading}>الإدارة والإعدادات</Text><View style={styles.menu}>{items.map(({ label, detail, icon: Icon }) => <Pressable onPress={label === 'المشتركون' ? () => router.push('/management') : undefined} style={({ pressed }) => [styles.menuItem, pressed && label === 'المشتركون' && { opacity: 0.75 }]} key={label}><View style={styles.menuIcon}><Icon size={19} color={colors.brand.primary} /></View><View style={styles.menuBody}><Text style={styles.menuLabel}>{label}</Text><Text style={styles.menuDetail}>{detail}</Text></View><ChevronLeft size={18} color={colors.text.secondary} /></Pressable>)}</View><View style={styles.syncCard}><View style={styles.syncIcon}><ShieldCheck size={20} color={colors.status.success.main} /></View><View style={styles.syncBody}><Text style={styles.syncTitle}>بياناتك متزامنة</Text><Text style={styles.syncMeta}>آخر مزامنة منذ دقيقتين</Text></View><StatusBadge label="آمن" status="success" /></View><Pressable onPress={() => void signOut()} style={({ pressed }) => [styles.signOut, pressed && { opacity: 0.75 }]}><Text style={styles.signOutText}>تسجيل الخروج</Text></Pressable></ScrollView>; }
+  const { profile, signOut } = useAuth();
+  const displayName = profile?.display_name?.trim() || "المستخدم";
+  const roleLabel = profile ? roleLabels[profile.role] : "دور غير محدد";
+  const initial = displayName.charAt(0) || "؟";
 
-const styles = StyleSheet.create({ screen: { flex: 1, backgroundColor: colors.background.main, direction: 'rtl' }, content: { padding: spacing.md, paddingTop: spacing.lg, gap: spacing.md, maxWidth: 760, width: '100%', alignSelf: 'center' }, profile: { backgroundColor: colors.background.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row-reverse', alignItems: 'center', gap: spacing.sm }, avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.brand.primary, alignItems: 'center', justifyContent: 'center' }, avatarText: { color: colors.text.inverse, fontSize: 18, fontFamily: 'IBMPlexSansArabic_700Bold' }, profileBody: { flex: 1, alignItems: 'flex-end' }, profileName: { color: colors.text.primary, fontSize: 15, fontFamily: 'IBMPlexSansArabic_700Bold' }, profileMeta: { color: colors.text.secondary, fontSize: 11, fontFamily: 'IBMPlexSansArabic_400Regular', marginTop: 3 }, heading: { color: colors.text.primary, fontSize: 17, fontFamily: 'IBMPlexSansArabic_700Bold', textAlign: 'right' }, menu: { backgroundColor: colors.background.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, paddingHorizontal: spacing.md }, menuItem: { minHeight: 70, flexDirection: 'row-reverse', alignItems: 'center', gap: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.background.subtle }, menuIcon: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background.subtle }, menuBody: { flex: 1, alignItems: 'flex-end' }, menuLabel: { color: colors.text.primary, fontSize: 13, fontFamily: 'IBMPlexSansArabic_700Bold' }, menuDetail: { color: colors.text.secondary, fontSize: 11, fontFamily: 'IBMPlexSansArabic_400Regular', marginTop: 2 }, signOut: { minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md, borderWidth: 1, borderColor: colors.status.danger.background, backgroundColor: colors.background.surface }, signOutText: { color: colors.status.danger.text, fontSize: 13, fontFamily: 'IBMPlexSansArabic_700Bold' }, syncCard: { flexDirection: 'row-reverse', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.status.success.background, borderRadius: radius.md, padding: spacing.md }, syncIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: colors.background.surface, alignItems: 'center', justifyContent: 'center' }, syncBody: { flex: 1, alignItems: 'flex-end' }, syncTitle: { color: colors.status.success.text, fontSize: 13, fontFamily: 'IBMPlexSansArabic_700Bold' }, syncMeta: { color: colors.status.success.text, fontSize: 11, fontFamily: 'IBMPlexSansArabic_400Regular', marginTop: 2 },
+  return (
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
+      <BrandMark />
+
+      <Card style={styles.profileCard}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initial}</Text>
+        </View>
+        <View style={styles.profileBody}>
+          <Text style={styles.profileName}>{displayName}</Text>
+          <Text style={styles.profileMeta}>{roleLabel}</Text>
+        </View>
+        <StatusBadge label="جلسة دخول" status="info" />
+      </Card>
+
+      <PreviewBanner description="الأقسام غير المفعّلة معروضة للتعريف ببنية التطبيق فقط. لا يوجد ادعاء بأن التقارير أو المستخدمين أو إعدادات المزامنة تعمل حاليًا." />
+
+      <Text style={styles.heading}>الإدارة والإعدادات</Text>
+
+      <Card style={styles.menu}>
+        {items.map(({ label, detail, icon: Icon, enabled }, index) => (
+          <Pressable
+            key={label}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !enabled }}
+            disabled={!enabled}
+            onPress={() => router.push("/management")}
+            style={({ pressed }) => [
+              styles.menuItem,
+              index === items.length - 1 && styles.lastMenuItem,
+              !enabled && styles.disabledItem,
+              pressed && enabled && styles.pressed,
+            ]}
+          >
+            <View style={styles.menuIcon}>
+              <Icon
+                size={19}
+                color={enabled ? colors.brand.primary : colors.text.secondary}
+              />
+            </View>
+            <View style={styles.menuBody}>
+              <Text style={styles.menuLabel}>{label}</Text>
+              <Text style={styles.menuDetail}>{detail}</Text>
+            </View>
+            {enabled ? (
+              <ChevronLeft size={18} color={colors.text.secondary} />
+            ) : (
+              <StatusBadge label="لاحقاً" status="warning" />
+            )}
+          </Pressable>
+        ))}
+      </Card>
+
+      <Card style={styles.statusCard}>
+        <View style={styles.statusIcon}>
+          <ShieldCheck size={20} color={colors.status.warning.text} />
+        </View>
+        <View style={styles.statusBody}>
+          <Text style={styles.statusTitle}>المزامنة غير مفعّلة بعد</Text>
+          <Text style={styles.statusMeta}>
+            ستظهر حالة الاتصال والمزامنة الفعلية بعد تنفيذ وحدة Offline First.
+          </Text>
+        </View>
+        <StatusBadge label="غير متاحة" status="warning" />
+      </Card>
+
+      <Button
+        label="تسجيل الخروج"
+        variant="danger"
+        fullWidth
+        onPress={() => void signOut()}
+      />
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.background.main, direction: "rtl" },
+  content: {
+    padding: spacing.md,
+    paddingTop: spacing.lg,
+    gap: spacing.md,
+    maxWidth: 760,
+    width: "100%",
+    alignSelf: "center",
+  },
+  profileCard: {
+    flexDirection: "row-reverse",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.brand.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: {
+    color: colors.text.inverse,
+    fontSize: typography.fontSize.lg,
+    fontFamily: typography.fontFamily.bold,
+  },
+  profileBody: { flex: 1, alignItems: "flex-end" },
+  profileName: {
+    color: colors.text.primary,
+    fontSize: typography.fontSize.md,
+    fontFamily: typography.fontFamily.bold,
+  },
+  profileMeta: {
+    color: colors.text.secondary,
+    fontSize: typography.fontSize.xs,
+    fontFamily: typography.fontFamily.regular,
+    marginTop: 3,
+  },
+  heading: {
+    color: colors.text.primary,
+    fontSize: typography.fontSize.lg,
+    fontFamily: typography.fontFamily.bold,
+    textAlign: "right",
+  },
+  menu: { paddingHorizontal: spacing.md, paddingVertical: 0 },
+  menuItem: {
+    minHeight: 70,
+    flexDirection: "row-reverse",
+    alignItems: "center",
+    gap: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.background.subtle,
+  },
+  lastMenuItem: { borderBottomWidth: 0 },
+  disabledItem: { opacity: 0.65 },
+  pressed: { opacity: 0.75 },
+  menuIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.background.subtle,
+  },
+  menuBody: { flex: 1, alignItems: "flex-end" },
+  menuLabel: {
+    color: colors.text.primary,
+    fontSize: typography.fontSize.sm,
+    fontFamily: typography.fontFamily.bold,
+  },
+  menuDetail: {
+    color: colors.text.secondary,
+    fontSize: typography.fontSize.xs,
+    fontFamily: typography.fontFamily.regular,
+    marginTop: 2,
+    textAlign: "right",
+  },
+  statusCard: {
+    flexDirection: "row-reverse",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  statusIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: colors.status.warning.background,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusBody: { flex: 1, alignItems: "flex-end" },
+  statusTitle: {
+    color: colors.text.primary,
+    fontSize: typography.fontSize.sm,
+    fontFamily: typography.fontFamily.bold,
+  },
+  statusMeta: {
+    color: colors.text.secondary,
+    fontSize: typography.fontSize.xs,
+    fontFamily: typography.fontFamily.regular,
+    textAlign: "right",
+  },
 });
