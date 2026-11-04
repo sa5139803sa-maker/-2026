@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ArrowLeft, Building2, LockKeyhole, Mail, UserRound } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { BrandMark } from '@/components/BrandMark';
 import { PrimaryButton } from '@/components/UI';
+import { TextField } from '@/components/ui';
 import { colors, radius, spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth';
 
@@ -39,8 +40,18 @@ export default function SignInScreen() {
 }
 
 function Field({ icon, placeholder, value, onChangeText, secureTextEntry = false, keyboardType = 'default', autoCapitalize = 'sentences' }: { icon: React.ReactNode; placeholder: string; value: string; onChangeText: (value: string) => void; secureTextEntry?: boolean; keyboardType?: 'default' | 'email-address'; autoCapitalize?: 'none' | 'sentences' }) {
-  return <View style={styles.field}>{icon}<TextInput style={styles.input} placeholder={placeholder} placeholderTextColor={colors.text.secondary} value={value} onChangeText={onChangeText} secureTextEntry={secureTextEntry} keyboardType={keyboardType} autoCapitalize={autoCapitalize} textAlign="right" /></View>;
+  return (
+    <TextField
+      leading={icon}
+      placeholder={placeholder}
+      value={value}
+      onChangeText={onChangeText}
+      secureTextEntry={secureTextEntry}
+      keyboardType={keyboardType}
+      autoCapitalize={autoCapitalize}
+    />
+  );
 }
 
-const styles = StyleSheet.create({ screen: { flex: 1, backgroundColor: colors.background.main, direction: 'rtl' }, content: { flexGrow: 1, justifyContent: 'center', padding: spacing.lg, maxWidth: 560, width: '100%', alignSelf: 'center' }, brand: { alignItems: 'flex-end', marginBottom: spacing.xxl }, hero: { alignItems: 'flex-end', marginBottom: spacing.lg }, eyebrow: { color: colors.brand.teal, fontSize: 13, fontFamily: 'IBMPlexSansArabic_600SemiBold' }, title: { color: colors.text.primary, fontSize: 29, fontFamily: 'IBMPlexSansArabic_700Bold', marginTop: spacing.sm }, subtitle: { color: colors.text.secondary, fontSize: 13, lineHeight: 23, fontFamily: 'IBMPlexSansArabic_400Regular', textAlign: 'right', marginTop: spacing.sm }, form: { backgroundColor: colors.background.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: spacing.sm }, field: { minHeight: 52, flexDirection: 'row-reverse', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background.surface }, input: { flex: 1, minHeight: 50, color: colors.text.primary, fontSize: 13, fontFamily: 'IBMPlexSansArabic_400Regular' }, notice: { backgroundColor: colors.background.subtle, borderRadius: radius.sm, padding: spacing.sm, marginVertical: spacing.xs }, noticeText: { color: colors.text.secondary, fontSize: 11, fontFamily: 'IBMPlexSansArabic_400Regular', textAlign: 'right' }, error: { color: colors.status.danger.text, backgroundColor: colors.status.danger.background, borderRadius: radius.sm, padding: spacing.sm, fontSize: 12, lineHeight: 19, fontFamily: 'IBMPlexSansArabic_500Medium', textAlign: 'right' }, switch: { alignItems: 'center', padding: spacing.lg }, switchText: { color: colors.brand.primary, fontSize: 13, fontFamily: 'IBMPlexSansArabic_600SemiBold' },
+const styles = StyleSheet.create({ screen: { flex: 1, backgroundColor: colors.background.main, direction: 'rtl' }, content: { flexGrow: 1, justifyContent: 'center', padding: spacing.lg, maxWidth: 560, width: '100%', alignSelf: 'center' }, brand: { alignItems: 'flex-end', marginBottom: spacing.xxl }, hero: { alignItems: 'flex-end', marginBottom: spacing.lg }, eyebrow: { color: colors.brand.teal, fontSize: 13, fontFamily: 'IBMPlexSansArabic_600SemiBold' }, title: { color: colors.text.primary, fontSize: 29, fontFamily: 'IBMPlexSansArabic_700Bold', marginTop: spacing.sm }, subtitle: { color: colors.text.secondary, fontSize: 13, lineHeight: 23, fontFamily: 'IBMPlexSansArabic_400Regular', textAlign: 'right', marginTop: spacing.sm }, form: { backgroundColor: colors.background.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: spacing.sm }, notice: { backgroundColor: colors.background.subtle, borderRadius: radius.sm, padding: spacing.sm, marginVertical: spacing.xs }, noticeText: { color: colors.text.secondary, fontSize: 11, fontFamily: 'IBMPlexSansArabic_400Regular', textAlign: 'right' }, error: { color: colors.status.danger.text, backgroundColor: colors.status.danger.background, borderRadius: radius.sm, padding: spacing.sm, fontSize: 12, lineHeight: 19, fontFamily: 'IBMPlexSansArabic_500Medium', textAlign: 'right' }, switch: { alignItems: 'center', padding: spacing.lg }, switchText: { color: colors.brand.primary, fontSize: 13, fontFamily: 'IBMPlexSansArabic_600SemiBold' },
 });
