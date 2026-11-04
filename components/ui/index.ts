@@ -1,6 +1,8 @@
 export { Button, type ButtonSize, type ButtonVariant } from "./Button";
 export { SecondaryButton } from "./SecondaryButton";
 export { IconButton } from "./IconButton";
+export { BottomNavigation, type NavigationItem } from "./BottomNavigation";
+export { WebSidebar, type SidebarItem } from "./WebSidebar";
 export { Card } from "./Card";
 export { AppHeader } from "./AppHeader";
 export { SectionHeader } from "./SectionHeader";
