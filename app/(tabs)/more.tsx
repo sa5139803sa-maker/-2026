@@ -12,6 +12,7 @@ import { StatusBadge } from "@/components/UI";
 import { Button, Card, PreviewBanner } from "@/components/ui";
 import { colors, spacing, typography } from "@/constants/theme";
 import { useAuth, type AppRole } from "@/lib/auth";
+import { canAccessFeature } from "@/lib/permissions";
 
 const roleLabels: Record<AppRole, string> = {
   manager: "مدير المؤسسة",
@@ -51,7 +52,7 @@ export default function MoreScreen() {
   const { profile, signOut } = useAuth();
   const displayName = profile?.display_name?.trim() || "المستخدم";
   const roleLabel = profile ? roleLabels[profile.role] : "دور غير محدد";
-  const visibleItems = items.filter((item) => item.label !== "المشتركون والغواطس" || profile?.role === "manager");
+  const visibleItems = items.filter((item) => item.label !== "المشتركون والغواطس" || canAccessFeature(profile?.role, "management"));
   const initial = displayName.charAt(0) || "؟";
 
   return (
