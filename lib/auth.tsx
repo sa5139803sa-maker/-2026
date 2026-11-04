@@ -58,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
   const observedUserId = useRef<string | null>(null);
+  const profileRequestSequence = useRef(0);
 
   const userId = session?.user.id ?? null;
 
@@ -71,6 +72,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       observedUserId.current = nextUserId;
       setSession(nextSession);
+
+      if (identityChanged) {
+        // Invalidate any in-flight profile response from the previous identity.
+        profileRequestSequence.current += 1;
+      }
 
       if (!nextUserId) {
         setProfile(null);
@@ -94,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Profile I/O is deliberately separated from onAuthStateChange.
   useEffect(() => {
     if (!userId) {
+      profileRequestSequence.current += 1;
       setProfile(null);
       setProfileError(null);
       setLoading(false);
@@ -101,22 +108,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     let active = true;
+    const requestId = ++profileRequestSequence.current;
     setLoading(true);
     setProfileError(null);
 
     void loadProfile(userId)
       .then((nextProfile) => {
-        if (active) setProfile(nextProfile);
+        if (active && requestId === profileRequestSequence.current) {
+          setProfile(nextProfile);
+        }
       })
       .catch((error: unknown) => {
         console.error("profile load failed", error);
-        if (active) {
+        if (active && requestId === profileRequestSequence.current) {
           setProfile(null);
           setProfileError("تعذر تحميل بيانات الحساب. حاول تحديث الصفحة.");
         }
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active && requestId === profileRequestSequence.current) {
+          setLoading(false);
+        }
       });
 
     return () => {
@@ -126,17 +138,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshProfile = useCallback(async () => {
     if (!userId) {
+      profileRequestSequence.current += 1;
       setProfile(null);
       setProfileError(null);
       return;
     }
 
+    const requestId = ++profileRequestSequence.current;
     try {
       setProfileError(null);
-      setProfile(await loadProfile(userId));
+      const refreshedProfile = await loadProfile(userId);
+      if (requestId === profileRequestSequence.current) {
+        setProfile(refreshedProfile);
+      }
     } catch (error) {
       console.error("profile refresh failed", error);
-      setProfileError("تعذر تحديث بيانات الحساب. حاول مرة أخرى.");
+      if (requestId === profileRequestSequence.current) {
+        setProfileError("تعذر تحديث بيانات الحساب. حاول مرة أخرى.");
+      }
     }
   }, [userId]);
 
@@ -179,13 +198,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // The auth event may have loaded the profile before the organization
         // RPC completed. Refresh it now so organization_id is not left stale.
+        const signedUpUserId = data.session.user.id;
+        const requestId = ++profileRequestSequence.current;
         try {
-          const createdProfile = await loadProfile(data.session.user.id);
-          setProfile(createdProfile);
-          setProfileError(null);
+          const createdProfile = await loadProfile(signedUpUserId);
+          if (
+            requestId === profileRequestSequence.current &&
+            observedUserId.current === signedUpUserId
+          ) {
+            setProfile(createdProfile);
+            setProfileError(null);
+          }
         } catch (profileLoadError) {
           console.error("profile reload after organization creation failed", profileLoadError);
-          setProfileError("تم إنشاء المؤسسة، لكن تعذر تحديث الملف الشخصي. سجّل الدخول مجددًا.");
+          if (
+            requestId === profileRequestSequence.current &&
+            observedUserId.current === signedUpUserId
+          ) {
+            setProfileError("تم إنشاء المؤسسة، لكن تعذر تحديث الملف الشخصي. سجّل الدخول مجددًا.");
+          }
         }
 
         return null;
