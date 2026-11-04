@@ -42,8 +42,9 @@ jobs:
           set -e
           echo "npm_audit_fix_exit_code=$audit_fix_status"
           if git diff --quiet -- package-lock.json; then
-            echo "::error::No compatible lockfile updates were produced."
-            exit 1
+            echo "No additional compatible lockfile updates are available."
+          else
+            echo "Semver-compatible lockfile updates are ready for validation."
           fi
 
       - name: Install remediated lockfile from clean state
@@ -100,6 +101,10 @@ jobs:
       - name: Commit validated package lockfile to isolated branch
         shell: bash
         run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "Validated lockfile already matches the candidate; no new commit is needed."
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package-lock.json

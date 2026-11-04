@@ -38,7 +38,7 @@ npm run build:web
 | منخفضة | 2 | 2 |
 | **الإجمالي** | **26** | **17** |
 
-التجربة أزالت الثغرة الحرجة وخفّضت إجمالي النتائج بمقدار 9. من بين الحزم التي ظهرت بعد التجربة بإصدارات محدثة: `@xmldom/xmldom 0.9.12`، `node-forge 1.4.3`، `shell-quote 1.12.0`، `ws 8.22.1`، `picomatch 4.0.7`، `yaml 2.9.1`، و`@react-navigation/core 7.24.0`.
+التجربة أزالت الثغرة الحرجة وخفّضت إجمالي النتائج بمقدار 9. بعد نجاح الفحص، تم دفع المرشح إلى فرع `chore/npm-audit-safe-lockfile` في commit `128da9a9b2bec16859e251f87da2309b5b733f1d`. من بين الحزم التي ظهرت بعد التجربة بإصدارات محدثة: `@xmldom/xmldom 0.9.12`، `node-forge 1.4.3`، `shell-quote 1.12.0`، `ws 8.22.1`، `picomatch 4.0.7`، `yaml 2.9.1`، و`@react-navigation/core 7.24.0`.
 
 ## 3. النتائج المتبقية التي لا يحلها التحديث المتوافق
 
@@ -61,3 +61,12 @@ npm run build:web
 ## 5. حدود هذا التقرير
 
 التقرير يعكس نتائج قاعدة البيانات الأمنية في وقت الفحص، وقد تتغير النتائج عند صدور إصدارات جديدة. لا يثبت التقرير قابلية استغلال كل ثغرة داخل مسارات التطبيق، ولا يُعد تحليلًا ساكنًا كاملًا لكل تبعيات الإنتاج. يجب تكرار الفحص قبل كل إصدار.
+
+## 6. حالة المرشح في المستودع
+
+- **الفرع:** `chore/npm-audit-safe-lockfile`.
+- **Commit lockfile:** `128da9a9b2bec16859e251f87da2309b5b733f1d`.
+- **GitHub Actions:** [Safe npm lockfile remediation Run #1](https://github.com/sa5139803sa-maker/-2026/actions/runs/41860812973) — success.
+- **خطوات النجاح:** npm ci قبل الإصلاح، npm audit fix على lockfile فقط، npm ci بعد الإصلاح، تقرير audit، unit tests، TypeScript، web export، ثم commit/push.
+- **الملفات المتغيرة في مرشح الإصلاح:** `package-lock.json` فقط؛ لا يوجد تعديل على `package.json` أو نسخ Expo المباشرة.
+- **الحالة:** مرشح جاهز للمراجعة عبر Pull Request؛ لم يدمج في `main` بعد.
