@@ -14,11 +14,12 @@ export function MoneyDisplay({
   locale = "ar",
   emphasis = "normal",
 }: MoneyDisplayProps) {
-  const safeAmount = Number.isFinite(amount) ? amount : 0;
-  const formattedAmount = new Intl.NumberFormat(locale, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(safeAmount);
+  const formattedAmount = Number.isFinite(amount)
+    ? new Intl.NumberFormat(locale, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(amount)
+    : "—";
 
   return (
     <View
@@ -26,7 +27,9 @@ export function MoneyDisplay({
       accessibilityLabel={`${formattedAmount} ${currencyLabel}`}
       style={styles.container}
     >
-      <Text style={[styles.amount, emphasis === "strong" && styles.strong]}>{formattedAmount}</Text>
+      <Text style={[styles.amount, emphasis === "strong" && styles.strong]}>
+        {formattedAmount}
+      </Text>
       <Text style={styles.currency}>{currencyLabel}</Text>
     </View>
   );
