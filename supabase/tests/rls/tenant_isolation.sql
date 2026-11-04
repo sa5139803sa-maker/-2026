@@ -22,7 +22,9 @@ CREATE FUNCTION auth.uid()
 RETURNS uuid LANGUAGE sql STABLE
 AS $$
   SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid
-$$;
+$;
+GRANT USAGE ON SCHEMA auth TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 
 \ir ../../migrations/20261104120358_create_water_management_foundation.sql
 \ir ../../migrations/20261104120514_tighten_water_management_grants.sql
@@ -260,6 +262,23 @@ RESET ROLE;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000008', true);
 SELECT pg_temp.assert_scope('unassigned user', 0, 0, 0, 0, 1);
+RESET ROLE;
+
+-- Anonymous API access has no table grants.
+SET LOCAL ROLE anon;
+DO $anonymous_access$
+DECLARE v_rejected boolean := false;
+BEGIN
+  BEGIN
+    PERFORM count(id) FROM public.pumps;
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Anonymous role unexpectedly read tenant data';
+  END IF;
+END;
+$anonymous_access$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
