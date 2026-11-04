@@ -39,7 +39,7 @@ export function DataTable<T>({
               key={column.key}
               style={[styles.cell, { width: column.width ?? 144 }]}
             >
-              <Text style={[styles.headerText, alignment[column.align ?? "right"]]}>
+              <Text style={[styles.headerText, textAlignment[column.align ?? "right"]]}>
                 {column.title}
               </Text>
             </View>
@@ -52,7 +52,7 @@ export function DataTable<T>({
                 key={column.key}
                 style={[styles.cell, { width: column.width ?? 144 }]}
               >
-                <View style={alignment[column.align ?? "right"]}>
+                <View style={cellAlignment[column.align ?? "right"]}>
                   {column.render(row)}
                 </View>
               </View>
@@ -64,10 +64,16 @@ export function DataTable<T>({
   );
 }
 
-const alignment = {
-  left: { alignItems: "flex-start" as const, textAlign: "left" as const },
-  center: { alignItems: "center" as const, textAlign: "center" as const },
-  right: { alignItems: "flex-end" as const, textAlign: "right" as const },
+const cellAlignment = {
+  left: { alignItems: "flex-start" as const },
+  center: { alignItems: "center" as const },
+  right: { alignItems: "flex-end" as const },
+};
+
+const textAlignment = {
+  left: { textAlign: "left" as const },
+  center: { textAlign: "center" as const },
+  right: { textAlign: "right" as const },
 };
 
 const styles = StyleSheet.create({

@@ -15,6 +15,9 @@
 | EmptyState | حالة عدم وجود بيانات مع إجراء اختياري |
 | ErrorState | حالة خطأ مع إعادة المحاولة |
 | SyncIndicator | حالات offline/pending/syncing/synced/error |
+| DataTable | جدول أعمدة مرن مع خلايا مخصصة وتمرير أفقي وحالة فارغة |
+| ConfirmDialog | نافذة تأكيد قابلة للتخصيص مع حالات التنفيذ والإلغاء |
+| SecondaryButton | زر ثانوي مشترك |
 | MoneyDisplay | عرض مبلغ مع تسمية عملة صريحة |
 | TimeDisplay | عرض مدة بصيغة mm:ss أو hh:mm:ss |
 
