@@ -13,6 +13,11 @@
 - [دليل الهوية البصرية ونظام التصميم](docs/VISUAL_IDENTITY_AR.md)
 - [الوثيقة التقنية الأصلية — الإصدار 1.0](docs/reference/TECHNICAL_BLUEPRINT_SOURCE.md)
 
+## أصول الهوية
+
+- [ملفات SVG الأولية](assets/brand/README.md)
+- [دليل الهوية البصرية](docs/VISUAL_IDENTITY_AR.md)
+
 ## المرجع البصري
 
 المسار المعتمد للصورة:
