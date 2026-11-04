@@ -129,6 +129,7 @@ GRANT EXECUTE ON FUNCTION test_support.assert_scope(text, bigint, bigint, bigint
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
 SELECT test_support.assert_scope('manager A', 1, 2, 3, 3, 5);
+SET CONSTRAINTS pump_assignments_user_tenant_role_fkey IMMEDIATE;
 DO $manager_a_write$
 DECLARE v_rows bigint;
 BEGIN
@@ -317,6 +318,7 @@ END;
 $delete_behavior$;
 
 -- Organization deletion must cascade organization-owned rows while retaining auth profiles.
+SET CONSTRAINTS pump_assignments_user_tenant_role_fkey DEFERRED;
 DELETE FROM public.organizations
 WHERE id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
