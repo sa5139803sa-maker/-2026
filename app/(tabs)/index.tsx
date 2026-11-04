@@ -16,11 +16,12 @@ const previewActivities = [
 
 export default function DashboardScreen() {
   const { profile } = useAuth();
+  const canViewOrganizationStats = profile?.role === 'manager';
   const [stats, setStats] = useState({ pumps: 0, subscribers: 0 });
   const [dataError, setDataError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!profile?.organization_id) return;
+    if (!profile?.organization_id || !canViewOrganizationStats) return;
     let active = true;
     const loadStats = async () => {
       const [pumpsResult, subscribersResult] = await Promise.all([
@@ -37,13 +38,13 @@ export default function DashboardScreen() {
     };
     void loadStats();
     return () => { active = false; };
-  }, [profile?.organization_id]);
+  }, [profile?.organization_id, canViewOrganizationStats]);
 
   return <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
     <View style={styles.header}><BrandMark compact /><View style={styles.headerActions}><StatusBadge label="عرض أولي" status="info" /><Bell size={21} color={colors.text.primary} /><View style={styles.avatar}><Text style={styles.avatarText}>أ</Text></View></View></View>
     <View style={styles.welcome}><View><Text style={styles.eyebrow}>لوحة المؤسسة</Text><Text style={styles.title}>مرحباً، {profile?.display_name ?? 'مدير المؤسسة'}</Text><Text style={styles.subtitle}>إليك ملخص العمل لهذا اليوم</Text></View><CalendarDays color={colors.brand.teal} size={27} /></View>
     {dataError && <Text style={styles.dataError}>{dataError}</Text>}
-    <View style={styles.stats}><StatCard label="الغواطس العاملة" value={`${stats.pumps}`} caption="من بيانات المؤسسة" icon={<Droplets size={20} color={colors.brand.primary} />} tone="info" /><StatCard label="المشتركون النشطون" value={`${stats.subscribers}`} caption="من بيانات المؤسسة" icon={<Users size={20} color={colors.status.info.main} />} tone="info" /><StatCard label="مدفوعات اليوم" value="—" caption="ستتوفر في المرحلة المالية" icon={<CircleDollarSign size={20} color={colors.status.success.main} />} tone="success" /><StatCard label="المستحقات المتأخرة" value="—" caption="ستتوفر في المرحلة المالية" icon={<CircleDollarSign size={20} color={colors.status.danger.main} />} tone="danger" /></View>
+    <View style={styles.stats}><StatCard label="الغواطس العاملة" value={canViewOrganizationStats ? `${stats.pumps}` : "—"} caption={canViewOrganizationStats ? "من بيانات المؤسسة" : "ملخص المؤسسة للمدير"} icon={<Droplets size={20} color={colors.brand.primary} />} tone="info" /><StatCard label="المشتركون النشطون" value={canViewOrganizationStats ? `${stats.subscribers}` : "—"} caption={canViewOrganizationStats ? "من بيانات المؤسسة" : "ملخص المؤسسة للمدير"} icon={<Users size={20} color={colors.status.info.main} />} tone="info" /><StatCard label="مدفوعات اليوم" value="—" caption="ستتوفر في المرحلة المالية" icon={<CircleDollarSign size={20} color={colors.status.success.main} />} tone="success" /><StatCard label="المستحقات المتأخرة" value="—" caption="ستتوفر في المرحلة المالية" icon={<CircleDollarSign size={20} color={colors.status.danger.main} />} tone="danger" /></View>
     <Card style={styles.chartCard} padded={false}><View style={styles.sectionHeading}><SectionTitle title="ملخص التشغيل اليومي" /><StatusBadge label="بيانات توضيحية" status="warning" /></View><View style={styles.chart}><View style={[styles.chartBar, { height: 72, backgroundColor: '#B7E8EA' }]} /><View style={[styles.chartBar, { height: 108, backgroundColor: '#75D1D4' }]} /><View style={[styles.chartBar, { height: 86, backgroundColor: '#42B9C0' }]} /><View style={[styles.chartBar, { height: 126, backgroundColor: colors.brand.teal }]} /><View style={[styles.chartBar, { height: 98, backgroundColor: '#75D1D4' }]} /><View style={[styles.chartBar, { height: 145, backgroundColor: colors.brand.primary }]} /><View style={[styles.chartBar, { height: 116, backgroundColor: '#42B9C0' }]} /></View><View style={styles.chartLabels}>{['السبت', 'الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'].map((day) => <Text key={day} style={styles.chartLabel}>{day}</Text>)}</View></Card>
     <Card style={styles.listCard} padded={false}><View style={styles.sectionHeading}><SectionTitle title="أحدث العمليات" /><StatusBadge label="بيانات توضيحية" status="warning" /></View>{previewActivities.map((item) => <View style={styles.activity} key={`${item.time}-${item.subscriber}`}><View style={styles.activityIcon}><Droplets size={17} color={colors.brand.teal} /></View><View style={styles.activityBody}><Text style={styles.activityTitle}>{item.subscriber}</Text><Text style={styles.activityMeta}>{item.pump} · {item.type}</Text></View><View style={styles.activityEnd}><Text style={styles.time}>{item.time}</Text><StatusBadge label={item.status} status={item.tone} /></View><ChevronLeft size={17} color={colors.text.secondary} /></View>)}</Card>
   </ScrollView>;
