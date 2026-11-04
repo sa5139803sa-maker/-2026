@@ -1,0 +1,107 @@
+name: Safe npm lockfile remediation
+
+on:
+  push:
+    branches:
+      - chore/npm-audit-safe-lockfile
+
+permissions:
+  contents: write
+
+concurrency:
+  group: npm-audit-safe-lockfile
+  cancel-in-progress: true
+
+jobs:
+  remediate:
+    name: Apply compatible fixes and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          package-manager-cache: false
+
+      - name: Install current lockfile
+        run: npm ci
+
+      - name: Apply non-breaking fixes to lockfile only
+        shell: bash
+        run: |
+          set +e
+          npm audit fix --package-lock-only --ignore-scripts
+          audit_fix_status=$?
+          set -e
+          echo "npm_audit_fix_exit_code=$audit_fix_status"
+          if git diff --quiet -- package-lock.json; then
+            echo "::error::No compatible lockfile updates were produced."
+            exit 1
+          fi
+
+      - name: Install remediated lockfile from clean state
+        run: npm ci
+
+      - name: Generate remaining vulnerability report
+        shell: bash
+        run: |
+          mkdir -p dependency-remediation-output
+          cp package.json package-lock.json dependency-remediation-output/
+          npm audit --json > dependency-remediation-output/npm-audit-after.json || true
+          node <<'NODE'
+          const fs = require("node:fs");
+          const audit = JSON.parse(
+            fs.readFileSync("dependency-remediation-output/npm-audit-after.json", "utf8")
+          );
+          console.log(
+            "AFTER_AUDIT_COUNTS",
+            JSON.stringify(audit.metadata?.vulnerabilities ?? {})
+          );
+          for (const [name, item] of Object.entries(audit.vulnerabilities ?? {})) {
+            console.log("AFTER_AUDIT_PACKAGE", JSON.stringify({
+              name,
+              severity: item.severity,
+              isDirect: item.isDirect,
+              range: item.range,
+              fixAvailable: item.fixAvailable,
+              via: item.via,
+              nodes: item.nodes,
+            }));
+          }
+          NODE
+
+      - name: Upload dependency candidate for review
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-audit-safe-lockfile
+          path: dependency-remediation-output/
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Unit tests
+        run: npm test
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Export web bundle
+        run: npm run build:web
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-public-anon-key
+
+      - name: Commit validated package lockfile to isolated branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: apply semver-safe npm audit fixes"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
