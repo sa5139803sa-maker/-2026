@@ -283,16 +283,13 @@ CREATE POLICY "members_select_assignments" ON public.pump_assignments
   );
 
 DROP POLICY IF EXISTS "managers_insert_assignments" ON public.pump_assignments;
+-- The composite FK pump_assignments_pump_tenant_fkey validates pump_id/organization_id.
+-- Do not query pumps here: its SELECT policy consults pump_assignments and would recurse.
 CREATE POLICY "managers_insert_assignments" ON public.pump_assignments
   FOR INSERT TO authenticated
   WITH CHECK (
     organization_id = (SELECT water_management_private.current_user_organization_id())
     AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
-    AND EXISTS (
-      SELECT 1 FROM public.pumps p
-      WHERE p.id = pump_assignments.pump_id
-        AND p.organization_id = pump_assignments.organization_id
-    )
   );
 
 DROP POLICY IF EXISTS "managers_update_assignments" ON public.pump_assignments;
@@ -305,11 +302,6 @@ CREATE POLICY "managers_update_assignments" ON public.pump_assignments
   WITH CHECK (
     organization_id = (SELECT water_management_private.current_user_organization_id())
     AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
-    AND EXISTS (
-      SELECT 1 FROM public.pumps p
-      WHERE p.id = pump_assignments.pump_id
-        AND p.organization_id = pump_assignments.organization_id
-    )
   );
 
 DROP POLICY IF EXISTS "managers_delete_assignments" ON public.pump_assignments;

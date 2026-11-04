@@ -139,6 +139,15 @@ BEGIN
   IF v_rows <> 1 THEN RAISE EXCEPTION 'Manager could not update an organization pump'; END IF;
   UPDATE public.pumps SET status = 'active'
   WHERE id = '20000000-0000-4000-8000-000000000001';
+
+  INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
+  VALUES ('20000000-0000-4000-8000-000000000002',
+          '10000000-0000-4000-8000-000000000003',
+          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'operator');
+  DELETE FROM public.pump_assignments
+  WHERE pump_id = '20000000-0000-4000-8000-000000000002'
+    AND user_id = '10000000-0000-4000-8000-000000000003'
+    AND assignment_role = 'operator';
 END;
 $manager_a_write$;
 
