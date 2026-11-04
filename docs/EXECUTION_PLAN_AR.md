@@ -143,6 +143,7 @@
 - [x] اجتاز PostgreSQL RLS workflow رقم `41868218009` على PostgreSQL 17.11، واجتازت نسخة PR نفسها Run `41868238151`.
 - [x] اجتاز PR Quality workflow رقم `41868237217`: `npm ci` و`npm test` و`npm run typecheck` و`npm run build:web`.
 - [x] تشغيل الترحيلات واختبارات العزل الإيجابية والسلبية على PostgreSQL 17.11 في GitHub Actions بنجاح: Run `41868218009`، وPR Run `41868238151`، على commit `06d0df1bc1297286dff6f5f082dceab01e800381`.
+- [ ] إضافة صلاحيات افتراضية مغلقة لدوال `water_management_private` واختبار عدم وراثة EXECUTE لأدوار API؛ التعديل مرشح وينتظر CI.
 - [ ] تشغيل Security Advisors واختبارات RLS نفسها على مشروع Supabase اختبار نشط بعد تأكيد المالك لمعرف المشروع وإعداده.
 - [ ] تحديد مشروع Supabase الصحيح من المالك والتحقق من حالته والمنطقة وإعدادات Data API قبل أي تغيير.
 - [ ] إنشاء إعدادات بيئة آمنة مع `.env.example` دون قيم أسرار حقيقية.

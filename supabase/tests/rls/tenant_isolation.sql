@@ -9,6 +9,9 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'authenticated') THEN
     CREATE ROLE authenticated NOLOGIN;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'service_role') THEN
+    CREATE ROLE service_role NOLOGIN;
+  END IF;
 END;
 $roles$;
 
@@ -29,6 +32,49 @@ GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 \ir ../../migrations/20261104120358_create_water_management_foundation.sql
 \ir ../../migrations/20261104120514_tighten_water_management_grants.sql
 \ir ../../migrations/20261104160000_secure_tenant_boundaries.sql
+
+-- Future helper functions in the private schema must not inherit API-role EXECUTE.
+CREATE FUNCTION water_management_private.default_acl_probe()
+RETURNS boolean
+LANGUAGE sql
+AS $ SELECT true $;
+
+DO $private_schema_acl$
+BEGIN
+  IF NOT pg_catalog.has_schema_privilege('authenticated', 'water_management_private', 'USAGE') THEN
+    RAISE EXCEPTION 'Authenticated role cannot use the private authorization schema';
+  END IF;
+  IF pg_catalog.has_schema_privilege('anon', 'water_management_private', 'USAGE')
+     OR pg_catalog.has_schema_privilege('service_role', 'water_management_private', 'USAGE') THEN
+    RAISE EXCEPTION 'Unexpected private schema USAGE grant';
+  END IF;
+
+  IF NOT pg_catalog.has_function_privilege(
+    'authenticated', 'water_management_private.current_user_role()', 'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Authenticated role cannot execute the explicitly granted authorization helper';
+  END IF;
+  IF pg_catalog.has_function_privilege(
+       'anon', 'water_management_private.current_user_role()', 'EXECUTE'
+     ) OR pg_catalog.has_function_privilege(
+       'service_role', 'water_management_private.current_user_role()', 'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION 'Untrusted API role can execute the private authorization helper';
+  END IF;
+
+  IF pg_catalog.has_function_privilege(
+       'anon', 'water_management_private.default_acl_probe()', 'EXECUTE'
+     ) OR pg_catalog.has_function_privilege(
+       'authenticated', 'water_management_private.default_acl_probe()', 'EXECUTE'
+     ) OR pg_catalog.has_function_privilege(
+       'service_role', 'water_management_private.default_acl_probe()', 'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION 'A new private helper inherited EXECUTE for an API role';
+  END IF;
+END;
+$private_schema_acl$;
+
+DROP FUNCTION water_management_private.default_acl_probe();
 
 INSERT INTO auth.users (id, email, raw_user_meta_data) VALUES
   ('10000000-0000-4000-8000-000000000001', 'manager-a@example.test', '{"display_name":"مدير المؤسسة أ"}'),

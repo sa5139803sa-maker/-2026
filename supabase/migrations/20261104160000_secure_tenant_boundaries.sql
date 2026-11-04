@@ -108,6 +108,11 @@ CREATE SCHEMA IF NOT EXISTS water_management_private;
 REVOKE ALL ON SCHEMA water_management_private FROM PUBLIC, anon, authenticated;
 GRANT USAGE ON SCHEMA water_management_private TO authenticated;
 
+-- New helper functions in this app-only schema must be deny-by-default.
+-- Grant EXECUTE explicitly to individual functions after reviewing their purpose.
+ALTER DEFAULT PRIVILEGES IN SCHEMA water_management_private
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role;
+
 CREATE OR REPLACE FUNCTION water_management_private.current_user_organization_id()
 RETURNS uuid
 LANGUAGE sql STABLE SECURITY DEFINER

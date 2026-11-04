@@ -507,3 +507,15 @@
 - **GitHub Actions:** PostgreSQL workflow Run `41869510798` نجح.
 - **حالات إضافية تم تمريرها:** دور `anon` لا يستطيع تنفيذ `water_management_private.current_user_role()` ولا `public.create_organization()`؛ والمستخدم المصادق لا يستطيع تعديل `profiles.organization_id` من العميل، إلى جانب منع تعديل `profiles.role`.
 - **حدود النتيجة:** CI على PostgreSQL 17 نظيف؛ لم يتم تطبيق migration على مشروع Supabase مستضاف.
+
+
+### 2026-11-04 — جعل صلاحيات الدوال المستقبلية في المخطط الخاص مغلقة افتراضيًا
+- **المرحلة:** 2 — أمن قاعدة البيانات متعددة المؤسسات.
+- **الحالة:** تعديل مرشح أضيف إلى PR #2؛ ينتظر PostgreSQL CI وQuality CI.
+- **الفرع:** `security/tenant-isolation-rls`.
+- **الهدف:** منع أي دالة مساعدة تُضاف مستقبلًا إلى `water_management_private` من وراثة EXECUTE لأدوار API تلقائيًا.
+- **ما تغير:** إضافة `ALTER DEFAULT PRIVILEGES IN SCHEMA water_management_private REVOKE EXECUTE` عن `PUBLIC` و`anon` و`authenticated` و`service_role`، مع إبقاء المنح الصريحة الحالية للدوال التي تحتاجها سياسات RLS. أضيف اختبار ينشئ دالة مؤقتة ويتأكد من عدم حصول أي دور API على EXECUTE، ويتحقق من USAGE للمخطط ومنح الدالة الحالية فقط إلى authenticated.
+- **التحقق:** التحقق الساكن من موضع التغيير؛ تشغيل CI للفرع الجديد لم يُنفذ بعد.
+- **الأثر الأمني:** دفاع استباقي ضد التعرض العرضي لدوال SECURITY DEFINER مستقبلًا؛ لا يغير صلاحيات الجداول أو الوصول الحالي.
+- **المتبقي:** اجتياز PostgreSQL 17 CI وQuality CI، ثم اختبار Advisors على مشروع Supabase اختبار نشط بعد تحديده.
+- **قرار القبول:** مرشح تحسين أمني؛ لا اعتماد إنتاجي حتى اجتياز الاختبارات والتحقق على Supabase مستضاف.
