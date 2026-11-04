@@ -19,6 +19,7 @@
 - [مكتبة مكونات الواجهة](components/ui/README.md)
 - [قواعد مكونات الإدخال والجدولة](components/ui/README.md)
 - [دليل الهوية البصرية](docs/VISUAL_IDENTITY_AR.md)
+- [المراجعة الأمنية لقاعدة Supabase](docs/SUPABASE_SECURITY_REVIEW_AR.md)
 
 ## المرجع البصري
 
