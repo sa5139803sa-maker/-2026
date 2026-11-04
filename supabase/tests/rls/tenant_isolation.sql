@@ -92,7 +92,10 @@ INSERT INTO public.subscribers (id, organization_id, pump_id, full_name) VALUES
   ('30000000-0000-4000-8000-000000000003', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL, 'مشترك أ دون غطاس'),
   ('30000000-0000-4000-8000-000000000004', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003', 'مشترك ب 1');
 
-CREATE FUNCTION pg_temp.assert_scope(
+CREATE SCHEMA test_support;
+GRANT USAGE ON SCHEMA test_support TO authenticated;
+
+CREATE FUNCTION test_support.assert_scope(
   p_label text, p_organizations bigint, p_pumps bigint,
   p_subscribers bigint, p_assignments bigint, p_profiles bigint
 )
@@ -118,12 +121,14 @@ BEGIN
       p_label, v_organizations, v_pumps, v_subscribers, v_assignments, v_profiles;
   END IF;
 END;
-$$;
+$;
+REVOKE ALL ON FUNCTION test_support.assert_scope(text, bigint, bigint, bigint, bigint, bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION test_support.assert_scope(text, bigint, bigint, bigint, bigint, bigint) TO authenticated;
 
 -- Manager A has organization-wide management visibility and can update their own pump.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
-SELECT pg_temp.assert_scope('manager A', 1, 2, 3, 3, 5);
+SELECT test_support.assert_scope('manager A', 1, 2, 3, 3, 5);
 DO $manager_a_write$
 DECLARE v_rows bigint;
 BEGIN
@@ -218,7 +223,7 @@ RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
-SELECT pg_temp.assert_scope('operator A', 1, 1, 1, 1, 1);
+SELECT test_support.assert_scope('operator A', 1, 1, 1, 1, 1);
 DO $operator_write$
 DECLARE v_rows bigint;
 BEGIN
@@ -232,17 +237,17 @@ RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000003', true);
-SELECT pg_temp.assert_scope('unassigned employee A', 1, 0, 0, 0, 1);
+SELECT test_support.assert_scope('unassigned employee A', 1, 0, 0, 0, 1);
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000004', true);
-SELECT pg_temp.assert_scope('collector A', 1, 1, 1, 1, 1);
+SELECT test_support.assert_scope('collector A', 1, 1, 1, 1, 1);
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
-SELECT pg_temp.assert_scope('supervisor A', 1, 1, 1, 1, 1);
+SELECT test_support.assert_scope('supervisor A', 1, 1, 1, 1, 1);
 DO $supervisor_write$
 DECLARE v_rows bigint;
 BEGIN
@@ -256,12 +261,12 @@ RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
-SELECT pg_temp.assert_scope('manager B', 1, 1, 1, 1, 2);
+SELECT test_support.assert_scope('manager B', 1, 1, 1, 1, 2);
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000008', true);
-SELECT pg_temp.assert_scope('unassigned user', 0, 0, 0, 0, 1);
+SELECT test_support.assert_scope('unassigned user', 0, 0, 0, 0, 1);
 RESET ROLE;
 
 -- Anonymous API access has no table grants.
@@ -294,7 +299,7 @@ BEGIN
   END IF;
 END;
 $onboarding$;
-SELECT pg_temp.assert_scope('onboarded manager', 1, 0, 0, 0, 1);
+SELECT test_support.assert_scope('onboarded manager', 1, 0, 0, 0, 1);
 RESET ROLE;
 
 DELETE FROM public.pumps WHERE id = '20000000-0000-4000-8000-000000000003';
