@@ -104,11 +104,11 @@ COMMENT ON COLUMN public.pump_assignments.organization_id IS
 COMMENT ON CONSTRAINT subscribers_pump_tenant_fkey ON public.subscribers IS
   'Prevents cross-organization pump references while preserving subscriber.organization_id when a pump is deleted.';
 
-CREATE SCHEMA IF NOT EXISTS private;
-REVOKE ALL ON SCHEMA private FROM PUBLIC, anon, authenticated;
-GRANT USAGE ON SCHEMA private TO authenticated;
+CREATE SCHEMA IF NOT EXISTS water_management_private;
+REVOKE ALL ON SCHEMA water_management_private FROM PUBLIC, anon, authenticated;
+GRANT USAGE ON SCHEMA water_management_private TO authenticated;
 
-CREATE OR REPLACE FUNCTION private.current_user_organization_id()
+CREATE OR REPLACE FUNCTION water_management_private.current_user_organization_id()
 RETURNS uuid
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = ''
@@ -118,7 +118,7 @@ AS $$
   WHERE p.id = (SELECT auth.uid())
 $$;
 
-CREATE OR REPLACE FUNCTION private.current_user_role()
+CREATE OR REPLACE FUNCTION water_management_private.current_user_role()
 RETURNS public.app_role
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = ''
@@ -128,10 +128,10 @@ AS $$
   WHERE p.id = (SELECT auth.uid())
 $$;
 
-REVOKE ALL ON FUNCTION private.current_user_organization_id() FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION private.current_user_role() FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION private.current_user_organization_id() TO authenticated;
-GRANT EXECUTE ON FUNCTION private.current_user_role() TO authenticated;
+REVOKE ALL ON FUNCTION water_management_private.current_user_organization_id() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION water_management_private.current_user_role() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION water_management_private.current_user_organization_id() TO authenticated;
+GRANT EXECUTE ON FUNCTION water_management_private.current_user_role() TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
@@ -207,7 +207,7 @@ GRANT EXECUTE ON FUNCTION public.create_organization(text) TO authenticated;
 DROP POLICY IF EXISTS "members_select_organizations" ON public.organizations;
 CREATE POLICY "members_select_organizations" ON public.organizations
   FOR SELECT TO authenticated
-  USING (id = (SELECT private.current_user_organization_id()));
+  USING (id = (SELECT water_management_private.current_user_organization_id()));
 
 DROP POLICY IF EXISTS "users_select_own_profile" ON public.profiles;
 CREATE POLICY "users_select_own_profile" ON public.profiles
@@ -215,8 +215,8 @@ CREATE POLICY "users_select_own_profile" ON public.profiles
   USING (
     id = (SELECT auth.uid())
     OR (
-      organization_id = (SELECT private.current_user_organization_id())
-      AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+      organization_id = (SELECT water_management_private.current_user_organization_id())
+      AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
     )
   );
 
@@ -230,15 +230,15 @@ DROP POLICY IF EXISTS "members_select_pumps" ON public.pumps;
 CREATE POLICY "members_select_pumps" ON public.pumps
   FOR SELECT TO authenticated
   USING (
-    organization_id = (SELECT private.current_user_organization_id())
+    organization_id = (SELECT water_management_private.current_user_organization_id())
     AND (
-      (SELECT private.current_user_role()) = 'manager'::public.app_role
+      (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
       OR EXISTS (
         SELECT 1 FROM public.pump_assignments pa
         WHERE pa.pump_id = pumps.id
           AND pa.organization_id = pumps.organization_id
           AND pa.user_id = (SELECT auth.uid())
-          AND pa.assignment_role = (SELECT private.current_user_role())
+          AND pa.assignment_role = (SELECT water_management_private.current_user_role())
       )
     )
   );
@@ -247,37 +247,37 @@ DROP POLICY IF EXISTS "managers_insert_pumps" ON public.pumps;
 CREATE POLICY "managers_insert_pumps" ON public.pumps
   FOR INSERT TO authenticated
   WITH CHECK (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
   );
 
 DROP POLICY IF EXISTS "managers_update_pumps" ON public.pumps;
 CREATE POLICY "managers_update_pumps" ON public.pumps
   FOR UPDATE TO authenticated
   USING (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
   )
   WITH CHECK (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
   );
 
 DROP POLICY IF EXISTS "managers_delete_pumps" ON public.pumps;
 CREATE POLICY "managers_delete_pumps" ON public.pumps
   FOR DELETE TO authenticated
   USING (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
   );
 
 DROP POLICY IF EXISTS "members_select_assignments" ON public.pump_assignments;
 CREATE POLICY "members_select_assignments" ON public.pump_assignments
   FOR SELECT TO authenticated
   USING (
-    organization_id = (SELECT private.current_user_organization_id())
+    organization_id = (SELECT water_management_private.current_user_organization_id())
     AND (
-      (SELECT private.current_user_role()) = 'manager'::public.app_role
+      (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
       OR user_id = (SELECT auth.uid())
     )
   );
@@ -286,8 +286,8 @@ DROP POLICY IF EXISTS "managers_insert_assignments" ON public.pump_assignments;
 CREATE POLICY "managers_insert_assignments" ON public.pump_assignments
   FOR INSERT TO authenticated
   WITH CHECK (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
     AND EXISTS (
       SELECT 1 FROM public.pumps p
       WHERE p.id = pump_assignments.pump_id
@@ -299,12 +299,12 @@ DROP POLICY IF EXISTS "managers_update_assignments" ON public.pump_assignments;
 CREATE POLICY "managers_update_assignments" ON public.pump_assignments
   FOR UPDATE TO authenticated
   USING (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
   )
   WITH CHECK (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
     AND EXISTS (
       SELECT 1 FROM public.pumps p
       WHERE p.id = pump_assignments.pump_id
@@ -316,17 +316,17 @@ DROP POLICY IF EXISTS "managers_delete_assignments" ON public.pump_assignments;
 CREATE POLICY "managers_delete_assignments" ON public.pump_assignments
   FOR DELETE TO authenticated
   USING (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
   );
 
 DROP POLICY IF EXISTS "members_select_subscribers" ON public.subscribers;
 CREATE POLICY "members_select_subscribers" ON public.subscribers
   FOR SELECT TO authenticated
   USING (
-    organization_id = (SELECT private.current_user_organization_id())
+    organization_id = (SELECT water_management_private.current_user_organization_id())
     AND (
-      (SELECT private.current_user_role()) = 'manager'::public.app_role
+      (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
       OR (
         pump_id IS NOT NULL
         AND EXISTS (
@@ -334,7 +334,7 @@ CREATE POLICY "members_select_subscribers" ON public.subscribers
           WHERE pa.pump_id = subscribers.pump_id
             AND pa.organization_id = subscribers.organization_id
             AND pa.user_id = (SELECT auth.uid())
-            AND pa.assignment_role = (SELECT private.current_user_role())
+            AND pa.assignment_role = (SELECT water_management_private.current_user_role())
         )
       )
     )
@@ -344,26 +344,26 @@ DROP POLICY IF EXISTS "managers_insert_subscribers" ON public.subscribers;
 CREATE POLICY "managers_insert_subscribers" ON public.subscribers
   FOR INSERT TO authenticated
   WITH CHECK (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
   );
 
 DROP POLICY IF EXISTS "managers_update_subscribers" ON public.subscribers;
 CREATE POLICY "managers_update_subscribers" ON public.subscribers
   FOR UPDATE TO authenticated
   USING (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
   )
   WITH CHECK (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
   );
 
 DROP POLICY IF EXISTS "managers_delete_subscribers" ON public.subscribers;
 CREATE POLICY "managers_delete_subscribers" ON public.subscribers
   FOR DELETE TO authenticated
   USING (
-    organization_id = (SELECT private.current_user_organization_id())
-    AND (SELECT private.current_user_role()) = 'manager'::public.app_role
+    organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
   );

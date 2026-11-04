@@ -294,8 +294,8 @@ DECLARE v_organization_id uuid;
 BEGIN
   v_organization_id := public.create_organization('مؤسسة التهيئة');
   IF v_organization_id IS NULL
-     OR (SELECT private.current_user_role()) <> 'manager'::public.app_role
-     OR (SELECT private.current_user_organization_id()) <> v_organization_id THEN
+     OR (SELECT water_management_private.current_user_role()) <> 'manager'::public.app_role
+     OR (SELECT water_management_private.current_user_organization_id()) <> v_organization_id THEN
     RAISE EXCEPTION 'Secure onboarding did not establish the manager profile correctly';
   END IF;
 END;
