@@ -1,12 +1,18 @@
 export { Button, type ButtonSize, type ButtonVariant } from "./Button";
+export { SecondaryButton } from "./SecondaryButton";
 export { IconButton } from "./IconButton";
 export { Card } from "./Card";
+export { AppHeader } from "./AppHeader";
 export { SectionHeader } from "./SectionHeader";
 export { StatusBadge, type StatusTone } from "./StatusBadge";
 export { LoadingState } from "./LoadingState";
 export { EmptyState } from "./EmptyState";
 export { ErrorState } from "./ErrorState";
 export { SyncIndicator, type SyncState } from "./SyncIndicator";
+export { TextField } from "./TextField";
+export { SearchField } from "./SearchField";
+export { DataTable, type DataTableColumn } from "./DataTable";
+export { ConfirmDialog } from "./ConfirmDialog";
 export { MoneyDisplay } from "./MoneyDisplay";
 export { TimeDisplay } from "./TimeDisplay";
 export { formatDuration } from "./formatters";

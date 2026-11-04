@@ -104,7 +104,8 @@
 - [x] إنشاء Design Tokens مركزية أولية: `colors.ts`, `typography.ts`, `spacing.ts`, `radius.ts`, `shadows.ts` مع نقطة تصدير `constants/theme.ts`. هذا تنظيم انتقالي داخل مشروع Expo الحالي؛ ينقل إلى الحزمة المشتركة عند اعتماد monorepo.
 - [ ] إزالة تكرار قيم الألوان والمسافات من الشاشات وربطها بالمصدر المركزي بالكامل؛ نقطة التصدير المركزية جاهزة لكن لم تُراجع كل الشاشات بعد.
 - [x] إنشاء نواة مكونات مشتركة أولية: Button، IconButton، Card، SectionHeader، StatusBadge، LoadingState، EmptyState، ErrorState، SyncIndicator، MoneyDisplay، TimeDisplay، مع الحفاظ على واجهة التوافق `components/UI.tsx`.
-- [ ] استكمال بقية المكتبة: AppHeader، التنقل السفلي والجانبي، TextField، SearchField، DataTable، ConfirmDialog، وتحسين StatCard.
+- [x] استكمال النواة لتشمل AppHeader وTextField وSearchField وDataTable وConfirmDialog وSecondaryButton.
+- [ ] إنشاء WebSidebar ومكونات تنقل مشتركة مناسبة لواجهة الويب، وتطبيق المكونات على الشاشات الفعلية.
 - [ ] تطبيق الهوية على شاشة البداية وتسجيل الدخول ولوحة المدير وشاشة المشغّل وشاشة المحصّل وشاشة المشرف وبوابة المشترك ولوحة الويب.
 - [ ] إعداد نماذج مرئية ببيانات عرض موسومة بوضوح، دون ربطها بعد بعمليات مالية أو تشغيلية حقيقية.
 - [ ] اختبار RTL والخطوط والأحجام والاستجابة على Android والويب.

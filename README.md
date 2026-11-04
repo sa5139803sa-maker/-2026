@@ -17,6 +17,7 @@
 
 - [ملفات SVG الأولية](assets/brand/README.md)
 - [مكتبة مكونات الواجهة](components/ui/README.md)
+- [قواعد مكونات الإدخال والجدولة](components/ui/README.md)
 - [دليل الهوية البصرية](docs/VISUAL_IDENTITY_AR.md)
 
 ## المرجع البصري
