@@ -9,11 +9,14 @@
 | Button | زر primary/secondary/ghost/danger مع أحجام وحالة تحميل وتعطيل |
 | IconButton | زر أيقونة مع تسمية وصول إلزامية |
 | Card | حاوية بطاقة موحدة بحد وظل خفيف |
+| AppHeader | رأس شاشة موحد بعنوان ووصف وعناصر جانبية اختيارية |
 | SectionHeader | عنوان قسم وإجراء اختياري يعمل عند توفير callback |
 | StatusBadge | حالة بنص وأيقونة ولون |
 | LoadingState | حالة انتظار |
 | EmptyState | حالة عدم وجود بيانات مع إجراء اختياري |
 | ErrorState | حالة خطأ مع إعادة المحاولة |
+| TextField | حقل إدخال عربي مع مساعد وخطأ وأيقونات وخيارات لوحة مفاتيح |
+| SearchField | بحث مضبوط مع زر لمسح النص |
 | SyncIndicator | حالات offline/pending/syncing/synced/error |
 | DataTable | جدول أعمدة مرن مع خلايا مخصصة وتمرير أفقي وحالة فارغة |
 | ConfirmDialog | نافذة تأكيد قابلة للتخصيص مع حالات التنفيذ والإلغاء |
