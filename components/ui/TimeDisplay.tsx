@@ -7,7 +7,6 @@ type TimeDisplayProps = {
   compact?: boolean;
 };
 
-export { formatDuration };
 
 export function TimeDisplay({ totalSeconds, compact = false }: TimeDisplayProps) {
   return (

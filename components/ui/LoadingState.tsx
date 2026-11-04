@@ -26,7 +26,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     padding: spacing.lg,
   },
-  inline: { minHeight: 48, padding: spacing.sm, flexDirection: "row" },
+  inline: { minHeight: 48, padding: spacing.sm, flexDirection: "row-reverse" },
   message: {
     color: colors.text.secondary,
     fontSize: typography.fontSize.sm,

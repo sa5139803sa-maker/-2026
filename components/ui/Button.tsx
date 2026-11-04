@@ -109,7 +109,7 @@ const styles = StyleSheet.create({
   button: {
     borderWidth: 1,
     borderRadius: radius.md,
-    flexDirection: "row",
+    flexDirection: "row-reverse",
     alignItems: "center",
     justifyContent: "center",
     gap: spacing.sm,

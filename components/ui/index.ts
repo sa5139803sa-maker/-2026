@@ -8,5 +8,5 @@ export { EmptyState } from "./EmptyState";
 export { ErrorState } from "./ErrorState";
 export { SyncIndicator, type SyncState } from "./SyncIndicator";
 export { MoneyDisplay } from "./MoneyDisplay";
-export { TimeDisplay, formatDuration } from "./TimeDisplay";
-export { formatDuration as formatDurationValue } from "./formatters";
+export { TimeDisplay } from "./TimeDisplay";
+export { formatDuration } from "./formatters";
