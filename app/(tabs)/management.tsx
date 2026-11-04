@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, Droplets, Plus, UsersRound, X } from 'lucide-react-native';
 import { router } from 'expo-router';
@@ -37,26 +37,69 @@ function ManagementScreenContent() {
   const [selectedPumpId, setSelectedPumpId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const isManager = profile?.role === 'manager';
+  const organizationId = profile?.organization_id ?? null;
+  const dataRequestSequence = useRef(0);
 
-  const loadData = async () => {
-    if (!profile?.organization_id) return;
+  const loadData = useCallback(async () => {
+    if (!organizationId) {
+      dataRequestSequence.current += 1;
+      setPumps([]);
+      setSubscribers([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    const requestId = ++dataRequestSequence.current;
     setLoading(true);
     setError(null);
-    const [pumpsResult, subscribersResult] = await Promise.all([
-      supabase.from('pumps').select('id, name, code, status').eq('organization_id', profile.organization_id).order('created_at', { ascending: true }),
-      supabase.from('subscribers').select('id, full_name, phone, is_active, pump_id').eq('organization_id', profile.organization_id).order('created_at', { ascending: false }),
-    ]);
-    if (pumpsResult.error || subscribersResult.error) {
-      console.error('management data load failed', pumpsResult.error ?? subscribersResult.error);
-      setError('تعذر تحميل بيانات الإدارة. حاول مرة أخرى.');
-    } else {
-      setPumps((pumpsResult.data ?? []) as Pump[]);
-      setSubscribers((subscribersResult.data ?? []) as Subscriber[]);
-    }
-    setLoading(false);
-  };
 
-  useEffect(() => { void loadData(); }, [profile?.organization_id]);
+    try {
+      const [pumpsResult, subscribersResult] = await Promise.all([
+        supabase
+          .from('pumps')
+          .select('id, name, code, status')
+          .eq('organization_id', organizationId)
+          .order('created_at', { ascending: true }),
+        supabase
+          .from('subscribers')
+          .select('id, full_name, phone, is_active, pump_id')
+          .eq('organization_id', organizationId)
+          .order('created_at', { ascending: false }),
+      ]);
+
+      if (requestId !== dataRequestSequence.current) return;
+
+      if (pumpsResult.error || subscribersResult.error) {
+        console.error('management data load failed', pumpsResult.error ?? subscribersResult.error);
+        setError('تعذر تحميل بيانات الإدارة. حاول مرة أخرى.');
+        setPumps([]);
+        setSubscribers([]);
+      } else {
+        setPumps((pumpsResult.data ?? []) as Pump[]);
+        setSubscribers((subscribersResult.data ?? []) as Subscriber[]);
+      }
+    } catch (loadError) {
+      console.error('management data request failed', loadError);
+      if (requestId === dataRequestSequence.current) {
+        setError('تعذر تحميل بيانات الإدارة. حاول مرة أخرى.');
+        setPumps([]);
+        setSubscribers([]);
+      }
+    } finally {
+      if (requestId === dataRequestSequence.current) {
+        setLoading(false);
+      }
+    }
+  }, [organizationId]);
+
+  useEffect(() => {
+    void loadData();
+    return () => {
+      // Ignore any response still in flight when the screen or organization changes.
+      dataRequestSequence.current += 1;
+    };
+  }, [loadData]);
 
   const closeModal = () => {
     setModalMode(null);
