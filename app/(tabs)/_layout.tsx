@@ -17,7 +17,10 @@ export default function TabLayout() {
 
   useEffect(() => {
     if (!loading && !session) router.replace("/sign-in");
-  }, [loading, session]);
+    if (!loading && session && profile && !profile.organization_id) {
+      router.replace("/onboarding");
+    }
+  }, [loading, session, profile]);
 
   if (loading) {
     return (
@@ -41,6 +44,10 @@ export default function TabLayout() {
       </View>
     );
   }
+
+  // Prevent accounts that have not completed organization onboarding from
+  // reaching staff tabs, even when navigating to a tab URL directly.
+  if (!profile.organization_id) return null;
 
   // Navigation visibility improves UX; RLS is still the real security boundary.
   const canOperate = canAccessFeature(profile.role, "operations");
