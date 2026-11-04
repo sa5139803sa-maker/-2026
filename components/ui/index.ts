@@ -1,5 +1,6 @@
 export { Button, type ButtonSize, type ButtonVariant } from "./Button";
 export { PreviewBanner } from "./PreviewBanner";
+export { RoleGate } from "./RoleGate";
 export { SecondaryButton } from "./SecondaryButton";
 export { IconButton } from "./IconButton";
 export { BottomNavigation, type NavigationItem } from "./BottomNavigation";
