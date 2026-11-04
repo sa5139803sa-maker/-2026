@@ -50,6 +50,9 @@ jobs:
       - name: Install remediated lockfile from clean state
         run: npm ci
 
+      - name: Verify Expo SDK package compatibility
+        run: npx expo install --check
+
       - name: Generate remaining vulnerability report
         shell: bash
         run: |

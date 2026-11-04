@@ -70,3 +70,10 @@ npm run build:web
 - **خطوات النجاح:** npm ci قبل الإصلاح، npm audit fix على lockfile فقط، npm ci بعد الإصلاح، تقرير audit، unit tests، TypeScript، web export، ثم commit/push.
 - **الملفات المتغيرة في مرشح الإصلاح:** `package-lock.json` فقط؛ لا يوجد تعديل على `package.json` أو نسخ Expo المباشرة.
 - **الحالة:** مرشح جاهز للمراجعة عبر Pull Request؛ لم يدمج في `main` بعد.
+
+
+## 7. فحص توافق Expo قبل قبول مرشح lockfile
+
+أضيف إلى سير `.github/workflows/dependency-safe-lockfile.yml` الأمر `npx expo install --check` بعد `npm ci` على lockfile المرشح. الهدف التأكد من أن التحديثات الانتقالية لم تجعل حزم Expo غير متوافقة مع SDK 57. كما أظهر فحص lockfile أن تحديث `xcode` من 3 إلى 4 مرتبط بتحديث `@expo/config-plugins 57.0.11` الذي يعلن `xcode: ^4.0.0` صراحةً. لا يُقبل المرشح حتى يمر الفحص الجديد واختبارات CI المطلوبة.
+
+**حالة PR CI:** Quality run `41861656444` على PR #1 انتهى بـ`action_required` ولم ينشئ jobs؛ لذلك تجربة Safe lockfile remediation الناجحة على حدث push لا تُغني عن تنفيذ PR CI. يلزم موافقة التشغيل في GitHub ثم نجاح الفحوص على رأس طلب الدمج.
