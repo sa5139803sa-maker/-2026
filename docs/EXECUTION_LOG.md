@@ -523,9 +523,20 @@
 
 ### 2026-11-04 — معالجة فشل اختبار صلاحيات الدوال الافتراضية على مستوى الدور
 - **المرحلة:** 2 — أمن قاعدة البيانات متعددة المؤسسات.
-- **الحالة:** تصحيح مرشح؛ ينتظر إعادة PostgreSQL CI وQuality CI.
+- **الحالة:** مكتمل بالاختبار على PostgreSQL CI؛ اعتماد Supabase المستضاف ما زال معلقًا.
 - **الدليل:** Run 41874613872 فشل في اختبار probe بعد تطبيق الترحيل برسالة A new private helper inherited EXECUTE for an API role. أثبت ذلك أن سحب الصلاحية الافتراضية على مستوى المخطط لا يلغي المنح العامة الموروثة من الدور المنشئ.
 - **المعالجة:** استبدال الاعتماد على ALTER DEFAULT PRIVILEGES IN SCHEMA بدور مخصص water_management_authz من نوع NOLOGIN BYPASSRLS؛ يملك SELECT على public.profiles فقط، وUSAGE على public/auth، وCREATE على المخطط الخاص، وتصبح الدوال المساعدة مملوكة له. أضيفت صلاحيات افتراضية مغلقة لهذا الدور وحده، دون تغيير افتراضات postgres العامة.
 - **الاختبار المضاف:** التحقق من خصائص الدور ومالك دالة التفويض، ثم إنشاء دالة probe باستخدام SET ROLE water_management_authz والتأكد من عدم منح EXECUTE لأي دور API.
-- **التحقق:** مراجعة ساكنة للتعديل؛ نتيجة CI للالتزام الجديد لم تظهر بعد.
+- **التحقق:** اجتاز Commit `a73c8d79c19dab9d2e36400383612a7f7bcce2f0` PostgreSQL CI: PR Run `41875025987` وPush Run `41875015347` كلاهما success؛ اجتاز Quality PR Run `41875025973` success (`npm ci`, `npm test`, TypeScript, web export). سجل `psql` يؤكد تنفيذ الترحيلات والاختبارات حتى `ROLLBACK` دون SQL errors.
 - **قرار القبول:** لا اعتماد حتى نجاح PostgreSQL CI وQuality CI ثم مراجعة Supabase مستضاف.
+
+
+### 2026-11-04 — نجاح اختبار ملكية دوال التفويض والصلاحيات الافتراضية
+- **المرحلة:** 2 — أمن قاعدة البيانات متعددة المؤسسات.
+- **الحالة:** مكتمل بالاختبار داخل CI؛ تحقق Supabase المستضاف ما زال مفتوحًا.
+- **Commit:** `a73c8d79c19dab9d2e36400383612a7f7bcce2f0`.
+- **GitHub Actions:** [PostgreSQL PR Run #31](https://github.com/sa5139803sa-maker/-2026/actions/runs/41875025987) — success؛ [PostgreSQL push Run](https://github.com/sa5139803sa-maker/-2026/actions/runs/41875015347) — success؛ [Quality PR Run #64](https://github.com/sa5139803sa-maker/-2026/actions/runs/41875025973) — success.
+- **ما تم التحقق منه:** الدور `water_management_authz` يعمل دون LOGIN، مع BYPASSRLS وصلاحيات SELECT محدودة على `public.profiles`؛ دوال التفويض مملوكة له؛ لا تستطيع أدوار `anon` أو `service_role` استعمال المخطط الخاص أو تشغيل دوال التفويض؛ ودالة probe جديدة أنشأها الدور لا تورث EXECUTE لأي دور API. المنح إلى `authenticated` صريحة للدوال التي تستخدمها سياسات RLS.
+- **فحوص الجودة:** `npm ci` و`npm test` و`npm run typecheck` و`npm run build:web` — جميعها ناجحة.
+- **حدود النتيجة:** الاختبار على PostgreSQL 17 النظيفة يحاكي auth/JWT؛ لم تُنفذ migration على مشروع Supabase مستضاف ولم تُشغّل Security Advisors أو مراجعة Data API/Storage.
+- **قرار القبول:** قبول تحسين ملكية الدوال والصلاحيات الافتراضية في نطاق CI؛ إبقاء PR #2 مسودة وعدم نشر الترحيل حتى التحقق على مشروع Supabase اختبار نشط محدد.
