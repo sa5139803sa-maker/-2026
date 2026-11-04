@@ -229,6 +229,15 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
   END;
   IF NOT v_rejected THEN RAISE EXCEPTION 'Client-side role escalation was not rejected'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    UPDATE public.profiles
+    SET organization_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    WHERE id = (SELECT auth.uid());
+  EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Client-side organization reassignment was not rejected'; END IF;
 END;
 $manager_a_negative$;
 RESET ROLE;
@@ -293,6 +302,26 @@ BEGIN
   END;
   IF NOT v_rejected THEN
     RAISE EXCEPTION 'Anonymous role unexpectedly read tenant data';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM water_management_private.current_user_role();
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Anonymous role unexpectedly executed a private authorization helper';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.create_organization('مؤسسة غير مصرح بها');
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Anonymous role unexpectedly executed organization onboarding';
   END IF;
 END;
 $anonymous_access$;
