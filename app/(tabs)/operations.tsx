@@ -19,7 +19,7 @@ const previewQueue = [
 
 export default function OperationsScreen() {
   return (
-    <RoleGate roles={["manager", "operator"]} featureName="التشغيل">
+    <RoleGate feature="operations" featureName="التشغيل">
       <OperationsScreenContent />
     </RoleGate>
   );

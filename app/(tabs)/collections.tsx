@@ -23,7 +23,7 @@ const paymentMethods = ["نقداً", "جوال باي", "تحويل بنكي"] 
 
 export default function CollectionsScreen() {
   return (
-    <RoleGate roles={["manager", "collector"]} featureName="التحصيل">
+    <RoleGate feature="collections" featureName="التحصيل">
       <CollectionsScreenContent />
     </RoleGate>
   );
