@@ -825,3 +825,18 @@
 - أضفنا `trusted-gateway-ip.deno.ts` واختبارات تغطي الرأس الموثوق، وتجاهل رؤوس التمرير التي يرسلها العميل، والقيم المفقودة/المركبة/المعيبة. نجح `deno check` واختبار Deno في CI. فشل اختبار أولي فقط بسبب اسم الملف الذي اكتشفه Node test runner ومحاولة إنشاء Header يحوي newline؛ عزلنا ملف Deno باسم `.deno.ts` واستبدلنا القيمة غير الصالحة بقيمة header صالحة نحويًا ثم نجحت الاختبارات.
 - نُشرت الدالة على المشروع `kxdncnswbwktbiphptbr` بالإصدار 2، الحالة ACTIVE، `verify_jwt=false`، مع تضمين helper في bundle. بقيت `manage-accounts` v10 دون تغيير.
 - **مهم:** هذا تعديل حماية لطبقة IP، وليس إثباتًا لاختبار HTTP من متصفح. لا يزال اختبار المسار المباشر ووجود `cf-connecting-ip` في طلب حي مطلوبًا قبل فتح البوابة للعامة.
+
+### 2026-11-06 — إنشاء ونشر معاينة لوحة الويب على Vercel
+
+- **مشروع Vercel:** water-management-web، مشروع مستقل ضمن مساحة حساب Vercel الشخصي.
+- **المعرف:** prj_1l2gHKL0SfpsOyqlsA1NOHWURezH.
+- **إعداد البناء:** Next.js، مجلد الجذر apps/web، Node.js 22، مع السماح بقراءة ملفات monorepo خارج مجلد التطبيق.
+- **المصدر:** المستودع sa5139803sa-maker/-2026، الفرع security/tenant-isolation-rls، Commit e10014ce8fec72ac87867a68dc36c41cfde7226a.
+- **متغيرات البيئة:** أضيف NEXT_PUBLIC_SUPABASE_URL وNEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY إلى Preview لهذا الفرع فقط. لم يُضف أي مفتاح service_role أو Secret إلى واجهة الويب.
+- **النشر:** deployment dpl_9Hmn5YX9SThwFZBxK9gSb8Mp8Efv بحالة READY، وهدفه Preview (target=null). رابط المعاينة: https://water-management-web-git-secu-0cdcbe-sa5139803sa-2072s-projects.vercel.app
+- **ملاحظة حماية:** حماية SSO مفعلة على معاينات Vercel؛ الوصول المباشر يتطلب صلاحية الحساب. لم يُضف نطاق مخصص، ولم يُنشأ نشر إنتاجي أو ربط alias إنتاجي.
+- **نتيجة البناء:** Next.js 16.4.5، نجاح التجميع وTypeScript وإنشاء الصفحات، وnpm audit أظهر صفر ثغرات معروفة في الاعتماديات المثبتة. ظهرت تحذيرات غير حاجبة تخص engines في package.json وإعداد npm باسم cache-dir.
+- **اختبار HTTP للمعاينة:** / و/login أعادا صفحة تسجيل الدخول العربية RTL بحالة 200؛ /portal أعاد صفحة بوابة المشترك بحالة 200؛ /platform و/organization و/change-password أعادت تحويل غير المسجل إلى /login (تحقق حاجز الجلسة). رؤوس X-Frame-Options: DENY وX-Content-Type-Options: nosniff وHSTS موجودة في الاستجابات.
+- **حدود الاختبار:** GET /api/admin/accounts أعاد 405 لأن المسار يقبل POST فقط؛ لم يُنفذ اختبار POST بلا جلسة أو بجلسة غير مخولة. كما لم يُنفذ بعد HTTP end-to-end إلى Edge Function subscriber-portal للتحقق من cf-connecting-ip وحدود المحاولات. لا تعتبر هذه المعاينة اختبار قبول وظيفيًا أو إذنًا لفتح الموقع للعامة.
+- **إجراء وقائي:** أُلغيت محاولة أولى ظهر أنها تستهدف الإنتاج قبل اعتمادها، ثم أُنشئت معاينة ثانية مستقلة بحالة READY. لا تغيير على main ولا دمج لـ PR #2.
+- **قرار القبول:** قبول نشر المعاينة وبناء Next.js فقط. تبقى اختبارات POST/Auth، وHTTP الفعلي لبوابة المشترك، وحماية كلمات المرور المسرّبة، ومراجعة الإعدادات الاحتياطية/النطاق، واختبارات الأدوار الحقيقية قبل الإنتاج.
