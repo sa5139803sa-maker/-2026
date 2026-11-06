@@ -425,9 +425,9 @@ BEGIN
 
   v_rejected := false;
   BEGIN
-    INSERT INTO public.subscribers (organization_id, pump_id, full_name)
+    INSERT INTO public.subscribers (organization_id, pump_id, full_name, phone)
     VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-            '20000000-0000-4000-8000-000000000003', 'مشترك عابر للمؤسسات');
+            '20000000-0000-4000-8000-000000000003', 'مشترك عابر للمؤسسات', '0590000000');
   EXCEPTION WHEN foreign_key_violation THEN v_rejected := true;
   END;
   IF NOT v_rejected THEN RAISE EXCEPTION 'Cross-organization subscriber INSERT was not rejected'; END IF;
