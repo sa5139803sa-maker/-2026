@@ -47,6 +47,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261106174000_scope_account_audit_log_policy.sql
 \ir ../../migrations/20261106175000_index_account_audit_log_foreign_keys.sql
 \ir ../../migrations/20261106180000_create_platform_organization_admin_rpc.sql
+\ir ../../migrations/20261106190000_add_global_subscriber_number_and_public_lookup.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -280,11 +281,58 @@ INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignme
   ('20000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000005', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'supervisor'),
   ('20000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000007', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'operator');
 
-INSERT INTO public.subscribers (id, organization_id, pump_id, full_name) VALUES
-  ('30000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000001', 'مشترك أ 1'),
-  ('30000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000002', 'مشترك أ 2'),
-  ('30000000-0000-4000-8000-000000000003', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL, 'مشترك أ دون غطاس'),
-  ('30000000-0000-4000-8000-000000000004', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003', 'مشترك ب 1');
+INSERT INTO public.subscribers (id, organization_id, pump_id, full_name, phone) VALUES
+  ('30000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000001', 'مشترك أ 1', '+970599111111'),
+  ('30000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000002', 'مشترك أ 2', '+970599111112'),
+  ('30000000-0000-4000-8000-000000000003', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL, 'مشترك أ دون غطاس', '+970599111113'),
+  ('30000000-0000-4000-8000-000000000004', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003', 'مشترك ب 1', '+970599111114');
+
+DO $subscriber_number_global$
+DECLARE v_count bigint; v_distinct bigint; v_bad bigint;
+BEGIN
+  SELECT count(*), count(DISTINCT subscriber_number),
+         count(*) FILTER (WHERE subscriber_number NOT BETWEEN 100000 AND 999999)
+    INTO v_count, v_distinct, v_bad
+  FROM public.subscribers;
+
+  IF v_count <> 4 OR v_distinct <> v_count OR v_bad <> 0 THEN
+    RAISE EXCEPTION 'Subscriber numbers are not six-digit and globally unique across organizations';
+  END IF;
+
+  IF (SELECT count(*) FROM water_management_private.subscriber_number_registry) <> v_count THEN
+    RAISE EXCEPTION 'Subscriber number registry does not reserve every issued number';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.subscribers
+    WHERE id='30000000-0000-4000-8000-000000000001'
+      AND phone_normalized='0599111111'
+  ) THEN
+    RAISE EXCEPTION 'Palestinian international phone normalization failed';
+  END IF;
+END;
+$subscriber_number_global$;
+
+DO $subscriber_portal_privileges$
+BEGIN
+  IF pg_catalog.has_function_privilege('anon','public.lookup_subscriber_portal(integer,text,text)','EXECUTE')
+     OR pg_catalog.has_function_privilege('authenticated','public.lookup_subscriber_portal(integer,text,text)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('service_role','public.lookup_subscriber_portal(integer,text,text)','EXECUTE') THEN
+    RAISE EXCEPTION 'Subscriber portal RPC must be executable by service_role only';
+  END IF;
+
+  IF pg_catalog.has_table_privilege('anon','public.subscribers','SELECT') THEN
+    RAISE EXCEPTION 'Anonymous users must never read the subscribers table directly';
+  END IF;
+
+  IF pg_catalog.has_table_privilege('anon','water_management_private.portal_rate_limits','SELECT')
+     OR pg_catalog.has_table_privilege('authenticated','water_management_private.portal_rate_limits','SELECT') THEN
+    RAISE EXCEPTION 'Portal rate limit hashes must remain private';
+  END IF;
+END;
+$subscriber_portal_privileges$;
+
 
 CREATE SCHEMA test_support;
 GRANT USAGE ON SCHEMA test_support TO authenticated;
@@ -323,6 +371,23 @@ GRANT EXECUTE ON FUNCTION test_support.assert_scope(text, bigint, bigint, bigint
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
 SELECT test_support.assert_scope('manager A', 1, 2, 3, 3, 5);
+DO $subscriber_number_immutable$
+DECLARE v_rejected boolean := false;
+BEGIN
+  BEGIN
+    UPDATE public.subscribers
+    SET subscriber_number = CASE
+      WHEN subscriber_number = 999999 THEN 999998 ELSE subscriber_number + 1
+    END
+    WHERE id = '30000000-0000-4000-8000-000000000001';
+  EXCEPTION WHEN raise_exception THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'A manager changed an immutable global subscriber number';
+  END IF;
+END;
+$subscriber_number_immutable$;
 SET CONSTRAINTS pump_assignments_user_tenant_role_fkey IMMEDIATE;
 DO $manager_a_write$
 DECLARE v_rows bigint;
@@ -680,6 +745,59 @@ BEGIN
   END IF;
 END;
 $delete_behavior$;
+
+-- Public portal lookup is service-only and requires exact number + phone matching.
+SET LOCAL ROLE service_role;
+DO $subscriber_portal_lookup$
+DECLARE
+  v_number integer;
+  v_result record;
+  v_attempt integer;
+BEGIN
+  SELECT subscriber_number INTO v_number
+  FROM public.subscribers
+  WHERE id='30000000-0000-4000-8000-000000000001';
+
+  SELECT * INTO v_result
+  FROM public.lookup_subscriber_portal(v_number, '+970599111111', '203.0.113.10');
+  IF NOT v_result.found
+     OR v_result.subscriber_number <> v_number
+     OR v_result.full_name <> 'مشترك أ 1'
+     OR v_result.phone_last4 <> '1111' THEN
+    RAISE EXCEPTION 'Correct six-digit subscriber number and phone did not resolve';
+  END IF;
+
+  SELECT * INTO v_result
+  FROM public.lookup_subscriber_portal(v_number, '+970599999999', '203.0.113.11');
+  IF v_result.found THEN
+    RAISE EXCEPTION 'A wrong phone number exposed a subscriber record';
+  END IF;
+
+  -- Arabic-Indic digits must normalize to the same registered phone number.
+  SELECT * INTO v_result
+  FROM public.lookup_subscriber_portal(v_number, '٠٥٩٩١١١١١١', '203.0.113.12');
+  IF NOT v_result.found THEN
+    RAISE EXCEPTION 'Arabic-Indic phone digits did not match the subscriber';
+  END IF;
+
+  -- Six requests against one subscriber number trigger its hourly HMAC bucket.
+  FOR v_attempt IN 1..3 LOOP
+    SELECT * INTO v_result
+    FROM public.lookup_subscriber_portal(
+      v_number,
+      '+97059922222' || v_attempt::text,
+      '203.0.113.' || (20 + v_attempt)::text
+    );
+  END LOOP;
+
+  SELECT * INTO v_result
+  FROM public.lookup_subscriber_portal(v_number, '+970599222229', '203.0.113.29');
+  IF NOT v_result.rate_limited THEN
+    RAISE EXCEPTION 'Per-subscriber lookup rate limit did not activate after six attempts';
+  END IF;
+END;
+$subscriber_portal_lookup$;
+RESET ROLE;
 
 -- Organization deletion must cascade organization-owned rows while retaining auth profiles.
 SET CONSTRAINTS pump_assignments_user_tenant_role_fkey DEFERRED;
