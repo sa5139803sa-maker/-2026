@@ -892,3 +892,14 @@
 - **Advisors:** Security ما زال يعرض التحذير الحرج `rls_disabled` على الجداول الخاصة الثلاثة، والتحذير `auth_leaked_password_protection`؛ Health بلا ملاحظات؛ Performance يعرض 12 ملاحظة unused-index بمستوى INFO.
 - **ما لم يُنفذ:** لم تُجرَ تغييرات SQL أو إعدادات Auth، ولم تُنشأ مؤسسات أو حسابات اختبار، ولم يُنفذ POST فعلي لمسار إدارة الحسابات أو اختبار HTTP حي لـsubscriber-portal/429. لا يمكن إعلان قبول الإنتاج.
 - **قرار العمل:** مواصلة التوثيق والفحوص غير التغييرية فقط؛ تفعيل RLS ينتظر قرار المالك، ولا دمج لـPR #2 ولا تعديل للفرع الرئيسي.
+
+
+### 2026-11-07 — نجاح إعادة التحقق على رأس الفرع بعد تحديث الوثائق
+
+- **Commit التوثيق المفحوص:** `5b058028851767b4a1d852cdc220f8ee22c70099`؛ لا يحتوي تغييرات على كود التشغيل أو SQL.
+- **Quality checks #282:** success؛ شمل تثبيت الحزم، Deno check، اختبار trusted gateway IP، تقرير الاعتماديات، unit tests، TypeScript، وweb export.
+- **Web console checks #122:** success؛ شمل توليد lockfile، `npm ci`، `npm audit --audit-level=high`، الاختبارات، TypeScript، وبناء Next.js.
+- **Supabase tenant isolation #480:** success.
+- **Vercel:** Deployment `dpl_4TC93m56gJTh9M7sp5PPWYQAA7Au` على commit التوثيق أصبح `READY`، وهدفه Preview (`target=null`) وليس Production.
+- **حالة Git:** PR #2 ما زال مفتوحًا كمسودة وغير مدمج؛ لا توجد مراجعات GitHub مسجلة. لا تعديل على الفرع الرئيسي.
+- **قرار القبول:** قبول التحديث التوثيقي واجتياز فحوصه؛ لا يعني إغلاق التحذيرات الأمنية أو إعلان جاهزية الإنتاج.
