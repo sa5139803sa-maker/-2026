@@ -903,3 +903,15 @@
 - **Vercel:** Deployment `dpl_4TC93m56gJTh9M7sp5PPWYQAA7Au` على commit التوثيق أصبح `READY`، وهدفه Preview (`target=null`) وليس Production.
 - **حالة Git:** PR #2 ما زال مفتوحًا كمسودة وغير مدمج؛ لا توجد مراجعات GitHub مسجلة. لا تعديل على الفرع الرئيسي.
 - **قرار القبول:** قبول التحديث التوثيقي واجتياز فحوصه؛ لا يعني إغلاق التحذيرات الأمنية أو إعلان جاهزية الإنتاج.
+
+### 2026-11-07 — إضافة فحص الأسرار في كامل تاريخ Git
+
+- أضيف `.github/workflows/secret-history-scan.yml` إلى فرع `security/tenant-isolation-rls`.
+- يستخدم السير `actions/checkout` مع `fetch-depth: 0` حتى لا يقتصر الفحص على أحدث snapshot، ويضبط `persist-credentials: false` بعد checkout.
+- فُعّلت صلاحية `contents: read` فقط، وعُطّلت تعليقات PR ورفع artifacts لتقليل احتمال نشر تفاصيل حساسة من تقرير الفحص.
+- ثُبّتت GitHub Actions إلى commit SHAs:
+  - checkout v6: `d23441a48e516b6c34aea4fa41551a30e30af803`.
+  - Gitleaks Action v3.0.0: `e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e`.
+- أضيفت triggers عند الدفع إلى `main` وفرع العمل، وعند Pull Request إلى `main`، والتشغيل اليدوي، وجدولة يومية بعد دمج السير إلى الفرع الافتراضي.
+- **النتيجة:** لا نسجل بعد أن المستودع خالٍ من الأسرار؛ يجب مراجعة أول Workflow run على commit هذا التغيير وما يليه. إذا ظهر كشف، لا تُنسخ قيمة السر في التعليقات أو السجلات؛ يحدد المصدر ونوع الاعتماد، ثم يُدار التدوير والتنظيف التاريخي كإجراء منفصل.
+- **Git:** التغيير على `security/tenant-isolation-rls` فقط. لم يحدث دمج، ولم يتغير `main` أو Supabase أو إعدادات Auth.
