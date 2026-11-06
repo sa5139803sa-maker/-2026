@@ -681,9 +681,9 @@
 
 ### 2026-11-06 — إغلاق فحوص الحصة وعزل كلمات المرور المؤقتة
 - أُضيفت فحوص PostgreSQL لحصة المؤسسة، ومنع الوصول أثناء كلمة المرور المؤقتة، ورفض JWT السابق لإعادة التعيين.
-- **PostgreSQL RLS CI:** Run #126 `42251732032` وRun #125 `42251718170` على Commit `28b3206` — success.
-- **Quality CI:** Deno Edge Function check وnpm tests وTypeScript check نجحت على Commit `a4b789d`; تصدير الويب على Commit الأحدث `28b3206` كان لا يزال قيد التنفيذ وقت هذا التحديث.
+- **PostgreSQL RLS CI:** Run #127 `42252054491` وRun #128 `42252065670` على Commit `5dbf8b0` — success؛ أحدث Commit `71bd32b` يعيد تشغيل الفحوص بعد حدّ UTF-8 لاسم المستخدم.
+- **Quality CI:** Run #114 `42252065336` على Commit `5dbf8b0` — success: Deno Edge Function check وnpm tests وTypeScript check وتصدير الويب؛ أحدث Commit `71bd32b` يعيد تشغيل الفحوص بعد تعديل Edge Function.
 - **Security Advisor:** `lints: []`. **Health Advisor:** `lints: []`.
 - **Performance Advisor:** لا توجد `unindexed_foreign_keys` بعد إضافة فهارس سجل التدقيق. بقيت 11 ملاحظة `unused_index` من نوع INFO على قاعدة تطوير لا تحتوي بيانات تشغيل؛ لم نحذف الفهارس.
-- **Edge Function:** `manage-accounts` الإصدار 6، نشطة مع `verify_jwt=true`.
+- **Edge Function:** `manage-accounts` الإصدار 7، نشطة مع `verify_jwt=true`.
 - قاعدة التطوير لا تحتوي مستخدمين أو مؤسسات حتى الآن؛ لم ننشئ مسؤولًا أوليًا أو حسابات تجريبية عشوائية. يلزم bootstrap يدوي لأول `platform_admin` ثم إنشاء/تسجيل المؤسسة الأولى.
