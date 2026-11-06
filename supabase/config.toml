@@ -1,0 +1,7 @@
+project_id = "kxdncnswbwktbiphptbr"
+
+[functions.manage-accounts]
+verify_jwt = true
+
+[functions.subscriber-lookup]
+verify_jwt = false
