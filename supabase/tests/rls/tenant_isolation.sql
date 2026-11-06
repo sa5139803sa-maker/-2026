@@ -34,6 +34,7 @@ GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 \ir ../../migrations/20261104160000_secure_tenant_boundaries.sql
 \ir ../../migrations/20261106104135_secure_request_identity_bridge_for_authz.sql
 \ir ../../migrations/20261106143808_add_tenant_foreign_key_indexes.sql
+\ir ../../migrations/20261106160000_harden_onboarding_function.sql
 
 -- Future helper functions must inherit the dedicated owner's closed default ACL.
 SET LOCAL ROLE water_management_authz;
@@ -122,6 +123,84 @@ BEGIN
        'service_role', 'water_management_private.default_acl_probe()', 'EXECUTE'
      ) THEN
     RAISE EXCEPTION 'A new private helper inherited EXECUTE for an API role';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+    WHERE rolname = 'water_management_onboarding'
+      AND rolcanlogin = false
+      AND rolsuper = false
+      AND rolcreatedb = false
+      AND rolcreaterole = false
+      AND rolbypassrls = false
+      AND rolinherit = false
+  ) THEN
+    RAISE EXCEPTION 'Onboarding function owner must be a non-login, non-BYPASSRLS role';
+  END IF;
+  IF pg_catalog.pg_has_role('authenticated', 'water_management_onboarding', 'MEMBER')
+     OR pg_catalog.pg_has_role('anon', 'water_management_onboarding', 'MEMBER')
+     OR pg_catalog.pg_has_role('service_role', 'water_management_onboarding', 'MEMBER') THEN
+    RAISE EXCEPTION 'An API role can assume the onboarding function owner';
+  END IF;
+  IF pg_catalog.has_schema_privilege('water_management_onboarding', 'water_management_private', 'CREATE') THEN
+    RAISE EXCEPTION 'Onboarding owner retained CREATE on the private schema';
+  END IF;
+  IF NOT pg_catalog.has_column_privilege(
+    'water_management_onboarding', 'public.profiles', 'organization_id', 'UPDATE'
+  ) OR NOT pg_catalog.has_column_privilege(
+    'water_management_onboarding', 'public.profiles', 'role', 'UPDATE'
+  ) OR pg_catalog.has_column_privilege(
+    'water_management_onboarding', 'public.profiles', 'display_name', 'UPDATE'
+  ) THEN
+    RAISE EXCEPTION 'Onboarding owner profile column grants are not least-privilege';
+  END IF;
+  IF NOT pg_catalog.has_column_privilege(
+    'water_management_onboarding', 'public.organizations', 'name', 'INSERT'
+  ) OR pg_catalog.has_column_privilege(
+    'water_management_onboarding', 'public.organizations', 'name', 'UPDATE'
+  ) OR pg_catalog.has_table_privilege(
+    'water_management_onboarding', 'public.organizations', 'DELETE'
+  ) THEN
+    RAISE EXCEPTION 'Onboarding owner organization grants are not least-privilege';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'water_management_private'
+      AND p.proname = 'create_organization'
+      AND pg_catalog.pg_get_userbyid(p.proowner) = 'water_management_onboarding'
+      AND p.prosecdef
+      AND p.proconfig @> ARRAY['search_path=""']
+  ) THEN
+    RAISE EXCEPTION 'Private onboarding implementation has an unexpected owner or function configuration';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname = 'create_organization'
+      AND p.prosecdef
+  ) THEN
+    RAISE EXCEPTION 'Public onboarding RPC must use SECURITY INVOKER';
+  END IF;
+  IF NOT pg_catalog.has_function_privilege(
+    'authenticated', 'water_management_private.create_organization(text)', 'EXECUTE'
+  ) OR pg_catalog.has_function_privilege(
+    'anon', 'water_management_private.create_organization(text)', 'EXECUTE'
+  ) OR pg_catalog.has_function_privilege(
+    'service_role', 'water_management_private.create_organization(text)', 'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Private onboarding function EXECUTE grants are incorrect';
+  END IF;
+  IF pg_catalog.has_column_privilege(
+    'authenticated', 'public.profiles', 'organization_id', 'UPDATE'
+  ) OR pg_catalog.has_column_privilege(
+    'authenticated', 'public.profiles', 'role', 'UPDATE'
+  ) OR pg_catalog.has_table_privilege(
+    'authenticated', 'public.organizations', 'INSERT'
+  ) THEN
+    RAISE EXCEPTION 'Authenticated clients can directly change onboarding-protected fields';
   END IF;
 END;
 $private_schema_acl$;
@@ -421,6 +500,16 @@ BEGIN
   IF NOT v_rejected THEN
     RAISE EXCEPTION 'Anonymous role unexpectedly executed organization onboarding';
   END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM water_management_private.create_organization('مؤسسة داخلية غير مصرح بها');
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Anonymous role unexpectedly executed the private onboarding implementation';
+  END IF;
 END;
 $anonymous_access$;
 RESET ROLE;
@@ -439,6 +528,22 @@ BEGIN
 END;
 $onboarding$;
 SELECT test_support.assert_scope('onboarded manager', 1, 0, 0, 0, 1);
+
+DO $onboarding_replay$
+DECLARE
+  v_rejected boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.create_organization('مؤسسة ثانية');
+  EXCEPTION WHEN raise_exception THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'An already-onboarded user created a second organization';
+  END IF;
+END;
+$onboarding_replay$;
+
 RESET ROLE;
 
 DELETE FROM public.pumps WHERE id = '20000000-0000-4000-8000-000000000003';
