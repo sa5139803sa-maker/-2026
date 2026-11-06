@@ -106,13 +106,6 @@ Deno.serve(async (req: Request) => {
     return response(403, { error: "نطاق صلاحيات الحساب غير صالح." });
   }
 
-  if (
-    actor.role !== "platform_admin" &&
-    actor.role !== "manager"
-  ) {
-    return response(403, { error: "هذه الخدمة مخصصة لإدارة المنصة ومديري المؤسسات." });
-  }
-
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -123,6 +116,16 @@ Deno.serve(async (req: Request) => {
   const action = body.action;
   if (actor.must_change_password && action !== "change_password") {
     return response(403, { error: "يجب تغيير كلمة المرور المؤقتة أولاً." });
+  }
+
+  // Field users may call only the mandatory password-rotation action from
+  // Expo. Every administrative action remains restricted to the two web roles.
+  if (
+    action !== "change_password" &&
+    actor.role !== "platform_admin" &&
+    actor.role !== "manager"
+  ) {
+    return response(403, { error: "هذه الخدمة مخصصة لإدارة المنصة ومديري المؤسسات." });
   }
 
   try {
