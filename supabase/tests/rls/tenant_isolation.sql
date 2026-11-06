@@ -14,6 +14,7 @@ BEGIN
   END IF;
 END;
 $roles$;
+ALTER ROLE service_role BYPASSRLS;
 
 CREATE SCHEMA auth;
 CREATE TABLE auth.users (
@@ -28,6 +29,10 @@ AS $$
 $$;
 GRANT USAGE ON SCHEMA auth TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
+CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $
+ SELECT COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb)
+$;
+GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 
 \ir ../../migrations/20261104120358_create_water_management_foundation.sql
 \ir ../../migrations/20261104120514_tighten_water_management_grants.sql
@@ -35,6 +40,15 @@ GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 \ir ../../migrations/20261106104135_secure_request_identity_bridge_for_authz.sql
 \ir ../../migrations/20261106143808_add_tenant_foreign_key_indexes.sql
 \ir ../../migrations/20261106160000_harden_onboarding_function.sql
+\ir ../../migrations/20261106170000_add_managed_accounts_and_password_reset.sql
+\ir ../../migrations/20261106171000_enforce_temporary_password_access_gate.sql
+\ir ../../migrations/20261106172000_fence_sessions_after_password_reset.sql
+\ir ../../migrations/20261106173000_serialize_organization_account_limit_updates.sql
+
+GRANT USAGE ON SCHEMA public TO service_role;
+GRANT SELECT, UPDATE ON public.profiles TO service_role;
+GRANT SELECT ON public.organizations TO service_role;
+GRANT UPDATE (account_limit) ON public.organizations TO service_role;
 
 -- Future helper functions must inherit the dedicated owner's closed default ACL.
 SET LOCAL ROLE water_management_authz;
@@ -546,6 +560,52 @@ $onboarding_replay$;
 
 RESET ROLE;
 
+
+-- Managed account quotas, forced password change, and old-token fencing.
+INSERT INTO auth.users (id,email,raw_user_meta_data) VALUES
+('10000000-0000-4000-8000-000000000010','managed-10@example.test','{"display_name":"موظف مؤقت"}'),
+('10000000-0000-4000-8000-000000000011','managed-11@example.test','{"display_name":"موظف إضافي"}');
+UPDATE public.organizations SET account_limit=6 WHERE id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+SET LOCAL ROLE service_role;
+SELECT public.assign_managed_user('10000000-0000-4000-8000-000000000010','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','operator'::public.app_role,'worker10','موظف مؤقت');
+DO $managed_account_quota$
+DECLARE v_rejected boolean:=false;
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM public.profiles WHERE id='10000000-0000-4000-8000-000000000010' AND username='worker10' AND must_change_password AND role='operator'::public.app_role) THEN RAISE EXCEPTION 'Managed account was not provisioned with mandatory password change';END IF;
+ BEGIN
+  PERFORM public.assign_managed_user('10000000-0000-4000-8000-000000000011','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','operator'::public.app_role,'worker11','موظف إضافي');
+ EXCEPTION WHEN raise_exception THEN v_rejected:=true;END;
+ IF NOT v_rejected THEN RAISE EXCEPTION 'Organization account quota was exceeded';END IF;
+ v_rejected:=false;
+ BEGIN
+  PERFORM public.set_organization_account_limit('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',5);
+ EXCEPTION WHEN raise_exception THEN v_rejected:=true;END;
+ IF NOT v_rejected THEN RAISE EXCEPTION 'Account limit was reduced below current account count';END IF;
+END;$managed_account_quota$;
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000010',true);
+SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000010","role":"authenticated","iat":1000}',true);
+SELECT test_support.assert_scope('temporary-password account',0,0,0,0,1);
+RESET ROLE;
+UPDATE public.profiles SET must_change_password=false,session_invalid_before=to_timestamp(2000000000) WHERE id='10000000-0000-4000-8000-000000000010';
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000010',true);
+SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000010","role":"authenticated","iat":1000}',true);
+SELECT test_support.assert_scope('pre-reset token fenced',0,0,0,0,1);
+RESET ROLE;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000010',true);
+SELECT set_config('request.jwt.claims','{"sub":"10000000-0000-4000-8000-000000000010","role":"authenticated","iat":2100000000}',true);
+SELECT test_support.assert_scope('post-reset token accepted',1,0,0,0,1);
+RESET ROLE;
+DO $account_management_acl$
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_catalog.pg_enum e JOIN pg_catalog.pg_type t ON t.oid=e.enumtypid WHERE t.typname='app_role' AND e.enumlabel='platform_admin') THEN RAISE EXCEPTION 'Platform administrator role was not added';END IF;
+ IF pg_catalog.has_function_privilege('authenticated','public.assign_managed_user(uuid, uuid, public.app_role, text, text)','EXECUTE')
+ OR NOT pg_catalog.has_function_privilege('service_role','public.assign_managed_user(uuid, uuid, public.app_role, text, text)','EXECUTE') THEN RAISE EXCEPTION 'Managed account assignment RPC grants are incorrect';END IF;
+ IF pg_catalog.has_table_privilege('authenticated','public.account_audit_log','SELECT') OR pg_catalog.has_table_privilege('anon','public.account_audit_log','SELECT') THEN RAISE EXCEPTION 'Account audit log is exposed to API clients';END IF;
+END;$account_management_acl$;
 DELETE FROM public.pumps WHERE id = '20000000-0000-4000-8000-000000000003';
 DO $delete_behavior$
 BEGIN

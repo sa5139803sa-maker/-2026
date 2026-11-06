@@ -11,12 +11,14 @@ import {
 } from "react";
 import { supabase } from "@/lib/supabase";
 
-export type AppRole = "manager" | "operator" | "collector" | "supervisor";
+export type AppRole = "platform_admin" | "manager" | "operator" | "collector" | "supervisor";
 export type Profile = {
   id: string;
   organization_id: string | null;
   display_name: string;
   role: AppRole;
+  username: string | null;
+  must_change_password: boolean;
 };
 
 type AuthContextValue = {
@@ -40,7 +42,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 async function loadProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, organization_id, display_name, role")
+    .select("id, organization_id, display_name, role, username, must_change_password")
     .eq("id", userId)
     .maybeSingle();
 
@@ -48,6 +50,13 @@ async function loadProfile(userId: string): Promise<Profile | null> {
   return data as Profile | null;
 }
 
+export function usernameToAuthEmail(identifier: string): string {
+  const value=identifier.trim(); if(value.includes("@")) return value;
+  const normalized=value.normalize("NFKC").toLocaleLowerCase();
+  const bytes=new TextEncoder().encode(normalized);
+  const encoded=Array.from(bytes,b=>b.toString(16).padStart(2,"0")).join("");
+  return `u-${encoded}@login.water-management.invalid`;
+}
 function friendlyAuthError(): string {
   return "تعذر إكمال العملية. تحقق من البيانات واتصال الإنترنت ثم حاول مرة أخرى.";
 }
@@ -168,7 +177,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       signIn: async (email, password) => {
         const { error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
+          email: usernameToAuthEmail(email),
           password,
         });
         return error ? friendlyAuthError() : null;

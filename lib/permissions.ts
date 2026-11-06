@@ -11,7 +11,7 @@ export const roleAccess = {
   operations: ["manager", "operator"],
   collections: ["manager", "collector"],
   reports: ["manager", "supervisor"],
-  userManagement: ["manager"],
+  userManagement: ["manager", "platform_admin"],
 } as const satisfies Record<string, readonly AppRole[]>;
 
 export type ProtectedFeature = keyof typeof roleAccess;

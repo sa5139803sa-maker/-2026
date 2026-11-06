@@ -15,6 +15,7 @@ import { useAuth, type AppRole } from "@/lib/auth";
 import { canAccessFeature } from "@/lib/permissions";
 
 const roleLabels: Record<AppRole, string> = {
+  platform_admin: "مدير المنصة",
   manager: "مدير المؤسسة",
   operator: "مشغّل",
   collector: "محصّل",
@@ -35,10 +36,10 @@ const items = [
     enabled: false,
   },
   {
-    label: "المستخدمون والصلاحيات",
-    detail: "قيد التطوير",
+    label: "إدارة الحسابات",
+    detail: "إنشاء الحسابات وتعيين كلمات المرور المؤقتة",
     icon: ShieldCheck,
-    enabled: false,
+    enabled: true,
   },
   {
     label: "الإعدادات",
@@ -52,7 +53,7 @@ export default function MoreScreen() {
   const { profile, signOut } = useAuth();
   const displayName = profile?.display_name?.trim() || "المستخدم";
   const roleLabel = profile ? roleLabels[profile.role] : "دور غير محدد";
-  const visibleItems = items.filter((item) => item.label !== "المشتركون والغواطس" || canAccessFeature(profile?.role, "management"));
+  const visibleItems = items.filter((item) => item.label === "إدارة الحسابات" ? (profile?.role === "manager" || profile?.role === "platform_admin") : item.label !== "المشتركون والغواطس" || canAccessFeature(profile?.role, "management"));
   const initial = displayName.charAt(0) || "؟";
 
   return (
@@ -74,7 +75,7 @@ export default function MoreScreen() {
         <StatusBadge label="جلسة دخول" status="info" />
       </Card>
 
-      <PreviewBanner description="الأقسام غير المفعّلة معروضة للتعريف ببنية التطبيق فقط. لا يوجد ادعاء بأن التقارير أو المستخدمين أو إعدادات المزامنة تعمل حاليًا." />
+      <PreviewBanner description="إدارة الحسابات متاحة لمدير المنصة ومدير المؤسسة وفق نطاق الصلاحيات وحد المؤسسة." />
 
       <Text style={styles.heading}>الإدارة والإعدادات</Text>
 
@@ -85,7 +86,7 @@ export default function MoreScreen() {
             accessibilityRole="button"
             accessibilityState={{ disabled: !enabled }}
             disabled={!enabled}
-            onPress={() => router.push("/management")}
+            onPress={() => router.push(label === "إدارة الحسابات" ? "/account-management" : "/management")}
             style={({ pressed }) => [
               styles.menuItem,
               index === items.length - 1 && styles.lastMenuItem,

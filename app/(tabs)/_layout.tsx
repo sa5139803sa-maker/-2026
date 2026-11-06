@@ -17,7 +17,8 @@ export default function TabLayout() {
 
   useEffect(() => {
     if (!loading && !session) router.replace("/sign-in");
-  }, [loading, session]);
+    if (!loading && session && profile?.must_change_password) router.replace("/change-password");
+  }, [loading, session, profile?.must_change_password]);
 
   if (loading) {
     return (
@@ -27,7 +28,7 @@ export default function TabLayout() {
     );
   }
 
-  if (!session) return null;
+  if (!session || profile?.must_change_password) return null;
 
   if (!profile) {
     return (
