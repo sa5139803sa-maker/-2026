@@ -34,7 +34,9 @@ jobs:
         run: npm ci
 
       - name: Type-check Supabase Edge Functions
-        run: deno check --node-modules-dir=auto supabase/functions/manage-accounts/index.ts
+        run: |
+          deno check --node-modules-dir=auto supabase/functions/manage-accounts/index.ts
+          deno check --node-modules-dir=auto supabase/functions/subscriber-lookup/index.ts
 
       - name: Dependency vulnerability report
         shell: bash
