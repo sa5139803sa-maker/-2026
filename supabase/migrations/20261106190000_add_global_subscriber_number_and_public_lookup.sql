@@ -403,14 +403,6 @@ GRANT EXECUTE ON FUNCTION public.lookup_subscriber_portal(integer, text, text)
 
 COMMENT ON FUNCTION public.lookup_subscriber_portal(integer, text, text) IS
   'Rate-limited exact match on a random global six-digit subscriber number and normalized phone. Returns a minimal portal projection; service_role only.';
-);
-
--- A phone may be shared by multiple household subscribers in one organization.
--- Keep a lookup index, but do not impose uniqueness on the contact phone.
-DROP INDEX IF EXISTS public.subscribers_org_phone_normalized_idx;
-CREATE INDEX subscribers_org_phone_normalized_idx
-  ON public.subscribers (organization_id, phone_normalized)
-  WHERE phone_normalized IS NOT NULL;
 
 -- Reserve numbers independently of subscriber rows. Allocations are never
 -- deleted/reused, even if a subscriber is archived or deleted.
