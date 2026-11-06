@@ -8,21 +8,12 @@ on:
       - "supabase/migrations/**"
       - "supabase/tests/rls/tenant_isolation.sql"
       - ".github/workflows/web-console.yml"
-  push:
-    branches:
-      - security/tenant-isolation-rls
-    paths:
-      - "apps/web/**"
-      - "supabase/functions/manage-accounts/**"
-      - "supabase/migrations/**"
-      - "supabase/tests/rls/tenant_isolation.sql"
-      - ".github/workflows/web-console.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: web-console-${{ github.ref }}
+  group: web-console-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
