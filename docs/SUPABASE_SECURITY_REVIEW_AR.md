@@ -367,3 +367,16 @@ Health Advisor بلا ملاحظات. ظلت PR #2 مفتوحة ومسودة، �
 - لا يُعد الرقم والهاتف إثباتًا تقنيًا لملكية الهاتف؛ لذلك يقتصر الرد على الاسم ورقم الاشتراك والغطاس ورمزه وآخر أربعة أرقام للهاتف.
 - أول CI بعد إدخال بوابة المشترك كشف خطأ TypeScript في invoke واختبار ACL لا يعكس منح `USAGE` المقصود لـservice_role. تم تعديل الاستدعاء والاختبار، مع توسيع اختبارات الست خانات والتفرد وعدم قابلية التعديل.
 - لا تزال الترحيلة غير مطبقة على قاعدة التطوير، والدالة غير منشورة للعامة حتى نجاح أحدث CI.
+
+
+## 10.5 حالة النشر والتحقق الحي لبوابة المشترك — 2026-11-06
+
+- ترحيلة `20261106190000_add_global_subscriber_number_and_public_lookup.sql` مطبقة على Supabase development بالإصدار `20261106205705`.
+- `subscriber_number` إلزامي ضمن 100000–999999 وفريد عالميًا، مع سجل حجز داخلي يمنع إعادة الاستخدام. `phone` و`phone_normalized` إلزاميان، لكن الهاتف غير فريد؛ يسمح بمشاركة رقم الأسرة.
+- الفهرس `subscribers_subscriber_number_global_uidx` فريد عالميًا، والفهرس `subscribers_org_phone_normalized_idx` غير فريد.
+- Edge Function `subscriber-portal` نشطة بالإصدار 1 مع `verify_jwt=false`. لا يوجد `service_role` في الواجهة؛ وظيفة Edge هي المستهلك الخادمي للسر.
+- تحققنا من أن `anon` و`authenticated` لا يملكان EXECUTE على RPC، وأن `service_role` فقط يملك التنفيذ، كما أن registry وجداول rate limit غير مكشوفة إلى API roles.
+- اختبار RPC حي تحت `service_role` لرقم غير موجود أعاد `found=false` دون خطأ. نُفذ داخل معاملة انتهت بـ`ROLLBACK`. لا توجد سجلات مشتركين في قاعدة التطوير، لذا لا يمكن إثبات تطابق سجل حقيقي حتى إدخال بيانات اختبارية.
+- CI على SHA `86dad24be7aa8895bcda34ed6884ed20db527af3`: Web #89 وQuality #249 وPostgreSQL RLS #403 — جميعها success.
+- Health Advisor بلا ملاحظات. Security Advisor ما زال يحذر من تعطيل `auth_leaked_password_protection`؛ يجب تفعيله قبل إطلاق حسابات الإدارة للعامة. Performance Advisor لا يعرض مفاتيح أجنبية غير مفهرسة، مع 12 ملاحظة `unused_index` من نوع INFO بسبب قلة البيانات.
+- اختبار HTTP من متصفح حقيقي، وIP headers/rate limiting عبر مضيف staging، ونشر Next.js، ما زالت بوابات قبل الإنتاج.
