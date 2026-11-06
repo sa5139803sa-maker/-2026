@@ -781,3 +781,17 @@
 - **IP:** أصبحت الدالة تفضّل `x-vercel-forwarded-for` عند الاستضافة على Vercel، ثم تستخدم fallback هيدر البوابة الموثوق. لا يزال إعداد proxy موثوق شرطًا للنشر.
 - **الحالة:** إصلاحات الكود والاختبارات أضيفت إلى فرع العمل؛ بانتظار إعادة تشغيل CI. لم تُطبق ترحيلة البوابة على Supabase development ولم تُنشر Edge Function العامة بعد.
 - **قرار القبول:** لا تُعلن بوابة المشترك مكتملة أو متاحة للعامة قبل نجاح PostgreSQL RLS وWeb CI على أحدث SHA، ثم تطبيق الترحيلة ونشر الدالة واختبار staging.
+
+
+### 2026-11-06 — نشر بوابة المشترك على Supabase development واجتياز بوابات CI
+
+- **ترحيلة قاعدة البيانات:** طُبقت `20261106190000_add_global_subscriber_number_and_public_lookup.sql` بنجاح على المشروع `kxdncnswbwktbiphptbr`؛ سجل Supabase الإصدار `20261106205705`.
+- **الترقيم:** العمود `subscribers.subscriber_number` أصبح `NOT NULL`، ضمن المجال 100000–999999، مع فهرس UNIQUE عالمي. رقم المشترك عشوائي ويُحجز في registry داخلي ولا يعاد استخدامه بعد الحذف.
+- **الهاتف:** `phone` و`phone_normalized` إلزاميان. الفهرس `subscribers_org_phone_normalized_idx` غير فريد، حتى يستطيع أفراد الأسرة مشاركة هاتف واحد. أزيل قيد التفرد القديم للهاتف داخل المؤسسة.
+- **الصلاحيات:** تحققنا أن `anon` و`authenticated` لا يستطيعان تنفيذ `lookup_subscriber_portal`، وأن `service_role` فقط يستطيع ذلك. لا يستطيع `anon` قراءة جدول الحصص أو سجل حجز الأرقام أو استخدام المخطط الداخلي. مُنحت `USAGE` على `extensions` إلى `service_role` فقط من أجل HMAC في RPC.
+- **اختبار RPC حي:** استدعاء `lookup_subscriber_portal` بدور `service_role` أعاد `found=false` و`rate_limited=false` لرقم غير موجود، داخل معاملة `ROLLBACK`. عدد سجلات المشتركين في قاعدة التطوير ما زال صفرًا؛ لذلك لم يُختبر تطابق سجل حقيقي.
+- **Edge Function:** نُشرت `subscriber-portal` بالإصدار 1، الحالة `ACTIVE`، و`verify_jwt=false`. هذه نقطة الدخول العامة الوحيدة، وتستدعي RPC الخادمية بمفتاح service role من بيئة Edge Function فقط.
+- **CI النهائي على SHA `86dad24be7aa8895bcda34ed6884ed20db527af3`:** Web Console #89 (`42292553238`) success؛ Quality #249 (`42292553220`) success؛ PostgreSQL RLS #403 (`42292553262`) success. تضمنت اختبارات SQL حدود الست خانات، التفرد العالمي، عدم قابلية تغيير الرقم، عدم كشف registry، مشاركة الهاتف، HMAC/rate limit، وتطابق الهاتف.
+- **Advisors بعد النشر:** Health `lints: []`. Security بقي تحذير واحد `auth_leaked_password_protection` وهو إعداد Auth عام غير مفعل، وليس نتيجة من بوابة المشترك. Performance لا توجد ملاحظات `unindexed_foreign_keys`؛ بقيت 12 ملاحظة `unused_index` من INFO على قاعدة تطوير بلا بيانات تشغيل.
+- **المتبقي:** اختبار HTTP end-to-end للدالة العامة وواجهة `/portal` ببيانات اصطناعية على staging، والتحقق من IP الحقيقي وحدود المحاولات عبر الاستضافة. لم يُنشر تطبيق Next.js على نطاق عام.
+- **قرار القبول:** بوابة المشترك مطبقة على بيئة التطوير من ناحية المخطط والدالة الخلفية وCI؛ لا تُعلن جاهزة للإنتاج أو مفتوحة للعامة قبل اختبار staging ومراجعة تحذير Auth.
