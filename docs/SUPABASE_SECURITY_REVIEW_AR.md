@@ -442,3 +442,22 @@ ALTER TABLE water_management_private.portal_rate_limits ENABLE ROW LEVEL SECURIT
 - متغيرات Supabase العامة موجودة في Preview للفرع الأمني فقط؛ لا توجد قيمة `service_role` أو Secret في `NEXT_PUBLIC_*`.
 - جرى ضبط أمر تثبيت Vercel ليولّد lockfile من `package.json`، ثم يشغّل `npm audit --audit-level=high` و`npm ci` قبل البناء. CI ينفذ الترتيب نفسه تقريبًا ويحتفظ بنسخة lockfile الناتجة كأثر مؤقت؛ lockfile ليس متتبعًا في Git حاليًا.
 - نجحت معاينة سابقة في Next build وTypeScript وHTTP smoke للصفحات الأساسية. لا يزال اختبار POST لمسار الإدارة والاختبار الحي لبوابة المشترك غير منفذين بسبب عدم توفر عميل HTTP POST في أدوات الفحص المستخدمة؛ لا تسجل كاختبارات ناجحة.
+
+
+## 10.12 إعادة تحقق مباشرة من ACL والـTrigger — 2026-11-07
+
+أُعيد تنفيذ استعلامات قراءة فقط على مشروع Supabase الأساسي بعد التحقق من حالة Advisor.
+
+- تأكد أن RLS ما زال **غير مفعّل** على الجداول الثلاثة: `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits`؛ كما أن `FORCE ROW LEVEL SECURITY` غير مفعّل.
+- `anon` لا يملك `USAGE` على `water_management_private`، ولا يملك أي امتياز CRUD مباشر على الجداول الثلاثة.
+- `authenticated` يملك `USAGE` على المخطط الخاص، لكنه لا يملك أي امتياز `SELECT/INSERT/UPDATE/DELETE` مباشر على أي من الجداول الثلاثة.
+- `anon` و`authenticated` لا يملكان `BYPASSRLS`. كل من `service_role` و`postgres` يملك `BYPASSRLS`.
+- جدول `portal_rate_limit_secret`: لدى `service_role` صلاحية SELECT فقط؛ ولا يملك INSERT أو UPDATE أو DELETE. جدول `portal_rate_limits`: لدى `service_role` صلاحيات CRUD اللازمة. جدول `subscriber_number_registry`: لا يملك `service_role` امتيازات مباشرة؛ Trigger المشترك هو مسار التخصيص.
+- Trigger `subscribers_enforce_portal_fields` على `public.subscribers` يستدعي `water_management_private.enforce_subscriber_portal_fields`؛ الدالة مملوكة لـ`postgres`، من نوع `SECURITY DEFINER`، وضُبط لها `search_path = ''`، ولا يملك EXECUTE عليها إلا `postgres`.
+- RPC `public.lookup_subscriber_portal` من نوع `SECURITY INVOKER`، وACL التنفيذ الظاهر هو `postgres` و`service_role` فقط. دالة تطبيع الهاتف الداخلية `SECURITY INVOKER` والتنفيذ لـ`service_role` فقط.
+
+**تفسير النتيجة:** لم يثبت هذا الفحص وجود صلاحية مباشرة لـ`anon` أو`authenticated` على الجداول الخاصة وفق ACL الحالية. مع ذلك يظل تحذير `rls_disabled` الحرج قائمًا؛ عدم وجود GRANT مباشر لا يعادل تفعيل RLS ولا يبرر تجاهل التحذير. لم تُنفذ أي أوامر DDL أو تغييرات على السياسات أو البيانات. تفعيل RLS ما زال ينتظر قرار مالك المشروع.
+
+- Security Advisor: تحذير `auth_leaked_password_protection` ما زال WARN.
+- Health Advisor: بلا ملاحظات.
+- Performance Advisor: 12 ملاحظة `unused_index` من نوع INFO؛ لم تُحذف فهارس لأن قاعدة البيانات لا تزال بلا بيانات تشغيل كافية للحكم على استخدامها.
