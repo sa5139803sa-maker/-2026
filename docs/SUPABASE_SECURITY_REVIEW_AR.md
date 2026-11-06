@@ -407,3 +407,38 @@ Health Advisor بلا ملاحظات. ظلت PR #2 مفتوحة ومسودة، �
 - اختبارات Deno تؤكد تجاهل الرؤوس التي يستطيع العميل تمريرها، وقبول الرأس الموثوق وحده. نجح type-check واختبار Deno في CI.
 - نُشرت `subscriber-portal` v2 على المشروع الأساسي؛ لا تغيير على سياسة RPC أو مفاتيح HMAC أو عدم كشف سجلات المشتركين.
 - لا يزال التحقق الحي من headers عبر HTTP والمتصفح مطلوبًا قبل الإطلاق العام، للتأكد من أن مسار Supabase الحالي يمرر `cf-connecting-ip` كما هو متوقع.
+
+## 10.9 مراجعة صلاحيات الجداول الخاصة وتحذير RLS — 2026-11-07
+
+### نتيجة الفحص الحالي
+- أظهر Supabase Security/Database Advisor تحذيرًا حرجًا `rls_disabled` على ثلاثة جداول في المخطط `water_management_private`: `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits`.
+- لذلك تبقى هذه الجداول دون Row Level Security مفعّل؛ هذا نقص دفاعي يجب إغلاقه قبل الإطلاق العام، ولا ينبغي إسقاط التحذير.
+- فحص الصلاحيات الفعلية عبر PostgreSQL أظهر أن `anon` لا يملك USAGE على `water_management_private` ولا أي صلاحية SELECT/INSERT/UPDATE/DELETE على الجداول الثلاثة.
+- يملك `authenticated` صلاحية USAGE على المخطط، لكنه لا يملك أي صلاحية SELECT/INSERT/UPDATE/DELETE مباشرة على الجداول الثلاثة.
+- الدور `service_role` يملك `BYPASSRLS`. لديه صلاحيات القراءة/الكتابة اللازمة على جدولي rate-limit والسر؛ جدول registry لا يملك له صلاحيات مباشرة، ويُدار عبر Trigger مملوك لـ`postgres` بصلاحية `SECURITY DEFINER`.
+- دوال RPC العامة الحساسة (`lookup_subscriber_portal`, `assign_managed_user`, `set_organization_account_limit`, `create_platform_organization`) هي `SECURITY INVOKER`، وEXECUTE متاح لـ`service_role` فقط؛ لم يجد الفحص صلاحية تنفيذها لـ`anon` أو `authenticated`.
+- بناءً على هذه الـACLs لا توجد صلاحية مباشرة حالية لعميل `anon` أو `authenticated` على الجداول الخاصة. لكن هذا لا يعادل تفعيل RLS، ولا يلغي تحذير Advisor؛ كما لم يُتحقق من إعداد exposed schemas في لوحة Data API ضمن هذا الفحص.
+
+### خيار المعالجة المقترح — لم يُنفذ
+تفعيل RLS على الجداول الثلاثة دون إضافة سياسات للعميل سيجعل الوصول الافتراضي مرفوضًا للأدوار التي لا تتجاوز RLS. الدور الخادمي `service_role` ومالك Trigger `postgres` لهما تجاوز RLS بحسب فحص الأدوار الحالي. قبل التطبيق يجب الحفاظ على حظر منح هذه الجداول إلى `anon` و`authenticated`، ثم إعادة اختبار مسارات الـRPC والـTrigger.
+
+```sql
+ALTER TABLE water_management_private.subscriber_number_registry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE water_management_private.portal_rate_limit_secret ENABLE ROW LEVEL SECURITY;
+ALTER TABLE water_management_private.portal_rate_limits ENABLE ROW LEVEL SECURITY;
+```
+
+**الحالة:** لا تنفذ هذه الأوامر تلقائيًا. يلزم قرار مالك المشروع بالموافقة على تفعيل RLS بلا سياسات عميل، أو تحديد سياسات خاصة إن كانت هناك حاجة جديدة ومبررة. لا تُمنح `anon` أو `authenticated` أي وصول مباشر لهذه الجداول.
+
+## 10.10 إعداد كلمات المرور المسرّبة — 2026-11-07
+
+- ما زال Security Advisor يعرض `auth_leaked_password_protection` بمستوى WARN؛ الميزة غير مفعّلة في إعدادات Auth حتى وقت هذا الفحص.
+- توثيق Supabase الحالي يوضح أن الحماية تستخدم قاعدة HaveIBeenPwned Pwned Passwords API، وأن الميزة متاحة على Pro وما فوق: https://supabase.com/docs/guides/auth/password-security.
+- لم تُغيّر إعدادات Auth عبر أدوات هذه الجلسة؛ يلزم تفعيلها من Authentication → Settings في لوحة Supabase إذا كانت الخطة تدعمها، ثم إعادة فحص Advisor.
+
+## 10.11 مراجعة سلوك معاينة الويب وRuntime — 2026-11-07
+
+- مشروع Vercel `water-management-web` يستخدم Next.js من `apps/web` وNode.js 22.x، ومعاينات الفرع محمية بـSSO.
+- متغيرات Supabase العامة موجودة في Preview للفرع الأمني فقط؛ لا توجد قيمة `service_role` أو Secret في `NEXT_PUBLIC_*`.
+- جرى ضبط أمر تثبيت Vercel ليولّد lockfile من `package.json`، ثم يشغّل `npm audit --audit-level=high` و`npm ci` قبل البناء. CI ينفذ الترتيب نفسه تقريبًا ويحتفظ بنسخة lockfile الناتجة كأثر مؤقت؛ lockfile ليس متتبعًا في Git حاليًا.
+- نجحت معاينة سابقة في Next build وTypeScript وHTTP smoke للصفحات الأساسية. لا يزال اختبار POST لمسار الإدارة والاختبار الحي لبوابة المشترك غير منفذين بسبب عدم توفر عميل HTTP POST في أدوات الفحص المستخدمة؛ لا تسجل كاختبارات ناجحة.
