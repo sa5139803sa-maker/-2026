@@ -512,3 +512,16 @@
 - [ ] اختبار browser-to-Edge Function لبوابة المشترك وCORS و`cf-connecting-ip` وحدود 429 ما زال مفتوحًا. HTTP 200 للصفحة يثبت تقديم HTML فقط ولا يثبت نجاح استعلام المشترك.
 - [ ] لا يوجد نشر إنتاجي أو نطاق عام، ولا دمج لـPR #2. جميع فحوص CI الناجحة لا تغلق بوابات Supabase Advisor أو اختبارات API الحية.
 
+
+
+## متابعة تفعيل RLS للمخطط الخاص — 2026-11-07
+
+- [x] موافقة المالك على تفعيل RLS على الجداول الثلاثة في `water_management_private` دون إنشاء سياسات وصول للعميل.
+- [x] إعداد ترحيلة `supabase/migrations/20261107010000_enable_private_schema_rls.sql` لتفعيل RLS وإعادة تأكيد سحب صلاحيات `PUBLIC` و`anon` و`authenticated`، مع الحفاظ على منح `service_role` الحالية.
+- [x] توسيع `supabase/tests/rls/tenant_isolation.sql` للتحقق من تفعيل RLS على الجداول الثلاثة، وعدم وجود سياسات عليها، وعدم منح صلاحيات CRUD مباشرة إلى `anon` أو `authenticated`، وبقاء منح `service_role` وBYPASSRLS اللازمة.
+- [ ] اجتياز PostgreSQL RLS CI بعد إضافة الترحيلة والاختبارات.
+- [ ] تطبيق الترحيلة على مشروع `kxdncnswbwktbiphptbr` بعد نجاح CI.
+- [ ] اختبار Trigger تخصيص رقم المشترك وRPC بوابة المشترك تحت `service_role` داخل معاملة تنتهي بـ`ROLLBACK`.
+- [ ] إعادة تشغيل Security وPerformance وHealth Advisors والتحقق من إزالة تنبيه RLS دون ظهور أخطاء جديدة.
+
+**حدود التغيير:** لا تُنشأ سياسات للجداول الخاصة، ولا يُمنح وصول مباشر لأي عميل، ولا يُفعّل `FORCE ROW LEVEL SECURITY`. تبقى صلاحيات `service_role` الخادمية وملكية Trigger الحالية كما هي. لا يتضمن هذا التغيير إعداد Auth أو النشر أو دمج PR.

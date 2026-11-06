@@ -461,3 +461,12 @@ ALTER TABLE water_management_private.portal_rate_limits ENABLE ROW LEVEL SECURIT
 - Security Advisor: تحذير `auth_leaked_password_protection` ما زال WARN.
 - Health Advisor: بلا ملاحظات.
 - Performance Advisor: 12 ملاحظة `unused_index` من نوع INFO؛ لم تُحذف فهارس لأن قاعدة البيانات لا تزال بلا بيانات تشغيل كافية للحكم على استخدامها.
+
+
+## 10.13 موافقة المالك وإعداد معالجة RLS — 2026-11-07
+
+- وافق المالك صراحة على تفعيل RLS على الجداول الثلاثة: `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits`.
+- التغيير المحدد لا ينشئ أي سياسة وصول جديدة؛ تبقى الجداول بلا سياسات، فلا يحصل `anon` أو`authenticated` على وصول عبر RLS.
+- أُعدت ترحيلة `supabase/migrations/20261107010000_enable_private_schema_rls.sql` لتفعيل RLS وإعادة سحب أي صلاحيات موروثة/مباشرة من `PUBLIC` و`anon` و`authenticated`. لا تسحب الترحيلة منح `service_role` المحددة سابقًا، ولا تفعّل `FORCE ROW LEVEL SECURITY`.
+- أضيفت اختبارات PostgreSQL للتحقق من حالة RLS وغياب السياسات وغياب CRUD للعميل والحفاظ على صلاحيات `service_role` وBYPASSRLS.
+- **الحالة قبل التطبيق:** الترحيلة والاختبارات أُعدتا على فرع العمل؛ ينتظر التطبيق نجاح CI. بعد ذلك يجب التحقق على مشروع Supabase من Trigger تخصيص الرقم وRPC البحث، ثم إعادة تشغيل Advisors.

@@ -48,6 +48,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261106175000_index_account_audit_log_foreign_keys.sql
 \ir ../../migrations/20261106180000_create_platform_organization_admin_rpc.sql
 \ir ../../migrations/20261106190000_add_global_subscriber_number_and_public_lookup.sql
+\ir ../../migrations/20261107010000_enable_private_schema_rls.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -222,6 +223,91 @@ BEGIN
   END IF;
 END;
 $private_schema_acl$;
+
+  -- Defense in depth: all private portal tables must enforce RLS without
+  -- introducing policies or direct client table access.
+  IF (
+    SELECT count(*)
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'water_management_private'
+      AND c.relkind = 'r'
+      AND c.relname IN (
+        'subscriber_number_registry',
+        'portal_rate_limit_secret',
+        'portal_rate_limits'
+      )
+      AND c.relrowsecurity
+  ) <> 3 THEN
+    RAISE EXCEPTION 'RLS must be enabled on all three private portal tables';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_policies
+    WHERE schemaname = 'water_management_private'
+      AND tablename IN (
+        'subscriber_number_registry',
+        'portal_rate_limit_secret',
+        'portal_rate_limits'
+      )
+  ) THEN
+    RAISE EXCEPTION 'Private portal tables must not have client-access policies';
+  END IF;
+
+  IF
+    pg_catalog.has_table_privilege('anon', 'water_management_private.subscriber_number_registry', 'SELECT')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.subscriber_number_registry', 'INSERT')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.subscriber_number_registry', 'UPDATE')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.subscriber_number_registry', 'DELETE')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.subscriber_number_registry', 'SELECT')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.subscriber_number_registry', 'INSERT')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.subscriber_number_registry', 'UPDATE')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.subscriber_number_registry', 'DELETE')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.portal_rate_limit_secret', 'SELECT')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.portal_rate_limit_secret', 'INSERT')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.portal_rate_limit_secret', 'UPDATE')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.portal_rate_limit_secret', 'DELETE')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.portal_rate_limit_secret', 'SELECT')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.portal_rate_limit_secret', 'INSERT')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.portal_rate_limit_secret', 'UPDATE')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.portal_rate_limit_secret', 'DELETE')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.portal_rate_limits', 'SELECT')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.portal_rate_limits', 'INSERT')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.portal_rate_limits', 'UPDATE')
+    OR pg_catalog.has_table_privilege('anon', 'water_management_private.portal_rate_limits', 'DELETE')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.portal_rate_limits', 'SELECT')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.portal_rate_limits', 'INSERT')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.portal_rate_limits', 'UPDATE')
+    OR pg_catalog.has_table_privilege('authenticated', 'water_management_private.portal_rate_limits', 'DELETE')
+  THEN
+    RAISE EXCEPTION 'anon/authenticated must not have direct privileges on private portal tables';
+  END IF;
+
+  IF NOT pg_catalog.has_table_privilege(
+       'service_role', 'water_management_private.portal_rate_limit_secret', 'SELECT'
+     )
+     OR NOT pg_catalog.has_table_privilege(
+       'service_role', 'water_management_private.portal_rate_limits', 'SELECT'
+     )
+     OR NOT pg_catalog.has_table_privilege(
+       'service_role', 'water_management_private.portal_rate_limits', 'INSERT'
+     )
+     OR NOT pg_catalog.has_table_privilege(
+       'service_role', 'water_management_private.portal_rate_limits', 'UPDATE'
+     )
+     OR NOT pg_catalog.has_table_privilege(
+       'service_role', 'water_management_private.portal_rate_limits', 'DELETE'
+     )
+     OR pg_catalog.has_table_privilege(
+       'service_role', 'water_management_private.subscriber_number_registry', 'SELECT'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_roles
+       WHERE rolname = 'service_role' AND rolbypassrls
+     ) THEN
+    RAISE EXCEPTION 'Trusted service_role grants/BYPASSRLS changed unexpectedly';
+  END IF;
 
 DROP FUNCTION water_management_private.default_acl_probe();
 

@@ -951,3 +951,11 @@
   - `GET /api/admin/accounts`: 405 Method Not Allowed؛ المسار يدعم POST، ولم ننفذ POST.
 - لا توجد مؤسسات/حسابات اختبار أنشئت، ولا بيانات Supabase تغيرت. اختبار POST المخول/غير المخول واختبار HTTP الحي للبوابة وحدود 429 ما زالا مفتوحين.
 - PR #2 ما زال Draft وغير مدمج. لم يتغير `main` ولم يحدث Production deploy.
+
+
+### 2026-11-07 — الموافقة وإعداد ترحيلة RLS للجداول الخاصة
+
+- وافق مالك المشروع صراحة على تفعيل RLS على `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits` داخل `water_management_private`، دون سياسات وصول للعميل.
+- أُعدت الترحيلة `supabase/migrations/20261107010000_enable_private_schema_rls.sql`: تفعيل RLS للجداول الثلاثة وإعادة تأكيد `REVOKE ALL` عن `PUBLIC` و`anon` و`authenticated`، دون سحب منح `service_role` المحددة.
+- أضيفت إلى اختبار PostgreSQL assertions تتحقق من RLS وعدم وجود سياسات أو صلاحيات CRUD مباشرة للعميل، ومن بقاء امتيازات `service_role` وBYPASSRLS المطلوبة.
+- هذه المرحلة توثّق إعداد التغيير فقط؛ لم تُطبّق الترحيلة على Supabase بعد في هذا الـcommit. ينتظر التطبيق نجاح CI، ثم يُختبر Trigger وRPC داخل معاملة `ROLLBACK`.
