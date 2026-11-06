@@ -39,7 +39,7 @@ jobs:
           deno check --node-modules-dir=auto supabase/functions/subscriber-portal/index.ts
 
       - name: Test trusted subscriber gateway IP extraction
-        run: deno test supabase/functions/subscriber-portal/trusted-gateway-ip_test.ts
+        run: deno test supabase/functions/subscriber-portal/trusted-gateway-ip.deno.ts
 
       - name: Dependency vulnerability report
         shell: bash
