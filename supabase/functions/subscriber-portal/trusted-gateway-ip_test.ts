@@ -23,5 +23,5 @@ Deno.test("does not trust caller-controlled forwarding headers", () => {
 Deno.test("fails closed for missing, comma-separated, or malformed header values", () => {
   assertEquals(trustedGatewayIp(new Headers()), null);
   assertEquals(trustedGatewayIp(new Headers({ "cf-connecting-ip": "203.0.113.1, 198.51.100.2" })), null);
-  assertEquals(trustedGatewayIp(new Headers({ "cf-connecting-ip": "203.0.113.1\nX-Real-IP: 1.2.3.4" })), null);
+  assertEquals(trustedGatewayIp(new Headers({ "cf-connecting-ip": "203.0.113.1 invalid" })), null);
 });
