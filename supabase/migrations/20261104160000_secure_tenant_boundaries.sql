@@ -106,7 +106,7 @@ COMMENT ON CONSTRAINT subscribers_pump_tenant_fkey ON public.subscribers IS
 
 CREATE SCHEMA IF NOT EXISTS water_management_private;
 REVOKE ALL ON SCHEMA water_management_private FROM PUBLIC, anon, authenticated, service_role;
-GRANT USAGE ON SCHEMA water_management_private TO authenticated;
+GRANT USAGE ON SCHEMA water_management_private TO authenticated, water_management_authz;
 
 -- Own authorization helpers with a dedicated NOLOGIN role, not postgres.
 -- It can bypass RLS only to read profiles, which is required to avoid policy recursion.
@@ -126,10 +126,9 @@ ALTER ROLE water_management_authz NOLOGIN BYPASSRLS;
 -- this migration role to SET ROLE before changing its own default privileges.
 GRANT water_management_authz TO CURRENT_USER WITH SET TRUE, INHERIT FALSE;
 
-GRANT USAGE ON SCHEMA public, auth TO water_management_authz;
+GRANT USAGE ON SCHEMA public TO water_management_authz;
 GRANT SELECT ON TABLE public.profiles TO water_management_authz;
 GRANT USAGE ON TYPE public.app_role TO water_management_authz;
-GRANT EXECUTE ON FUNCTION auth.uid() TO water_management_authz;
 GRANT CREATE ON SCHEMA water_management_private TO water_management_authz;
 
 -- This owner is dedicated to this application's helper functions, so its global
@@ -139,6 +138,22 @@ ALTER DEFAULT PRIVILEGES
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role;
 RESET ROLE;
 
+-- Supabase owns the auth schema with its managed auth-admin role. The project-level
+-- postgres role cannot grant auth schema USAGE to our isolated helper owner.
+-- This narrow bridge is postgres-owned, accepts no user-supplied identity, and
+-- exposes only the current request's authenticated user id to the private owner.
+CREATE OR REPLACE FUNCTION water_management_private.request_user_id()
+RETURNS uuid
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = ''
+AS $
+  SELECT auth.uid()
+$;
+REVOKE ALL ON FUNCTION water_management_private.request_user_id()
+  FROM PUBLIC, anon, authenticated, service_role, water_management_authz;
+GRANT EXECUTE ON FUNCTION water_management_private.request_user_id()
+  TO water_management_authz;
+
 CREATE OR REPLACE FUNCTION water_management_private.current_user_organization_id()
 RETURNS uuid
 LANGUAGE sql STABLE SECURITY DEFINER
@@ -146,7 +161,7 @@ SET search_path = ''
 AS $$
   SELECT p.organization_id
   FROM public.profiles p
-  WHERE p.id = (SELECT auth.uid())
+  WHERE p.id = (SELECT water_management_private.request_user_id())
 $$;
 
 CREATE OR REPLACE FUNCTION water_management_private.current_user_role()
@@ -156,7 +171,7 @@ SET search_path = ''
 AS $$
   SELECT p.role
   FROM public.profiles p
-  WHERE p.id = (SELECT auth.uid())
+  WHERE p.id = (SELECT water_management_private.request_user_id())
 $$;
 
 ALTER FUNCTION water_management_private.current_user_organization_id() OWNER TO water_management_authz;
@@ -246,7 +261,7 @@ DROP POLICY IF EXISTS "users_select_own_profile" ON public.profiles;
 CREATE POLICY "users_select_own_profile" ON public.profiles
   FOR SELECT TO authenticated
   USING (
-    id = (SELECT auth.uid())
+    id = (SELECT water_management_private.request_user_id())
     OR (
       organization_id = (SELECT water_management_private.current_user_organization_id())
       AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
@@ -256,8 +271,8 @@ CREATE POLICY "users_select_own_profile" ON public.profiles
 DROP POLICY IF EXISTS "users_update_own_display_name" ON public.profiles;
 CREATE POLICY "users_update_own_display_name" ON public.profiles
   FOR UPDATE TO authenticated
-  USING (id = (SELECT auth.uid()))
-  WITH CHECK (id = (SELECT auth.uid()));
+  USING (id = (SELECT water_management_private.request_user_id()))
+  WITH CHECK (id = (SELECT water_management_private.request_user_id()));
 
 DROP POLICY IF EXISTS "members_select_pumps" ON public.pumps;
 CREATE POLICY "members_select_pumps" ON public.pumps
@@ -270,7 +285,7 @@ CREATE POLICY "members_select_pumps" ON public.pumps
         SELECT 1 FROM public.pump_assignments pa
         WHERE pa.pump_id = pumps.id
           AND pa.organization_id = pumps.organization_id
-          AND pa.user_id = (SELECT auth.uid())
+          AND pa.user_id = (SELECT water_management_private.request_user_id())
           AND pa.assignment_role = (SELECT water_management_private.current_user_role())
       )
     )
@@ -311,7 +326,7 @@ CREATE POLICY "members_select_assignments" ON public.pump_assignments
     organization_id = (SELECT water_management_private.current_user_organization_id())
     AND (
       (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
-      OR user_id = (SELECT auth.uid())
+      OR user_id = (SELECT water_management_private.request_user_id())
     )
   );
 
@@ -358,7 +373,7 @@ CREATE POLICY "members_select_subscribers" ON public.subscribers
           SELECT 1 FROM public.pump_assignments pa
           WHERE pa.pump_id = subscribers.pump_id
             AND pa.organization_id = subscribers.organization_id
-            AND pa.user_id = (SELECT auth.uid())
+            AND pa.user_id = (SELECT water_management_private.request_user_id())
             AND pa.assignment_role = (SELECT water_management_private.current_user_role())
         )
       )
