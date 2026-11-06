@@ -95,6 +95,24 @@ Deno.serve(async (req: Request) => {
   if (actorError || !actorData) return response(403, { error: "لا يوجد ملف صلاحيات صالح لهذا الحساب." });
 
   const actor = actorData as Profile;
+
+  // Enforce role-to-tenant invariants inside the privileged function itself.
+  // The web Route Handler also checks these values, but direct Edge Function
+  // callers must pass the same server-side authorization boundary.
+  if (
+    (actor.role === "platform_admin" && actor.organization_id !== null) ||
+    (actor.role === "manager" && !actor.organization_id)
+  ) {
+    return response(403, { error: "نطاق صلاحيات الحساب غير صالح." });
+  }
+
+  if (
+    actor.role !== "platform_admin" &&
+    actor.role !== "manager"
+  ) {
+    return response(403, { error: "هذه الخدمة مخصصة لإدارة المنصة ومديري المؤسسات." });
+  }
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();
