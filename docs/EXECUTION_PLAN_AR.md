@@ -414,3 +414,24 @@
 رابط المعاينة الحالي: https://water-management-web-git-secu-0cdcbe-sa5139803sa-2072s-projects.vercel.app
 
 تظل المعاينة محمية بإعداد SSO الخاص بـ Vercel. لا تُفتح للعامة ولا يُفعّل نطاق إنتاجي قبل إكمال بوابات الاختبار أعلاه. لا تغيير على main ولا دمج لـ PR #2.
+
+## تحديث أمني وتشغيلي — 2026-11-07
+
+### تم التحقق
+- [x] مراجعة مباشرة لأدوار PostgreSQL على RPC الإدارة وبوابة المشترك: الدوال الحساسة SECURITY INVOKER وEXECUTE لـservice_role فقط.
+- [x] التحقق من تفعيل RLS على جداول المؤسسات والملفات الشخصية والمشتركين وسجل تدقيق الحسابات، ومراجعة سياسات tenant وpump assignment.
+- [x] التحقق من ACL للجداول الخاصة: لا يملك anon USAGE على المخطط الخاص، ولا يملك anon/authenticated صلاحيات CRUD على جداول registry وrate-limit؛ لكن RLS غير مفعل على هذه الجداول الثلاثة، ويظهر Advisor تنبيهًا حرجًا. حالة المعالجة معلقة بموافقة المالك.
+- [x] التحقق من عدم تفعيل leaked-password protection حتى الآن؛ لم يتم تعديل إعدادات Auth.
+- [x] تصحيح README لبوابة المشترك: الإصدار النشط v2 والثقة محصورة في cf-connecting-ip القادم من بوابة Supabase، وليس أي رأس forwarding من Vercel.
+- [x] تثبيت Node.js على 22.x وإعداد Vercel install لتوليد lockfile ثم npm audit --audit-level=high ثم npm ci.
+- [x] إضافة npm audit --audit-level=high إلى Web Console CI، وتصحيح وصف ملف lockfile: يولد في CI/النشر وليس متتبعًا في Git حاليًا.
+
+### لا تزال مفتوحة قبل الإنتاج
+- [ ] قرار المالك حول تفعيل RLS على جداول `water_management_private` الثلاثة باستخدام SQL المقترح في `SUPABASE_SECURITY_REVIEW_AR.md`؛ لم تُطبق الأوامر.
+- [ ] تفعيل leaked-password protection من إعدادات Auth إذا كانت خطة المشروع تدعمها (Supabase Pro أو أعلى وفق الوثائق الحالية)، ثم إعادة فحص Advisor.
+- [ ] اختبار POST فعلي لـ`/api/admin/accounts` دون جلسة وبجلسة ذات دور غير مخول للتحقق من 401/403؛ أداة HTTP POST غير متاحة في مسار الفحص الحالي.
+- [ ] اختبار HTTP مباشر لبوابة `subscriber-portal` من المتصفح/عميل HTTP للتحقق من `cf-connecting-ip` و429 وحدود المحاولات، مع بيانات اصطناعية لا تترك أثرًا.
+- [ ] تجربة دخول حساب platform_admin ومدير مؤسسة فعليين وفحص الفصل الكامل بينهما.
+- [ ] فحص إعدادات النسخ الاحتياطي والاستعادة وData API exposed schemas وSSL/domain قبل الإطلاق.
+
+**الحالة الحالية:** نشر Preview جاهز سابقًا، لكنه ليس إنتاجًا عامًا. لا تدمج PR #2 ولا تغير `main` قبل مراجعة كل بوابات القبول والحصول على توجيه صريح.
