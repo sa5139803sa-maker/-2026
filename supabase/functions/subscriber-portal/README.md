@@ -17,7 +17,8 @@ Both values are mandatory. The subscriber number is six digits and globally uniq
 
 ## Trust boundary
 
-- The Edge Function obtains the caller IP from the Supabase gateway's `x-forwarded-for` header (gateway-appended final entry), not from request JSON.
+- The Edge Function prefers the trusted `x-vercel-forwarded-for` header when present; otherwise it reads the gateway-appended final entry from Supabase `x-forwarded-for`, then `x-real-ip`. It never accepts an IP from request JSON.
+- Phone numbers are not unique: household members may share the same registered contact phone. The subscriber number remains globally unique.
 - The RPC HMACs the IP, subscriber number, and normalized phone with a private random pepper stored in `water_management_private`; raw IP and phone values are not written to rate-limit storage.
 - Supabase service-role key exists only in the Edge Function environment. It is never returned to the browser.
 - The Edge Function is the only public entry point. The database lookup RPC has EXECUTE granted only to `service_role`.
@@ -34,3 +35,10 @@ CORS is wildcard because this is intentionally a public, non-cookie, read-only l
 - Configure Supabase's Edge Function gateway to provide `x-forwarded-for`. The function fails closed with 503 if no trusted gateway address is available.
 - Monitor 429 and 503 rates. The SQL rate-limit buckets are HMAC-keyed and are opportunistically pruned after two days.
 - Do not add OTP or subscriber Auth accounts. Phone + six-digit global number is the agreed verification mechanism.
+
+## Development deployment status
+
+- Migration `20261106190000_add_global_subscriber_number_and_public_lookup.sql` applied to the Water Management development project.
+- Function `subscriber-portal` deployed as version 1, ACTIVE, with `verify_jwt=false`.
+- PostgreSQL RLS, web console, and quality CI passed on commit `86dad24be7aa8895bcda34ed6884ed20db527af3`.
+- Live SQL verification confirmed service-role-only RPC execution and a non-matching lookup result. The development database has no subscriber rows yet, so a successful match and browser HTTP flow still require synthetic staging data.
