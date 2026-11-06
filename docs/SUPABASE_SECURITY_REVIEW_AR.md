@@ -333,3 +333,13 @@ Health Advisor بلا ملاحظات. ظلت PR #2 مفتوحة ومسودة، �
 - CI: Web #26، Quality #186، PostgreSQL RLS #272 — جميعها success.
 - **تحذير أمني مفتوح:** Supabase Security Advisor يعرض `auth_leaked_password_protection` (تعطيل فحص كلمات المرور المسرّبة). لا نعتبر ذلك مغلقًا حتى تفعيل الميزة من إعدادات Auth وإعادة تشغيل Advisor.
 - **ملاحظة أداء:** 11 فهرسًا لم يستخدم بعد (INFO) في قاعدة تطوير قليلة البيانات؛ لم تُحذف لتجنب إزالة فهارس لازمة قبل توفر حمل استعلام فعلي.
+
+
+## 10.2 حواجز الدور داخل Edge Function — 2026-11-06
+
+- يتحقق الخادم داخل `manage-accounts` من أن `platform_admin` لا يملك `organization_id` وأن `manager` مرتبط بمؤسسة؛ لا يعتمد على Route Handler وحده.
+- تُرفض العمليات الإدارية من الأدوار الميدانية حتى لو استدعيت Edge Function مباشرة.
+- استثناء واحد مقصود: `change_password` مسموح لأي دور عندما تكون `must_change_password=true`، حتى يستطيع الموظف تغيير كلمة المرور المؤقتة في أول دخول عبر Expo. لا يفتح ذلك له أي صلاحيات إدارية.
+- Edge Function منشورة بالإصدار 10، نشطة مع `verify_jwt=true`.
+- CI: Web #31، Quality #191، PostgreSQL RLS #282 — جميعها success.
+- تنبيه Auth لم يتغير: `auth_leaked_password_protection` ما زال WARN، لأن فحص كلمات المرور المسرّبة معطل في إعدادات Supabase Auth. يجب تفعيله وإعادة فحص Security Advisor قبل الإطلاق العام.
