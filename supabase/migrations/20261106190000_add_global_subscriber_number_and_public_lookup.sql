@@ -256,9 +256,9 @@ BEGIN
 
     IF v_blocked_until IS NOT NULL AND v_blocked_until > v_now THEN
       v_blocked := true;
-      v_retry_after := pg_catalog.greatest(
+      v_retry_after := GREATEST(
         v_retry_after,
-        pg_catalog.ceil(pg_catalog.extract(epoch FROM (v_blocked_until - v_now)))::integer
+        pg_catalog.ceil(EXTRACT(epoch FROM (v_blocked_until - v_now)))::integer
       );
       CONTINUE;
     END IF;
@@ -272,9 +272,9 @@ BEGIN
       IF v_attempts > v_bucket.max_attempts THEN
         v_blocked_until := v_started + v_bucket.bucket_window;
         v_blocked := true;
-        v_retry_after := pg_catalog.greatest(
+        v_retry_after := GREATEST(
           v_retry_after,
-          pg_catalog.ceil(pg_catalog.extract(epoch FROM (v_blocked_until - v_now)))::integer
+          pg_catalog.ceil(EXTRACT(epoch FROM (v_blocked_until - v_now)))::integer
         );
       ELSE
         v_blocked_until := NULL;
@@ -295,7 +295,7 @@ BEGIN
   WHERE updated_at < v_now - interval '2 days';
 
   IF v_blocked THEN
-    RETURN QUERY SELECT true, pg_catalog.greatest(v_retry_after, 1), false,
+    RETURN QUERY SELECT true, GREATEST(v_retry_after, 1), false,
       NULL::bigint, NULL::text, NULL::text, NULL::text, NULL::text;
     RETURN;
   END IF;
