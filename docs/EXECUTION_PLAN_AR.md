@@ -451,8 +451,8 @@
 ### قاعدة البيانات والأمان
 - المشروع `kxdncnswbwktbiphptbr` هو المشروع الأساسي المعتمد الذي سيصبح الإنتاج لاحقًا؛ لا يُنشأ مشروع staging منفصل ولا توجد خطة نقل لاحقة.
 - عدد المؤسسات والمشتركين ما زال صفرًا، ولذلك لا يمكن اختبار دور مدير مؤسسة فعلي دون إنشاء بيانات اختبار مصرح بها. لا تُنشأ تلك البيانات تلقائيًا.
-- الجداول الخاصة الثلاثة ما زالت بلا RLS؛ ACL الحالية تمنع `anon` و`authenticated` من CRUD المباشر، لكن Advisor يظل يعرض `rls_disabled` بمستوى حرج. قرار تفعيل RLS لم يصدر بعد.
-- حماية كلمات المرور المسرّبة ما زالت معطلة، وAdvisor يعرض WARN.
+- الجداول الخاصة الثلاثة أصبحت محمية بـRLS دون سياسات عميل، مع استمرار حظر CRUD المباشر عن `anon` و`authenticated`، وبقاء منح `service_role` المحددة. Advisor لم يعد يعرض `rls_disabled`؛ يعرض بدلًا منه 3 ملاحظات INFO من نوع `rls_enabled_no_policy` لأنها بلا سياسات عمدًا.
+- حماية كلمات المرور المسرّبة ما زالت معطلة، وAdvisor يعرض WARN مستقلًا.
 - لا تزال اختبارات POST لمسار إدارة الحسابات والاختبارات الحية لـsubscriber-portal ورأس IP الموثوق وحدود 429 مفتوحة.
 
 ### قواعد متابعة ملزمة
@@ -519,9 +519,20 @@
 - [x] موافقة المالك على تفعيل RLS على الجداول الثلاثة في `water_management_private` دون إنشاء سياسات وصول للعميل.
 - [x] إعداد ترحيلة `supabase/migrations/20261107010000_enable_private_schema_rls.sql` لتفعيل RLS وإعادة تأكيد سحب صلاحيات `PUBLIC` و`anon` و`authenticated`، مع الحفاظ على منح `service_role` الحالية.
 - [x] توسيع `supabase/tests/rls/tenant_isolation.sql` للتحقق من تفعيل RLS على الجداول الثلاثة، وعدم وجود سياسات عليها، وعدم منح صلاحيات CRUD مباشرة إلى `anon` أو `authenticated`، وبقاء منح `service_role` وBYPASSRLS اللازمة.
-- [ ] اجتياز PostgreSQL RLS CI بعد إضافة الترحيلة والاختبارات.
-- [ ] تطبيق الترحيلة على مشروع `kxdncnswbwktbiphptbr` بعد نجاح CI.
-- [ ] اختبار Trigger تخصيص رقم المشترك وRPC بوابة المشترك تحت `service_role` داخل معاملة تنتهي بـ`ROLLBACK`.
-- [ ] إعادة تشغيل Security وPerformance وHealth Advisors والتحقق من إزالة تنبيه RLS دون ظهور أخطاء جديدة.
+- [x] اجتياز PostgreSQL RLS على Push run `42309575765` وPull Request run `42309581706`، وكلاهما `success`.
+- [x] تطبيق الترحيلة على مشروع `kxdncnswbwktbiphptbr`؛ سجل Supabase migration version `20261106230704` باسم `enable_private_schema_rls`.
+- [x] اختبار Trigger تخصيص رقم المشترك وRPC بوابة المشترك تحت `service_role` داخل معاملة انتهت بـ`ROLLBACK`؛ نجح التطابق، ورفض الهاتف الخاطئ، وتطبيع الأرقام العربية، ومحدد المحاولات.
+- [x] إعادة تشغيل Advisors: لا يوجد `rls_disabled`؛ توجد 3 ملاحظات INFO باسم `rls_enabled_no_policy` وهي مقصودة لأن الجداول بلا سياسات عميل. Health بلا ملاحظات، وPerformance فيه 12 ملاحظة `unused_index` من نوع INFO.
 
 **حدود التغيير:** لا تُنشأ سياسات للجداول الخاصة، ولا يُمنح وصول مباشر لأي عميل، ولا يُفعّل `FORCE ROW LEVEL SECURITY`. تبقى صلاحيات `service_role` الخادمية وملكية Trigger الحالية كما هي. لا يتضمن هذا التغيير إعداد Auth أو النشر أو دمج PR.
+
+
+### نتيجة تنفيذ RLS — 2026-11-07
+
+- [x] أُطبق التغيير على مشروع Supabase الأساسي، وسُجلت الترحيلة `20261106230704 enable_private_schema_rls`.
+- [x] تأكد تفعيل RLS على الجداول الثلاثة وعدم تفعيل `FORCE ROW LEVEL SECURITY`، مع عدم وجود سياسات عليها وعدم منح أي امتياز CRUD لـ`anon` أو`authenticated`.
+- [x] حُفظت منح `service_role` المحددة كما كانت، واستمر Trigger المملوك لـ`postgres` في إنشاء رقم مشترك فريد وحجزه.
+- [x] نجح اختبار `lookup_subscriber_portal` بعد التغيير: الهاتف الصحيح، رفض الهاتف الخطأ، الأرقام العربية، وتفعيل rate limit.
+- [x] انتهت معاملة الاختبار بـ`ROLLBACK`؛ تأكد أن أعداد المؤسسات والمضخات والمشتركين وسجل الأرقام المحجوزة وسجلات rate-limit الاختبارية عادت إلى صفر.
+- [x] نجحت Quality checks #42309581790 وWeb console checks #42309581865 وSupabase tenant isolation #42309581706 وSecret history scan #42309581738 على Pull Request commit `f7a6efd63c39de7fa56ba3f92c84f5c7380f6043`. كما نجح Push RLS #42309575765 وSecret history #42309575778.
+- [ ] ما زال تحذير `auth_leaked_password_protection` قائمًا؛ المؤسسة المالكة على خطة Free، ويحتاج هذا إلى قرار خطة/اشتراك مستقل قبل الإطلاق.

@@ -470,3 +470,30 @@ ALTER TABLE water_management_private.portal_rate_limits ENABLE ROW LEVEL SECURIT
 - أُعدت ترحيلة `supabase/migrations/20261107010000_enable_private_schema_rls.sql` لتفعيل RLS وإعادة سحب أي صلاحيات موروثة/مباشرة من `PUBLIC` و`anon` و`authenticated`. لا تسحب الترحيلة منح `service_role` المحددة سابقًا، ولا تفعّل `FORCE ROW LEVEL SECURITY`.
 - أضيفت اختبارات PostgreSQL للتحقق من حالة RLS وغياب السياسات وغياب CRUD للعميل والحفاظ على صلاحيات `service_role` وBYPASSRLS.
 - **الحالة قبل التطبيق:** الترحيلة والاختبارات أُعدتا على فرع العمل؛ ينتظر التطبيق نجاح CI. بعد ذلك يجب التحقق على مشروع Supabase من Trigger تخصيص الرقم وRPC البحث، ثم إعادة تشغيل Advisors.
+
+
+## 10.14 تنفيذ RLS والتحقق بعد التطبيق — 2026-11-07
+
+**القرار والتطبيق**
+- وافق المالك صراحة على تفعيل RLS للجداول الخاصة الثلاثة دون سياسات عميل.
+- طُبقت ترحيلة `enable_private_schema_rls` على المشروع `kxdncnswbwktbiphptbr`، وسُجلت بإصدار migration `20261106230704`.
+- الجداول `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits` أصبحت جميعها `relrowsecurity = true` و`relforcerowsecurity = false`.
+- لا توجد سياسات على هذه الجداول، وأعيد تأكيد سحب جميع صلاحيات الجدول من `PUBLIC` و`anon` و`authenticated`. لا يملك `anon` أو`authenticated` أي امتياز CRUD مباشر.
+- لم تتغير منح `service_role`: SELECT على `portal_rate_limit_secret` وCRUD على `portal_rate_limits`، ولا وصول مباشر إلى `subscriber_number_registry`. يظل `service_role` ذا `BYPASSRLS`. Trigger التخصيص يبقى بدالة `SECURITY DEFINER` يملكها `postgres` مع `search_path = ''`.
+
+**الاختبار الحي**
+- اجتازت معاملة اختبار اصطناعية إنشاء مؤسسة وغطاس ومشترك، وتخصيص رقم سداسي وحجزه.
+- عبر `service_role`: نجح تطابق رقم المشترك والهاتف الصحيح؛ رُفض الهاتف الخطأ؛ نجح التطبيع للأرقام العربية؛ وعمل rate limiting.
+- انتهى الاختبار بـ`ROLLBACK`. تحققنا بعده من أن أعداد المؤسسات والمضخات والمشتركين وسجل الأرقام المحجوزة وسجلات rate-limit الاختبارية كلها صفر.
+- هذا تحقق وظيفي مباشر للـTrigger وRPC وrate limiting بعد تفعيل RLS، وليس اختبار HTTP browser-to-Edge Function.
+
+**Advisors**
+- لم يعد Security Advisor يعرض `rls_disabled`. يعرض ثلاث ملاحظات INFO `rls_enabled_no_policy`؛ هذه متوقعة ومقصودة لأن الجداول خاصة ولا يجب إتاحة سياسات عميل لها.
+- بقي `auth_leaked_password_protection` بمستوى WARN. حالة مؤسسة Supabase على خطة Free، وتحتاج معالجة هذا التحذير إلى قرار ترقية/خطة منفصل.
+- Performance Advisor: 12 ملاحظة INFO من نوع `unused_index`؛ Health Advisor بلا ملاحظات.
+
+**Git وCI**
+- على commit التصحيح `f7a6efd63c39de7fa56ba3f92c84f5c7380f6043`: Supabase tenant isolation PR #42309581706، Quality #42309581790، Web console #42309581865، Secret history PR #42309581738 — جميعها success. Push RLS #42309575765 وSecret history #42309575778 — success.
+- بقي PR #2 مفتوحًا كمسودة وغير مدمج؛ لم يتغير `main` ولم يحدث نشر إنتاجي.
+
+**الحكم:** بوابة RLS للجداول الخاصة مكتملة بالاختبار. ما زال الإطلاق العام ممنوعًا حتى إغلاق تحذير كلمات المرور المسرّبة وبقية اختبارات HTTP/Auth والنسخ الاحتياطي المشار إليها في خطة التنفيذ.

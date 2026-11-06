@@ -966,3 +966,31 @@
 - كشف أول تشغيل PostgreSQL RLS على commit `ec107a1d1b28aeef1a0f1d0e1d8673e72a39cc34` خطأ تركيب في ملف الاختبار: كتلة `IF` أضيفت خارج كتلة `DO`، فتوقف الاختبار قبل تنفيذ Assertions الجديدة.
 - عُدّل ملف الاختبار ليضع فحوص RLS والسياسات والمنح داخل كتلة `DO` مستقلة. لم تُطبق الترحيلة على مشروع Supabase بسبب فشل الاختبار، ولم تتغير قاعدة البيانات.
 - يعاد تشغيل CI على commit التصحيح قبل أي تطبيق مستضاف.
+
+
+### 2026-11-07 — تطبيق RLS على الجداول الخاصة والتحقق الحي
+
+**Git والاختبارات**
+- أضيفت الترحيلة `supabase/migrations/20261107010000_enable_private_schema_rls.sql` واختبارات assertions في `supabase/tests/rls/tenant_isolation.sql`.
+- كشف تشغيل CI الأول على commit `ec107a1d1b28aeef1a0f1d0e1d8673e72a39cc34` خطأ تنسيق في اختبار SQL، إذ كانت كتلة `IF` خارج `DO`. صُحح ذلك في commit `f7a6efd63c39de7fa56ba3f92c84f5c7380f6043`، ثم نجحت إعادة التشغيل.
+- على commit التصحيح نجحت: PostgreSQL RLS Push #42309575765 وPR #42309581706، Quality #42309581790، Web Console #42309581865، Secret history PR #42309581738 وPush #42309575778.
+- لا تعديل على `main` ولا دمج لـPR #2؛ التغيير بقي على `security/tenant-isolation-rls`.
+
+**Supabase — المشروع `kxdncnswbwktbiphptbr`**
+- طُبقت الترحيلة `enable_private_schema_rls` وسُجلت في migration history بإصدار `20261106230704`.
+- أصبح `relrowsecurity=true` على الجداول الثلاثة: `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits`. بقي `relforcerowsecurity=false` كما خُطط.
+- لم تُنشأ سياسات على الجداول الخاصة. أعيد تأكيد `REVOKE ALL` عن `PUBLIC` و`anon` و`authenticated`، مع الإبقاء على منح `service_role` السابقة: SELECT على سر HMAC وCRUD على جدول rate-limits، ودون منح مباشر له على registry.
+- بقي `service_role` مع `BYPASSRLS`، واستمر Trigger `subscribers_enforce_portal_fields` بدالة `SECURITY DEFINER` مملوكة لـ`postgres` و`search_path = ''`.
+
+**الاختبار الحي داخل معاملة ROLLBACK**
+- أُنشئت مؤقتًا مؤسسة وغطاس ومشترك اصطناعية داخل معاملة واحدة، فخصص Trigger رقمًا من ست خانات وأدرجه في registry.
+- تحت `service_role` نجح البحث بالهاتف الصحيح، ولم يكشف سجلًا مع الهاتف الخاطئ، ونجح تطبيع الأرقام العربية.
+- تفعّل محدد المحاولات بعد تجاوز الحد المتوقع، واستطاع `service_role` قراءة/تحديث جدول rate-limits رغم RLS.
+- انتهت المعاملة بـ`ROLLBACK`. تحقق استعلام لاحق من أن عدد المؤسسات والمضخات والمشتركين والأرقام المحجوزة وسجلات rate-limit يساوي صفرًا؛ لم تبق بيانات اختبار.
+
+**Advisors بعد التطبيق**
+- Security: اختفى `rls_disabled`. ظهرت 3 ملاحظات INFO باسم `rls_enabled_no_policy` على الجداول الخاصة؛ وهذا هو السلوك المقصود لأننا لا نريد سياسات أو وصولًا للعميل. بقي WARN مستقل `auth_leaked_password_protection`.
+- Performance: 12 ملاحظة INFO من نوع `unused_index` على قاعدة شبه فارغة؛ لم تُحذف الفهارس.
+- Health: لا ملاحظات.
+
+**النتيجة:** اكتملت معالجة RLS للجداول الخاصة واختُبر استمرار Trigger وبوابة المشترك وحدود المحاولات. لا يعني ذلك أن المشروع جاهز للإنتاج؛ لا تزال بوابات Auth وكلمات المرور المسرّبة واختبارات HTTP الحية للإدارة والبوابة والنسخ الاحتياطي والإطلاق مفتوحة.
