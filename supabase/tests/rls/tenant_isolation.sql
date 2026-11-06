@@ -490,5 +490,33 @@ BEGIN
 END;
 $organization_delete$;
 
+
+-- Every child-side foreign key must have a matching index in the same
+-- column order as the constraint, including composite tenant constraints.
+DO $tenant_fk_indexes$
+BEGIN
+  IF to_regclass('public.organizations_created_by_idx') IS NULL
+     OR pg_get_indexdef('public.organizations_created_by_idx'::regclass) NOT LIKE '%(created_by)' THEN
+    RAISE EXCEPTION 'Missing or invalid index for organizations.created_by';
+  END IF;
+  IF to_regclass('public.profiles_organization_id_idx') IS NULL
+     OR pg_get_indexdef('public.profiles_organization_id_idx'::regclass) NOT LIKE '%(organization_id)' THEN
+    RAISE EXCEPTION 'Missing or invalid index for profiles.organization_id';
+  END IF;
+  IF to_regclass('public.pump_assignments_pump_tenant_idx') IS NULL
+     OR pg_get_indexdef('public.pump_assignments_pump_tenant_idx'::regclass) NOT LIKE '%(pump_id, organization_id)' THEN
+    RAISE EXCEPTION 'Missing or invalid index for pump_assignments (pump_id, organization_id)';
+  END IF;
+  IF to_regclass('public.pump_assignments_user_tenant_role_idx') IS NULL
+     OR pg_get_indexdef('public.pump_assignments_user_tenant_role_idx'::regclass) NOT LIKE '%(user_id, organization_id, assignment_role)' THEN
+    RAISE EXCEPTION 'Missing or invalid index for pump_assignments (user_id, organization_id, assignment_role)';
+  END IF;
+  IF to_regclass('public.subscribers_pump_tenant_idx') IS NULL
+     OR pg_get_indexdef('public.subscribers_pump_tenant_idx'::regclass) NOT LIKE '%(pump_id, organization_id)' THEN
+    RAISE EXCEPTION 'Missing or invalid index for subscribers (pump_id, organization_id)';
+  END IF;
+END;
+$tenant_fk_indexes$;
+
 SET CONSTRAINTS ALL IMMEDIATE;
 ROLLBACK;
