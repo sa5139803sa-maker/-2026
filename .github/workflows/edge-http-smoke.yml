@@ -1,0 +1,38 @@
+name: Supabase Edge HTTP smoke
+
+on:
+  push:
+    branches:
+      - security/tenant-isolation-rls
+    paths:
+      - ".github/workflows/edge-http-smoke.yml"
+      - "supabase/tests/http/edge-http-smoke.mjs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-http-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  edge-http:
+    name: Live unauthenticated Edge Function and subscriber portal HTTP checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+
+      - name: Test public subscriber portal and protected account function
+        run: node supabase/tests/http/edge-http-smoke.mjs
+        env:
+          SUPABASE_URL: "https://kxdncnswbwktbiphptbr.supabase.co"
+          # This is the project's public publishable key, designed for client use.
+          SUPABASE_PUBLISHABLE_KEY: "sb_publishable_QQ0BVFx9lqtJ9vSC3XJlhA_ZxgWyMMl"
+          PREVIEW_ORIGIN: "https://water-management-cc0zenuqs-sa5139803sa-2072s-projects.vercel.app"
