@@ -850,3 +850,19 @@
 - السجلات تؤكد استخدام Node 22.x، ونجاح Next.js compile وTypeScript وBuild، وظهور صفر ثغرات في npm audit.
 - أُعيد فحص alias المعاينة الحالي: / و/login و/portal بحالة 200؛ /platform و/organization يعيدان إلى /login عند غياب الجلسة. جميع المسارات الأساسية تُخدم من الإصدار الأحدث.
 - لم يُنفذ POST لإدارة الحسابات ولا اختبار HTTP مباشر لبوابة المشترك؛ تظل هذه بوابات قبول مفتوحة قبل الإطلاق العام.
+
+### 2026-11-07 — تدقيق صلاحيات المخطط الخاص وتحديث إعداد بناء الويب
+
+- **مراجعة Supabase الحالية:** `manage-accounts` v10 و`subscriber-portal` v2 نشطتان؛ أربع عشرة ترحيلة ما زالت مسجلة. أعداد البيانات: 0 مؤسسات، 0 مشتركين، وملف Profile واحد.
+- **RPC:** تحقق استعلام PostgreSQL من أن `lookup_subscriber_portal(integer,text,text)` و`assign_managed_user(uuid,uuid,app_role,text,text)` و`set_organization_account_limit(uuid,integer)` و`create_platform_organization(uuid,text)` كلها `SECURITY INVOKER`؛ EXECUTE لـ`service_role` فقط، لا لـ`anon` أو`authenticated`.
+- **عزل البيانات:** RLS مفعّل على جداول `organizations` و`profiles` و`subscribers` و`account_audit_log`. سياسات المشتركين تربط tenant وتخصص صفوف العاملين حسب تعيين المضخة.
+- **تنبيه يجب عدم إخفائه:** Database Advisor أعاد `rls_disabled` بمستوى حرج لثلاثة جداول داخل `water_management_private`: `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits`.
+- **تحقق ACL إضافي:** `anon` لا يملك USAGE على المخطط الخاص ولا أي امتيازات CRUD على الجداول الثلاثة. `authenticated` يملك USAGE على المخطط لكنه لا يملك أي امتيازات CRUD مباشرة عليها. `service_role` يتجاوز RLS؛ registry يدار عبر Trigger مملوك لـ`postgres` من نوع SECURITY DEFINER. لم يثبت الفحص تعرضًا مباشرًا للجداول إلى أدوار API، لكنه لا يعالج غياب RLS.
+- **خيار المعالجة المعروض للمستخدم، ولم ينفذ:** تفعيل RLS على الجداول الثلاثة دون سياسات عميل، مع إبقاء الوصول الخادمي عبر BYPASSRLS/مالك Trigger. ينتظر القرار؛ لا تغييرات DDL تلقائية.
+- **حماية كلمات المرور المسرّبة:** ما زال Advisor يعرض `auth_leaked_password_protection` بوصفه WARN. توثيق Supabase الحالي يشترط Pro أو أعلى لهذه الميزة؛ لم تتغير إعدادات Auth.
+- **Vercel install:** غُيّر install command لمشروع `water-management-web` إلى توليد package lock، ثم `npm audit --audit-level=high`، ثم `npm ci`. Node.js مثبت على 22.x. معاينات Vercel تبقى SSO-protected وPreview فقط.
+- **ملف القفل:** تحققنا أن `apps/web/package-lock.json` غير موجود في Git. CI يولده من direct dependencies المثبتة، ينفذ `npm ci`، ويرفعه artifact لمدة 7 أيام؛ README صُحح ليصف ذلك بدقة بدل الادعاء بأنه tracked.
+- **CI:** أضيفت خطوة `npm audit --audit-level=high` إلى Web Console workflow قبل الاختبارات والبناء. ينتظر هذا التحديث نتائج CI على Commit الجديد.
+- **اختبارات HTTP:** سبق أن نجح GET smoke للصفحات `/`, `/login`, `/portal`، وتحولت `/platform` و`/organization` لغير المسجل إلى `/login`. لا يزال POST لمسار الحسابات واختبار HTTP مباشر لـ`subscriber-portal` (بما فيه `cf-connecting-ip` وحدود المحاولات) غير منفذين، فلا تسجل كنجاح.
+- **التوثيق:** صُحح `apps/web/README.md` ليثبت أن v2 من subscriber-portal تثق فقط بـ`cf-connecting-ip` ولا تستخدم رؤوس Vercel forwarding. أضيفت ملاحظة تحذير RLS الخاص وAuth إلى `docs/SUPABASE_SECURITY_REVIEW_AR.md`.
+- **Git:** جميع التغييرات على `security/tenant-isolation-rls` ضمن PR #2؛ لا دمج ولا تعديل `main`.
