@@ -1,6 +1,6 @@
 # Subscriber portal Edge Function
 
-Public unauthenticated lookup. Deploy with `verify_jwt=false`.
+Public unauthenticated lookup. Deploy with `verify_jwt=false`. The browser calls this single Edge Function directly using the publishable key; no intermediate Next.js Route Handler is used.
 
 ## Request
 
@@ -13,17 +13,17 @@ POST JSON:
 }
 ```
 
-Both values are mandatory. There is no OTP and no subscriber Auth account.
+Both values are mandatory. The subscriber number is six digits and globally unique. There is no OTP, SMS verification, or subscriber Auth account.
 
 ## Trust boundary
 
 - The Edge Function obtains the caller IP from the Supabase gateway's `x-forwarded-for` header (gateway-appended final entry), not from request JSON.
-- The RPC HMACs the IP and subscriber number with a private random pepper stored in `water_management_private`; raw IP and phone values are not written to rate-limit storage.
+- The RPC HMACs the IP, subscriber number, and normalized phone with a private random pepper stored in `water_management_private`; raw IP and phone values are not written to rate-limit storage.
 - Supabase service-role key exists only in the Edge Function environment. It is never returned to the browser.
 - The Edge Function is the only public entry point. The database lookup RPC has EXECUTE granted only to `service_role`.
 - All unknown, inactive, or phone-mismatched records return the same `{ found: false }` response.
 - On success, return only the subscriber's number, name, assigned pump label/code, and last four phone digits. No organization ID, UUID, full phone, financial history, or internal fields are exposed.
-- Requests are limited to 20 per IP per 15 minutes and 8 per subscriber number per hour; the database performs atomic locking and increments.
+- Requests are limited to 10 per IP per 15 minutes, 5 per subscriber number per hour, and 5 per normalized phone per hour; the database performs atomic locking and increments.
 
 ## CORS
 
