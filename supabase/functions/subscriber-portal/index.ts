@@ -33,6 +33,9 @@ function trustedGatewayIp(req: Request): string | null {
   // Supabase's API gateway appends the connected client address to
   // X-Forwarded-For. Use the final gateway-added entry, never a client
   // supplied body field. The RPC HMACs this value and stores no raw IP.
+  const vercelForwarded = req.headers.get("x-vercel-forwarded-for")?.trim();
+  if (vercelForwarded && vercelForwarded.length <= 64) return vercelForwarded;
+
   const forwarded = req.headers.get("x-forwarded-for");
   if (forwarded) {
     const entries = forwarded.split(",").map((item) => item.trim()).filter(Boolean);
