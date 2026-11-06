@@ -116,8 +116,8 @@ BEGIN
     RAISE EXCEPTION 'Authenticated role cannot use the private authorization schema';
   END IF;
   IF pg_catalog.has_schema_privilege('anon', 'water_management_private', 'USAGE')
-     OR pg_catalog.has_schema_privilege('service_role', 'water_management_private', 'USAGE') THEN
-    RAISE EXCEPTION 'Unexpected private schema USAGE grant';
+     OR NOT pg_catalog.has_schema_privilege('service_role', 'water_management_private', 'USAGE') THEN
+    RAISE EXCEPTION 'Private schema USAGE must be limited to the trusted service role and denied to anon';
   END IF;
 
   IF NOT pg_catalog.has_function_privilege(
