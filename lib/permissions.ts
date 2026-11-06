@@ -1,7 +1,7 @@
 import type { AppRole } from "./auth";
 
 /**
- * UI navigation policy for the four application roles.
+ * UI navigation policy for the four field-application roles. platform_admin is web-only.
  * This is not a security boundary; matching RLS policies must enforce every
  * data-access rule on the Supabase side.
  */
@@ -11,7 +11,7 @@ export const roleAccess = {
   operations: ["manager", "operator"],
   collections: ["manager", "collector"],
   reports: ["manager", "supervisor"],
-  userManagement: ["manager", "platform_admin"],
+  userManagement: ["manager"],
 } as const satisfies Record<string, readonly AppRole[]>;
 
 export type ProtectedFeature = keyof typeof roleAccess;
