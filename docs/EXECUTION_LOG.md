@@ -1026,3 +1026,18 @@
 **الحالة**
 - PR #2 ما زال مفتوحًا Draft وغير مدمج، و`main` لم يتغير. لا يوجد Production deploy.
 - تحذير Advisor `auth_leaked_password_protection` ما زال WARN؛ ملاحظات `rls_enabled_no_policy` الثلاث INFO مقصودة للجداول الخاصة. Health Advisor بلا ملاحظات.
+
+
+## 2026-11-07 — إصلاح قراءة ملف الصلاحيات وتأكيد دخول مدير المنصة
+
+- أظهر تتبع رسالة رفض الدخول أن دور `authenticated` لم يكن يملك امتياز SQL الأساسي `SELECT` على `public.profiles`؛ سياسة RLS وحدها لا تمنح امتياز الجدول.
+- أُضيفت الترحيلة `20261107020000_grant_profile_select_to_authenticated.sql` وتُطبق على مشروع Supabase الأساسي: `GRANT SELECT ON public.profiles TO authenticated`.
+- التحقق من ACL: `authenticated` يملك SELECT فقط على profiles ولا يملك UPDATE/INSERT/DELETE؛ `anon` لا يملك SELECT.
+- اختبار SQL بدور `authenticated` وهوية مدير المنصة أعاد ملفه الشخصي ودور `platform_admin` مع `organization_id IS NULL`. لم يُفتح له أي وصول مباشر إلى بيانات المؤسسات.
+- المستخدم أكد نجاح تسجيل الدخول الفعلي إلى لوحة المنصة بعد الإصلاح.
+- أُضيفت assertions إلى `supabase/tests/rls/tenant_isolation.sql` لتثبيت شرط القراءة المحدودة ومنع صلاحيات الكتابة مستقبلًا.
+- HEAD: `49365180df5bd00a24d86a35e133bdb04e1a3290`.
+- GitHub Actions على هذا HEAD: Web Console #42314514327، Quality #42314514255، PostgreSQL RLS #42314514251، Secret history #42314514300 — جميعها success. Push RLS #42314509609 وPush Secret history #42314509254 — success.
+- Vercel Preview deployment `dpl_E2dKALGN7UDAVTx2U34GJriMsgCs` أصبح READY؛ /login يعيد 200، وGET /api/admin/accounts يعيد 405، والوصول غير المصادق إلى /platform يعيد المستخدم إلى login. لم يُختبر POST إداري مصادق في هذه الجولة.
+- PR #2 ما زال Draft وغير مدمج؛ لا تغيير على main ولا Production deployment.
+- المتبقي: authenticated POST وعمليات إدارة الحسابات عبر JWT حقيقي لدور manager/platform_admin، تفعيل leaked-password protection قبل الإطلاق العام، وإكمال مراجعة إعدادات النسخ الاحتياطي.
