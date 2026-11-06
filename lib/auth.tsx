@@ -176,11 +176,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profileError,
       refreshProfile,
       signIn: async (email, password) => {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { data, error } = await supabase.auth.signInWithPassword({
           email: usernameToAuthEmail(email),
           password,
         });
-        return error ? friendlyAuthError() : null;
+        if (error || !data.user) return friendlyAuthError();
+
+        // The platform administrator belongs to the dedicated web console,
+        // never to the Expo field application (Android or Expo web export).
+        const { data: accessProfile, error: accessError } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", data.user.id)
+          .maybeSingle();
+
+        if (accessError || !accessProfile) {
+          await supabase.auth.signOut();
+          return "تعذر التحقق من صلاحيات الحساب. لم يتم السماح بالدخول إلى تطبيق العاملين.";
+        }
+
+        if (accessProfile.role === "platform_admin") {
+          await supabase.auth.signOut();
+          return "هذا الحساب مخصص للوحة إدارة المنصة عبر الويب فقط، ولا يمكن استخدامه في تطبيق الهاتف.";
+        }
+
+        return null;
       },
       signUp: async (displayName, organizationName, email, password) => {
         const { data, error } = await supabase.auth.signUp({
