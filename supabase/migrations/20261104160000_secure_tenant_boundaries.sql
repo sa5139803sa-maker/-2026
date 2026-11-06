@@ -261,7 +261,7 @@ DROP POLICY IF EXISTS "users_select_own_profile" ON public.profiles;
 CREATE POLICY "users_select_own_profile" ON public.profiles
   FOR SELECT TO authenticated
   USING (
-    id = (SELECT water_management_private.request_user_id())
+    id = (SELECT auth.uid())
     OR (
       organization_id = (SELECT water_management_private.current_user_organization_id())
       AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
@@ -271,8 +271,8 @@ CREATE POLICY "users_select_own_profile" ON public.profiles
 DROP POLICY IF EXISTS "users_update_own_display_name" ON public.profiles;
 CREATE POLICY "users_update_own_display_name" ON public.profiles
   FOR UPDATE TO authenticated
-  USING (id = (SELECT water_management_private.request_user_id()))
-  WITH CHECK (id = (SELECT water_management_private.request_user_id()));
+  USING (id = (SELECT auth.uid()))
+  WITH CHECK (id = (SELECT auth.uid()));
 
 DROP POLICY IF EXISTS "members_select_pumps" ON public.pumps;
 CREATE POLICY "members_select_pumps" ON public.pumps
@@ -285,7 +285,7 @@ CREATE POLICY "members_select_pumps" ON public.pumps
         SELECT 1 FROM public.pump_assignments pa
         WHERE pa.pump_id = pumps.id
           AND pa.organization_id = pumps.organization_id
-          AND pa.user_id = (SELECT water_management_private.request_user_id())
+          AND pa.user_id = (SELECT auth.uid())
           AND pa.assignment_role = (SELECT water_management_private.current_user_role())
       )
     )
@@ -326,7 +326,7 @@ CREATE POLICY "members_select_assignments" ON public.pump_assignments
     organization_id = (SELECT water_management_private.current_user_organization_id())
     AND (
       (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
-      OR user_id = (SELECT water_management_private.request_user_id())
+      OR user_id = (SELECT auth.uid())
     )
   );
 
@@ -373,7 +373,7 @@ CREATE POLICY "members_select_subscribers" ON public.subscribers
           SELECT 1 FROM public.pump_assignments pa
           WHERE pa.pump_id = subscribers.pump_id
             AND pa.organization_id = subscribers.organization_id
-            AND pa.user_id = (SELECT water_management_private.request_user_id())
+            AND pa.user_id = (SELECT auth.uid())
             AND pa.assignment_role = (SELECT water_management_private.current_user_role())
         )
       )
