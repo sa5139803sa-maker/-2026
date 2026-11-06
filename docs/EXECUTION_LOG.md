@@ -704,5 +704,5 @@
 - **الملفات البرمجية:** `lib/auth.tsx`، `app/sign-in.tsx`، `app/(tabs)/_layout.tsx`، `app/(tabs)/more.tsx`، `app/account-management.tsx`، `app/change-password.tsx`، `lib/permissions.ts`.
 - **الوثائق المحدثة:** `docs/PROJECT_PLAN_AR.md`، `docs/EXECUTION_PLAN_AR.md`، `docs/SUPABASE_SECURITY_REVIEW_AR.md`، `docs/ACCOUNT_MANAGEMENT_SECURITY_AR.md`، وهذا السجل.
 - **Commits هذا التحديث:** `f051234`، `f5edc99`، `a589ef4`، `41f990c`، `94aa61a`، `b61b49f`، `cc720f4`، `b475ffd`، `c7e9860`، `a97ceeb`، `625b46d`.
-- **التحقق:** تمت مراجعة التغييرات المصدرية بعد الكتابة؛ فحوص GitHub Actions الخاصة بهذا التحديث ما زالت بانتظار التنفيذ/النتيجة. لا يوجد اختبار جهاز Android فعلي ضمن هذا التغيير.
+- **التحقق:** نجح PostgreSQL tenant isolation run #156 (`42256504101`)، ونجح Quality run #128 (`42256504153`) بما يشمل Deno Edge Function checks وnpm unit tests وTypeScript check وExpo web export. لا يوجد اختبار جهاز Android فعلي ضمن هذا التغيير.
 - **حدود الإنجاز:** PR #2 يبقى مفتوحًا وغير مدمج، و`main` لم يتغير. لا تعتبر لوحة Next.js أو بوابة المشترك منجزة بعد.
