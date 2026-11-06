@@ -128,6 +128,43 @@ Deno.serve(async (req: Request) => {
       return response(200, { success: true });
     }
 
+    if (action === "create_organization") {
+      if (actor.role !== "platform_admin" || actor.organization_id !== null) {
+        return response(403, { error: "إنشاء المؤسسات متاح لمدير المنصة فقط." });
+      }
+
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (name.length < 2 || name.length > 120) {
+        return response(400, { error: "اسم المؤسسة يجب أن يكون من حرفين إلى 120 حرفاً." });
+      }
+
+      // The database RPC creates the organization and its audit event in one
+      // transaction. The RPC is SECURITY INVOKER and EXECUTE is service_role-only.
+      const { data: createdRows, error: createOrganizationError } = await admin.rpc(
+        "create_platform_organization",
+        { p_actor_id: actorId, p_name: name },
+      );
+      if (createOrganizationError) {
+        console.error("platform organization creation failed", createOrganizationError.message);
+        return response(400, { error: "تعذر إنشاء المؤسسة. تحقق من الاسم وحاول مرة أخرى." });
+      }
+
+      const created = Array.isArray(createdRows) ? createdRows[0] : createdRows;
+      if (!created || typeof created.id !== "string") {
+        return response(500, { error: "لم يتم استلام تأكيد صالح لإنشاء المؤسسة." });
+      }
+
+      return response(200, {
+        success: true,
+        organization: {
+          id: created.id,
+          name: created.name,
+          account_limit: created.account_limit,
+          account_count: 0,
+        },
+      });
+    }
+
     if (action === "list_users") {
       if (actor.role !== "platform_admin" && actor.role !== "manager") {
         return response(403, { error: "لا تملك صلاحية إدارة الحسابات." });
