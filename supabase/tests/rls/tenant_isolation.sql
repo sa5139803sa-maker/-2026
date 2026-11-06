@@ -758,6 +758,10 @@ BEGIN
   FROM public.subscribers
   WHERE id='30000000-0000-4000-8000-000000000001';
 
+  IF NOT pg_catalog.has_schema_privilege('service_role', 'extensions', 'USAGE') THEN
+    RAISE EXCEPTION 'Trusted portal RPC role cannot use the pgcrypto extensions schema';
+  END IF;
+
   IF v_number NOT BETWEEN 100000 AND 999999
      OR (SELECT pg_catalog.count(*) FROM public.subscribers WHERE subscriber_number IS NULL) > 0
      OR (SELECT pg_catalog.count(*) FROM public.subscribers)
