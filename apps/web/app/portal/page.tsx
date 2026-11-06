@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Droplets, ShieldCheck } from "lucide-react";
+import { SubscriberLookupForm } from "@/components/subscriber-lookup-form";
 
 export const metadata: Metadata = { title: "بوابة المشترك" };
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default function SubscriberPortalPage() {
   return (
@@ -10,34 +13,26 @@ export default function SubscriberPortalPage() {
       <section className="auth-card portal-card">
         <div className="brand">
           <span className="brand-mark"><Droplets size={23} /></span>
-          <div><div className="brand-name">إدارة المياه</div><div className="brand-en">SUBSCRIBER PORTAL</div></div>
+          <div>
+            <div className="brand-name">إدارة المياه</div>
+            <div className="brand-en">SUBSCRIBER PORTAL</div>
+          </div>
         </div>
         <h1>بوابة المشترك</h1>
         <p>
-          ستتيح لك البوابة الاستعلام عن اشتراكك ومراجعة بياناتك بعد إدخال رقم الاشتراك،
-          مع التحقق من ملكية رقم الهاتف قبل إظهار التفاصيل المالية أو الشخصية.
+          أدخل رقم المشترك المكوّن من ست خانات ورقم الهاتف المسجل لدى المؤسسة
+          لعرض بيانات اشتراكك الأساسية.
         </p>
 
-        <div className="notice" style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
-          <ShieldCheck size={18} style={{ flexShrink: 0, marginTop: 2 }} />
-          <span>
-            خدمة الاستعلام غير مفعّلة بعد. لن نبحث في قاعدة بيانات المشتركين قبل تجهيز
-            رقم الاشتراك الفريد والتحقق الإضافي ومحددات المحاولات ومنع تعداد السجلات.
-          </span>
+        <div className="notice portal-intro-note">
+          <ShieldCheck size={17} />
+          <span>التحقق يتم بمطابقة الرقمين فقط، دون OTP أو رسائل نصية.</span>
         </div>
 
-        <div className="portal-search">
-          <label className="field">
-            <span>رقم الاشتراك</span>
-            <input disabled placeholder="سيظهر حقل البحث عند تفعيل الخدمة" />
-          </label>
-          <button className="primary-button full-width" type="button" disabled>
-            الاستعلام عن الاشتراك
-          </button>
-        </div>
+        <SubscriberLookupForm />
 
         <div className="footer-note">
-          لا يحتاج المشترك إلى حساب مستخدم أو كلمة مرور. هذه البوابة لا تنشئ حسابًا في نظام العاملين.
+          لا يحتاج المشترك إلى إنشاء حساب أو كلمة مرور. لا تظهر بيانات الاشتراك إلا عند تطابق الرقم والهاتف مع سجل نشط.
         </div>
         <div style={{ marginTop: 16, textAlign: "center" }}>
           <Link className="small muted" href="/login">دخول الإدارة</Link>
