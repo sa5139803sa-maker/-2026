@@ -816,3 +816,12 @@
 - آخر CI على HEAD `5b94f809fc5e72ddf2739fcf0b0169f43bd2e596`: Web Console #96 وQuality #256 وPostgreSQL RLS #421 ناجحة.
 - Advisor: Health بلا ملاحظات؛ Security تحذير `auth_leaked_password_protection` فقط؛ Performance لا يعرض مفاتيح أجنبية غير مفهرسة، مع 12 ملاحظة `unused_index` من INFO.
 - واجهة Next.js لم تُنشر على استضافة عامة بعد. Vercel خيار مناسب؛ يلزم ربط الحساب وضبط متغيرات البيئة العامة للمشروع. لم يُكشف أو يُنشر أي مفتاح سري.
+
+
+### 2026-11-06 — تقوية مصدر IP ونشر subscriber-portal v2 على المشروع الأساسي
+
+- كشفت مراجعة الثقة أن قبول `x-vercel-forwarded-for` أو `x-forwarded-for` أو `x-real-ip` من مدخل عام مباشر يسمح للعميل بمحاولة تزوير مفتاح IP وتجاوز حصة العنوان.
+- أنشأنا `trusted-gateway-ip.ts`، وجعلنا المصدر الوحيد `cf-connecting-ip` الذي يمر عبر Cloudflare edge إلى Supabase؛ لا نثق في الرؤوس الأخرى أو جسم الطلب، ونفشل مغلقين بـ503 إذا غاب الرأس. هذا يتبع توصية Cloudflare باستخدام `CF-Connecting-IP` بدل `X-Forwarded-For` عند استعادة عنوان الزائر.
+- أضفنا `trusted-gateway-ip.deno.ts` واختبارات تغطي الرأس الموثوق، وتجاهل رؤوس التمرير التي يرسلها العميل، والقيم المفقودة/المركبة/المعيبة. نجح `deno check` واختبار Deno في CI. فشل اختبار أولي فقط بسبب اسم الملف الذي اكتشفه Node test runner ومحاولة إنشاء Header يحوي newline؛ عزلنا ملف Deno باسم `.deno.ts` واستبدلنا القيمة غير الصالحة بقيمة header صالحة نحويًا ثم نجحت الاختبارات.
+- نُشرت الدالة على المشروع `kxdncnswbwktbiphptbr` بالإصدار 2، الحالة ACTIVE، `verify_jwt=false`، مع تضمين helper في bundle. بقيت `manage-accounts` v10 دون تغيير.
+- **مهم:** هذا تعديل حماية لطبقة IP، وليس إثباتًا لاختبار HTTP من متصفح. لا يزال اختبار المسار المباشر ووجود `cf-connecting-ip` في طلب حي مطلوبًا قبل فتح البوابة للعامة.
