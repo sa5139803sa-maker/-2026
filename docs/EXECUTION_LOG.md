@@ -936,3 +936,18 @@
 - بعد التنقيح المحدد، سجل Gitleaks عدم وجود نتائج إضافية في الأرشيف (~89.38 KB). نجح Workflow على Push run `42307054665` وPull Request run `42307062715`، بما يشمل PR diff، وجميع مراجع Git، واستخراج الأرشيف، والتصنيف والفحص النهائي.
 - لا حاجة إلى تدوير اعتماد بناءً على هذا الكشف وحده؛ لم يظهر مفتاح خادمي. ولا تُعد هذه النتيجة إثباتًا لخلو forks أو النسخ التي نُزّلت خارج المستودع.
 - **Git:** جميع التغييرات في `security/tenant-isolation-rls` فقط. PR #2 لا يزال Draft وغير مدمج؛ `main` لم يتغير، ولم تُنفذ تغييرات على Supabase أو Vercel Production.
+
+### 2026-11-07 — قبول فحص الأسرار وإعادة تحقق CI/Preview
+
+- HEAD الذي جرى التحقق منه: `01283fc68083c25c9d6cef77c2fbbb5d4ce39056`.
+- Pull Request CI: Quality #42307191809، Web console #42307191709، Supabase tenant isolation #42307191770، Secret history scan #42307191789 — جميعها success.
+- Push CI: Secret history scan #42307184867 وSupabase tenant isolation #42307184855 — success.
+- فحص الأسرار اكتمل على الملفات المتغيرة والتاريخ الكامل والأرشيف المضغوط القديم. كشف الأرشيف الوحيد كان مفتاح Supabase anon العام؛ تم التحقق من claim `role=anon` وissuer Supabase ووقت انتهاء JWT دون طباعة الرمز. بعد تنقيح النسخة المؤقتة فقط، لم تظهر نتائج أخرى. لا يوجد كشف مثبت لمفتاح service_role أو secret خادمي.
+- Vercel Preview deployment `dpl_8D4Hr5SiDXmxnVjZpmDFoq2wLaPW` على HEAD أعلاه أصبح READY، و`target=null`؛ لم يُنشر إلى Production.
+- HTTP smoke على Preview:
+  - `/login`: 200.
+  - `/portal`: 200، والصفحة تعرض نموذج رقم المشترك والهاتف باللغة العربية RTL.
+  - `/organization` و`/change-password`: صفحة تسجيل الدخول عند عدم وجود جلسة.
+  - `GET /api/admin/accounts`: 405 Method Not Allowed؛ المسار يدعم POST، ولم ننفذ POST.
+- لا توجد مؤسسات/حسابات اختبار أنشئت، ولا بيانات Supabase تغيرت. اختبار POST المخول/غير المخول واختبار HTTP الحي للبوابة وحدود 429 ما زالا مفتوحين.
+- PR #2 ما زال Draft وغير مدمج. لم يتغير `main` ولم يحدث Production deploy.
