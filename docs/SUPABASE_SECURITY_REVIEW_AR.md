@@ -525,3 +525,15 @@ ALTER TABLE water_management_private.portal_rate_limits ENABLE ROW LEVEL SECURIT
 - معاينة Vercel على commit `af94554eb946b38870e91298a1a046e1cb11a162` READY: `dpl_9fwZ5CA9VoX7KNyNjiwXQ51tUU9a`، Preview وليست Production.
 - CI على هذا HEAD: Web console #42313065317، Quality #42313065259، RLS #42313065258، Secret history #42313065270، وPush RLS #42313059419 وSecret history #42313059440 — success.
 - PR #2 لا يزال Draft وغير مدمج؛ لا تغيير على `main` ولا Production deploy.
+
+
+## 10.16 إصلاح امتياز قراءة ملف المستخدم — 2026-11-07
+
+- **السبب الجذري:** كان جدول `public.profiles` محميًا بسياسة RLS الصحيحة، لكن دور `authenticated` لا يمتلك امتياز SQL `SELECT`. لذلك كان استعلام تسجيل الدخول يفشل ويُترجم إلى رسالة «الحساب غير مخصص للوحة الويب أو لا يملك نطاق صلاحيات صالحًا».
+- **الإصلاح:** ترحيلة `20261107020000_grant_profile_select_to_authenticated.sql` تمنح `SELECT` فقط إلى `authenticated`. لا تمنح أي امتياز كتابة ولا تمنح `anon` قراءة.
+- **التحقق:** ACL أكد SELECT=true وUPDATE/INSERT/DELETE=false لدور authenticated. اختبار الدور والهوية الحقيقية لمدير المنصة ضمن SQL أكد رؤية صفه الشخصي مع role=platform_admin وorganization_id=NULL.
+- **اختبار قبول المستخدم:** أكد المستخدم نجاح تسجيل الدخول الفعلي بعد تطبيق الترحيلة.
+- **الحماية المستمرة:** أضيفت assertions إلى مجموعة PostgreSQL RLS للتحقق من الامتيازات نفسها في CI.
+- CI على HEAD `49365180df5bd00a24d86a35e133bdb04e1a3290`: Web Console وQuality وPostgreSQL RLS وSecret history جميعها success؛ Push RLS وPush Secret history كذلك success.
+- Vercel Preview READY فقط. لا دمج ولا Production.
+- لم يتغير مبدأ أن مدير المنصة يدير المؤسسات عبر واجهة الويب وEdge Function، ولا يحصل على وصول Data API مباشر إلى بيانات المستأجرين.
