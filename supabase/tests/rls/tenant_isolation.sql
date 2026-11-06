@@ -224,6 +224,8 @@ BEGIN
 END;
 $private_schema_acl$;
 
+DO $private_portal_rls$
+BEGIN
   -- Defense in depth: all private portal tables must enforce RLS without
   -- introducing policies or direct client table access.
   IF (
@@ -308,6 +310,8 @@ $private_schema_acl$;
      ) THEN
     RAISE EXCEPTION 'Trusted service_role grants/BYPASSRLS changed unexpectedly';
   END IF;
+END;
+$private_portal_rls$;
 
 DROP FUNCTION water_management_private.default_acl_probe();
 
