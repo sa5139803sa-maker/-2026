@@ -29,9 +29,9 @@ AS $$
 $$;
 GRANT USAGE ON SCHEMA auth TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
-CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $
- SELECT COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb)
-$;
+CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS $jwt$
+  SELECT COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb)
+$jwt$;
 GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 
 \ir ../../migrations/20261104120358_create_water_management_foundation.sql
@@ -44,6 +44,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261106171000_enforce_temporary_password_access_gate.sql
 \ir ../../migrations/20261106172000_fence_sessions_after_password_reset.sql
 \ir ../../migrations/20261106173000_serialize_organization_account_limit_updates.sql
+\ir ../../migrations/20261106174000_scope_account_audit_log_policy.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
