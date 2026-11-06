@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { trustedGatewayIp } from "./trusted-gateway-ip.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,23 +30,7 @@ function normalizeArabicDigits(value: string): string {
   });
 }
 
-function trustedGatewayIp(req: Request): string | null {
-  // Supabase's API gateway appends the connected client address to
-  // X-Forwarded-For. Use the final gateway-added entry, never a client
-  // supplied body field. The RPC HMACs this value and stores no raw IP.
-  const vercelForwarded = req.headers.get("x-vercel-forwarded-for")?.trim();
-  if (vercelForwarded && vercelForwarded.length <= 64) return vercelForwarded;
 
-  const forwarded = req.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const entries = forwarded.split(",").map((item) => item.trim()).filter(Boolean);
-    const candidate = entries.at(-1);
-    if (candidate && candidate.length <= 64) return candidate;
-  }
-
-  const realIp = req.headers.get("x-real-ip")?.trim();
-  return realIp && realIp.length <= 64 ? realIp : null;
-}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -93,7 +78,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ found: false });
   }
 
-  const clientIp = trustedGatewayIp(req);
+  const clientIp = trustedGatewayIp(req.headers);
   if (!clientIp) {
     return jsonResponse({ error: "خدمة الاستعلام غير متاحة مؤقتًا." }, 503);
   }
