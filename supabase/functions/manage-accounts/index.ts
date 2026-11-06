@@ -36,6 +36,7 @@ function normalizeUsername(value: unknown): string {
   if (
     normalized.length < 3 ||
     normalized.length > 40 ||
+    new TextEncoder().encode(normalized).length > 100 ||
     !/^[\p{L}\p{N}._-]+$/u.test(normalized)
   ) throw new Error("اسم المستخدم من 3 إلى 40 حرفاً، ويسمح بالحروف والأرقام والنقطة والشرطة.");
   return normalized;
