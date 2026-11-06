@@ -774,6 +774,16 @@ BEGIN
     RAISE EXCEPTION 'Global unique subscriber-number index is missing';
   END IF;
 
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_indexes
+    WHERE schemaname='public'
+      AND indexname='subscribers_org_phone_normalized_idx'
+      AND indexdef ILIKE 'CREATE INDEX%'
+      AND indexdef NOT ILIKE 'CREATE UNIQUE INDEX%'
+  ) THEN
+    RAISE EXCEPTION 'Organization phone index must be non-unique so household members may share a phone';
+  END IF;
+
   IF pg_catalog.has_table_privilege('anon','water_management_private.subscriber_number_registry','SELECT')
      OR pg_catalog.has_table_privilege('authenticated','water_management_private.subscriber_number_registry','SELECT')
      OR pg_catalog.has_table_privilege('service_role','water_management_private.subscriber_number_registry','SELECT') THEN
@@ -829,6 +839,19 @@ BEGIN
 END;
 $subscriber_portal_lookup$;
 RESET ROLE;
+
+-- Multiple subscribers in one household may share the same contact phone.
+INSERT INTO public.subscribers (organization_id, full_name, phone)
+VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'مشترك من الأسرة', '0599111111');
+DO $shared_phone$
+BEGIN
+  IF (SELECT count(*) FROM public.subscribers
+      WHERE organization_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        AND phone_normalized='0599111111') < 2 THEN
+    RAISE EXCEPTION 'Household subscribers could not share one normalized phone';
+  END IF;
+END;
+$shared_phone$;
 
 -- Organization deletion must cascade organization-owned rows while retaining auth profiles.
 SET CONSTRAINTS pump_assignments_user_tenant_role_fkey DEFERRED;
