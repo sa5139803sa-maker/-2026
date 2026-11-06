@@ -1,4 +1,4 @@
-import {useState} from "react";
+import {useEffect,useState} from "react";
 import {KeyboardAvoidingView,Platform,ScrollView,StyleSheet,Text,View} from "react-native";
 import {router} from "expo-router";
 import {LockKeyhole} from "lucide-react-native";
@@ -9,6 +9,8 @@ import {supabase} from "@/lib/supabase";
 import {useAuth} from "@/lib/auth";
 export default function ChangePasswordScreen(){
  const {profile,refreshProfile,signOut}=useAuth();
+ useEffect(()=>{if(profile?.role==="platform_admin")void signOut().finally(()=>router.replace("/sign-in"));},[profile?.role,signOut]);
+ if(profile?.role==="platform_admin")return null;
  const [password,setPassword]=useState("");const [confirm,setConfirm]=useState("");const [error,setError]=useState<string|null>(null);const [saving,setSaving]=useState(false);
  const submit=async()=>{
   if(password.length<10||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password)){setError("استخدم 10 أحرف على الأقل، مع حرف كبير وحرف صغير ورقم.");return;}
