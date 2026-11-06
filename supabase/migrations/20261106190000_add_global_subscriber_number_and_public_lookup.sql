@@ -61,18 +61,6 @@ BEGIN
     RAISE EXCEPTION
       'Subscriber portal migration stopped: every subscriber must have a valid phone number (8 to 15 digits)';
   END IF;
-
-  IF EXISTS (
-    SELECT organization_id,
-           water_management_private.normalize_subscriber_phone(phone) AS canonical_phone
-    FROM public.subscribers
-    GROUP BY organization_id,
-             water_management_private.normalize_subscriber_phone(phone)
-    HAVING pg_catalog.count(*) > 1
-  ) THEN
-    RAISE EXCEPTION
-      'Subscriber portal migration stopped: normalized phone numbers must be unique within each organization';
-  END IF;
 END;
 $preflight$;
 
