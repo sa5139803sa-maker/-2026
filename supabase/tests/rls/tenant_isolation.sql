@@ -33,6 +33,7 @@ GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 \ir ../../migrations/20261104120514_tighten_water_management_grants.sql
 \ir ../../migrations/20261104160000_secure_tenant_boundaries.sql
 \ir ../../migrations/20261106104135_secure_request_identity_bridge_for_authz.sql
+\ir ../../migrations/20261106143808_add_tenant_foreign_key_indexes.sql
 
 -- Future helper functions must inherit the dedicated owner's closed default ACL.
 SET LOCAL ROLE water_management_authz;
@@ -494,26 +495,47 @@ $organization_delete$;
 -- Every child-side foreign key must have a matching index in the same
 -- column order as the constraint, including composite tenant constraints.
 DO $tenant_fk_indexes$
+DECLARE
+  v_index regclass;
 BEGIN
-  IF to_regclass('public.organizations_created_by_idx') IS NULL
-     OR pg_get_indexdef('public.organizations_created_by_idx'::regclass) NOT LIKE '%(created_by)' THEN
-    RAISE EXCEPTION 'Missing or invalid index for organizations.created_by';
+  v_index := to_regclass('public.organizations_created_by_idx');
+  IF v_index IS NULL THEN
+    RAISE EXCEPTION 'Missing index for organizations.created_by';
   END IF;
-  IF to_regclass('public.profiles_organization_id_idx') IS NULL
-     OR pg_get_indexdef('public.profiles_organization_id_idx'::regclass) NOT LIKE '%(organization_id)' THEN
-    RAISE EXCEPTION 'Missing or invalid index for profiles.organization_id';
+  IF pg_get_indexdef(v_index) NOT LIKE '%(created_by)' THEN
+    RAISE EXCEPTION 'Invalid index definition for organizations.created_by';
   END IF;
-  IF to_regclass('public.pump_assignments_pump_tenant_idx') IS NULL
-     OR pg_get_indexdef('public.pump_assignments_pump_tenant_idx'::regclass) NOT LIKE '%(pump_id, organization_id)' THEN
-    RAISE EXCEPTION 'Missing or invalid index for pump_assignments (pump_id, organization_id)';
+
+  v_index := to_regclass('public.profiles_organization_id_idx');
+  IF v_index IS NULL THEN
+    RAISE EXCEPTION 'Missing index for profiles.organization_id';
   END IF;
-  IF to_regclass('public.pump_assignments_user_tenant_role_idx') IS NULL
-     OR pg_get_indexdef('public.pump_assignments_user_tenant_role_idx'::regclass) NOT LIKE '%(user_id, organization_id, assignment_role)' THEN
-    RAISE EXCEPTION 'Missing or invalid index for pump_assignments (user_id, organization_id, assignment_role)';
+  IF pg_get_indexdef(v_index) NOT LIKE '%(organization_id)' THEN
+    RAISE EXCEPTION 'Invalid index definition for profiles.organization_id';
   END IF;
-  IF to_regclass('public.subscribers_pump_tenant_idx') IS NULL
-     OR pg_get_indexdef('public.subscribers_pump_tenant_idx'::regclass) NOT LIKE '%(pump_id, organization_id)' THEN
-    RAISE EXCEPTION 'Missing or invalid index for subscribers (pump_id, organization_id)';
+
+  v_index := to_regclass('public.pump_assignments_pump_tenant_idx');
+  IF v_index IS NULL THEN
+    RAISE EXCEPTION 'Missing index for pump_assignments (pump_id, organization_id)';
+  END IF;
+  IF pg_get_indexdef(v_index) NOT LIKE '%(pump_id, organization_id)' THEN
+    RAISE EXCEPTION 'Invalid index definition for pump_assignments (pump_id, organization_id)';
+  END IF;
+
+  v_index := to_regclass('public.pump_assignments_user_tenant_role_idx');
+  IF v_index IS NULL THEN
+    RAISE EXCEPTION 'Missing index for pump_assignments (user_id, organization_id, assignment_role)';
+  END IF;
+  IF pg_get_indexdef(v_index) NOT LIKE '%(user_id, organization_id, assignment_role)' THEN
+    RAISE EXCEPTION 'Invalid index definition for pump_assignments (user_id, organization_id, assignment_role)';
+  END IF;
+
+  v_index := to_regclass('public.subscribers_pump_tenant_idx');
+  IF v_index IS NULL THEN
+    RAISE EXCEPTION 'Missing index for subscribers (pump_id, organization_id)';
+  END IF;
+  IF pg_get_indexdef(v_index) NOT LIKE '%(pump_id, organization_id)' THEN
+    RAISE EXCEPTION 'Invalid index definition for subscribers (pump_id, organization_id)';
   END IF;
 END;
 $tenant_fk_indexes$;
