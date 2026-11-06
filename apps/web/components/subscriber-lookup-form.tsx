@@ -54,7 +54,7 @@ export function SubscriberLookupForm() {
     setBusy(true);
     try {
       const { data, error: requestError } =
-        await createSupabaseBrowserClient().functions.invoke<LookupResponse>(
+        await createSupabaseBrowserClient().functions.invoke(
           "subscriber-portal",
           {
             body: {
@@ -64,6 +64,8 @@ export function SubscriberLookupForm() {
           },
         );
 
+      const response = data as LookupResponse | null;
+
       if (requestError) {
         const status = (requestError as { context?: Response }).context?.status;
         if (status === 429) {
@@ -72,11 +74,11 @@ export function SubscriberLookupForm() {
         throw new Error("تعذر الاتصال بخدمة الاستعلام. حاول مجددًا.");
       }
 
-      if (!data?.found || !data.subscriber) {
+      if (!response?.found || !response.subscriber) {
         throw new Error("لم نعثر على اشتراك يطابق البيانات المدخلة.");
       }
 
-      setResult(data.subscriber);
+      setResult(response.subscriber);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "تعذر تنفيذ الاستعلام.");
     } finally {
