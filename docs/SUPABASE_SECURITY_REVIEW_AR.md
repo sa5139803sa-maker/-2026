@@ -213,3 +213,32 @@
 - **Data API:** لا تزال صلاحيات جداول التطبيق إلى `anon` مسحوبة؛ لا يُمنح مخطط التفويض الداخلي إلى `anon` أو `service_role`.
 
 **قرار التحقق:** أصبحت ترحيلات المصدر واختبارات CI متطابقة مع مخطط قاعدة التطوير المنشورة. تبقى مراجعة التحذير المقصود وتحسين الفهارس واختبارات Auth/Storage الفعلية قبل أي اعتماد إنتاجي.
+
+## 8.7 تحديث الفهارس واختبارات CI — 2026-11-06
+
+**المشروع:** `kxdncnswbwktbiphptbr` — Water Management، فرانكفورت، بيئة تطوير.
+
+### الترحيل الخامس والفهارس
+
+تم تطبيق الترحيل `20261106143808_add_tenant_foreign_key_indexes` بنجاح، وسجلته قاعدة التطوير بالإصدار `20261106143808`. الفهارس المضافة هي:
+- `organizations(created_by)` عبر `organizations_created_by_idx`.
+- `profiles(organization_id)` عبر `profiles_organization_id_idx`.
+- `pump_assignments(pump_id, organization_id)` عبر `pump_assignments_pump_tenant_idx`.
+- `pump_assignments(user_id, organization_id, assignment_role)` عبر `pump_assignments_user_tenant_role_idx`.
+- `subscribers(pump_id, organization_id)` عبر `subscribers_pump_tenant_idx`.
+
+تم التحقق من التعريف الفعلي لكل فهرس في `pg_indexes`. أزيلت جميع نتائج `unindexed_foreign_keys` من Performance Advisor. بقيت 8 ملاحظات `unused_index` من نوع INFO لأن قاعدة التطوير لا تحتوي بيانات تشغيل كافية؛ لم تُحذف هذه الفهارس.
+
+### اختبارات PostgreSQL والجودة
+
+تم تحديث `supabase/tests/rls/tenant_isolation.sql` ليستدعي ترحيل الفهارس الخامس على قاعدة PostgreSQL نظيفة، ويتأكد من وجود الفهارس وتعريف ترتيب الأعمدة. فشل التشغيل الأول على Commit `b6ef622...` لأن الترحيل لم يكن مستدعى من الاختبار؛ تم إصلاح ترتيب الترحيل وفحص `regclass` في Commit `37687bf0d15ee769dec4eea8c511ebc5d0a08298`.
+
+- PostgreSQL RLS PR Run `42236090457` (Run #98): **success**.
+- Quality PR Run `42236090460` (Run #99): **success**.
+- شملت Quality: تثبيت الاعتماديات، تقرير npm، اختبارات الوحدة، TypeScript، وتصدير الويب.
+
+### ما بقي مفتوحًا أمنيًا
+
+ما زال تحذير `authenticated_security_definer_function_executable` ظاهرًا على `public.create_organization(p_name text)`. راجعنا التعريف الحي: الدالة مملوكة لـ `postgres`، تستخدم `SECURITY DEFINER` و`search_path = ''`، وتقرأ هوية `auth.uid()`، وتتحقق من الاسم وملف المستخدم غير المرتبط، وتقفل صف الملف قبل إنشاء المؤسسة، ولا تقبل role أو organization_id من العميل. التنفيذ مسموح لـ `authenticated` فقط؛ لا تمنح `anon` أو `PUBLIC` التنفيذ. لم نخْف التحذير أو نسجله كمقبول للإنتاج؛ يلزم مراجع أمني مستقل قبل الإنتاج.
+
+Health Advisor بلا ملاحظات. ظلت PR #2 مفتوحة ومسودة، ولم يتغير `main`. لا تعتبر المرحلة 2 مكتملة لأن استعادة جلسة React Native وتأكيد البريد والدعوات وفحص سياسات Storage ما زالت غير منجزة.

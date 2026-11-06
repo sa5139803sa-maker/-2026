@@ -127,7 +127,7 @@
 **بوابة القبول:** جميع الشاشات والنماذج تستخدم tokens والمكونات المشتركة؛ ملفات SVG موجودة وتُعرض بأحجام مختلفة؛ RTL صحيح؛ لا يوجد اختلاف بصري غير مبرر؛ العبارة التسويقية لا تدخل الشعار دون اعتماد مستقل.
 
 ### المرحلة 2 — الأساس التقني والأمان والمصادقة
-**الحالة:** قيد التنفيذ جزئيًا؛ أُنشئ مشروع تطوير مستقل `Water Management` على Supabase في فرانكفورت (`eu-central-1`) بالمعرّف `kxdncnswbwktbiphptbr`. طُبقت عليه أربع ترحيلات، وفُعّلت RLS على الجداول الأساسية الخمسة، ونجح اختبار عزل مستضاف لمؤسستين وأدوار manager/operator/supervisor ومسار onboarding. ما زالت مراجعة التحذير الأمني المقصود وتحسينات الفهارس وفحص Storage وإكمال Auth/العضويات مطلوبة قبل قبول المرحلة أو الإنتاج.
+**الحالة:** قيد التنفيذ جزئيًا؛ أُنشئ مشروع تطوير مستقل `Water Management` على Supabase في فرانكفورت (`eu-central-1`) بالمعرّف `kxdncnswbwktbiphptbr`. طُبقت خمس ترحيلات، وفُعّلت RLS على الجداول الأساسية الخمسة، ونجح اختبار عزل مستضاف لمؤسستين وأدوار المؤسسة ومسار onboarding. أُضيفت خمسة فهارس تغطي المفاتيح الأجنبية غير المفهرسة، ولم يعد Performance Advisor يعرض `unindexed_foreign_keys`. ما زالت مراجعة تحذير `create_organization` الأمني وفحص Storage وإكمال Auth/العضويات مطلوبة قبل قبول المرحلة أو الإنتاج.
 
 المهام:
 - [x] حصر المشاريع السابقة وعدم استخدامها عشوائيًا، ثم إنشاء مشروع تطوير مخصص لإدارة المياه: `kxdncnswbwktbiphptbr` في ألمانيا/فرانكفورت (`eu-central-1`) بحالة `ACTIVE_HEALTHY`؛ المشاريع القديمة بقيت دون تغيير.
@@ -144,7 +144,7 @@
 - [x] اجتاز PR Quality workflow رقم `41868237217`: `npm ci` و`npm test` و`npm run typecheck` و`npm run build:web`.
 - [x] تشغيل الترحيلات واختبارات العزل الإيجابية والسلبية على PostgreSQL 17.11 في GitHub Actions بنجاح: Run `41868218009`، وPR Run `41868238151`، على commit `06d0df1bc1297286dff6f5f082dceab01e800381`.
 - [x] عزل ملكية دوال `water_management_private` بدور داخلي `NOLOGIN BYPASSRLS` محدود على `profiles`، وضبط صلاحياته الافتراضية واختبار عدم وراثة `EXECUTE` لأدوار API؛ اجتازت PostgreSQL PR Run `41875025987` وPush Run `41875015347` وQuality PR Run `41875025973` على Commit `a73c8d79c19dab9d2e36400383612a7f7bcce2f0`.
-- [x] تشغيل Security Advisors على المشروع `kxdncnswbwktbiphptbr` وإجراء اختبار RLS حي؛ ظهر تحذير واحد مقصود على RPC `public.create_organization` لأنها SECURITY DEFINER محمية وتُستخدم لإنشاء المؤسسة للمستخدم المسجل، مع 5 ملاحظات فهارس FK من نوع INFO.
+- [x] تشغيل Security Advisors على المشروع `kxdncnswbwktbiphptbr` وإجراء اختبار RLS حي؛ ظهر تحذير واحد على RPC `public.create_organization` لأنها SECURITY DEFINER متاحة للمستخدم المسجل، وبقيت للمراجعة البشرية. أضيفت الفهارس الخمسة التي طلبها Advisor، واختفت ملاحظات `unindexed_foreign_keys`؛ بقيت ملاحظات `unused_index` من نوع INFO على قاعدة تطوير صغيرة بلا بيانات تشغيل، ولم تُحذف الفهارس.
 - [x] تحديد المشروع الصحيح بموافقة المالك: `kxdncnswbwktbiphptbr`، ألمانيا/فرانكفورت، `ACTIVE_HEALTHY`؛ والتحقق من صلاحيات Data API على الجداول وعدم منح وصول جداول إلى `anon` وعدم منح USAGE للمخطط الداخلي إلى أدوار API غير الموثوقة.
 - [x] إعداد `.env.example` بقيمة URL ومفتاح publishable العام للمشروع؛ لا يحتوي على service_role أو secret key. تم تحديث العميل ليعطي أولوية لـ `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` مع إبقاء دعم متغير anon القديم.
 - [x] إصلاح تدفق Auth مبدئيًا: callback الخاص بـ `onAuthStateChange` يحدّث الجلسة فقط، وقراءة profile تتم في `useEffect` مستقل؛ جرى إضافة إعادة تحميل profile بعد RPC إنشاء المؤسسة. اجتاز TypeScript والاختبارات وتصدير الويب عبر CI في Run #26.
@@ -164,7 +164,9 @@
 - [x] استخدام مشروع تطوير مستقل لاختبار RLS بمؤسستين ومستخدمين اصطناعيين؛ انتهت المعاملة بـ `ROLLBACK` وتأكد أن عدد بيانات الاختبار المتبقية صفر.
 - [x] التحقق من Storage على المشروع الجديد: لا توجد buckets أو objects، وجميع جداول Storage التي فُحصت مفعّل عليها RLS؛ إنشاء bucket وسياسات خاصة به مؤجل إلى مرحلة رفع المرفقات.
 - [x] نشر جسر هوية داخلي متوافق مع صلاحيات Supabase المستضاف دون توسيع صلاحيات مخطط `auth`؛ الترحيل الرابع `20261106104135_secure_request_identity_bridge_for_authz` مسجل بنجاح.
+- [x] إضافة الترحيل الخامس `20261106143808_add_tenant_foreign_key_indexes` إلى قاعدة التطوير، وإنشاء خمسة فهارس دقيقة لأعمدة المفاتيح الأجنبية المفردة والمركبة في `organizations`, `profiles`, `pump_assignments`, و`subscribers`؛ تم التحقق من تعريفاتها، وأضيف اختبار تلقائي لوجودها وترتيب أعمدتها.
 - [x] اجتياز أحدث CI على Commit `b9c6b80a347edd9c0e90252f0b516241d904ff74`: PostgreSQL RLS Run `42205474789` وQuality Run `42205474781` كلاهما success؛ شملت الجودة `npm test` وTypeScript وتصدير الويب.
+- [x] اجتياز فحوص PR على Commit `37687bf0d15ee769dec4eea8c511ebc5d0a08298`: PostgreSQL RLS PR Run `42236090457` (Run #98) وQuality PR Run `42236090460` (Run #99) كلاهما success؛ شملت الجودة تثبيت الاعتماديات وتقرير npm واختبارات الوحدة وTypeScript وتصدير الويب.
 - [x] إعداد CI لفحص الاختبارات وTypeScript وتصدير الويب عبر GitHub Actions.
 - [x] تحديث Actions إلى checkout/setup-node v7 وتشغيل Node 24، وإضافة خطوة تقرير اعتماديات npm دون تعديل تلقائي.
 - [ ] تصنيف نتائج npm audit وتحديد الإصلاحات الآمنة قبل تحديث lockfile.
