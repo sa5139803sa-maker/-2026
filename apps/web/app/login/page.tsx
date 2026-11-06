@@ -1,10 +1,18 @@
 import type { Metadata } from "next";
 import { LoginForm } from "@/components/login-form";
 import { Droplets } from "lucide-react";
+import { redirect } from "next/navigation";
+import { getCurrentWebProfile } from "@/lib/auth/server";
 
 export const metadata: Metadata = { title: "تسجيل الدخول" };
+export const dynamic = "force-dynamic";
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const profile = await getCurrentWebProfile();
+  if (profile) {
+    if (profile.must_change_password) redirect("/change-password");
+    redirect(profile.role === "platform_admin" ? "/platform" : "/organization");
+  }
   return (
     <main className="page-center">
       <section className="auth-card">
