@@ -758,6 +758,37 @@ BEGIN
   FROM public.subscribers
   WHERE id='30000000-0000-4000-8000-000000000001';
 
+  IF v_number NOT BETWEEN 100000 AND 999999
+     OR (SELECT pg_catalog.count(*) FROM public.subscribers WHERE subscriber_number IS NULL) > 0
+     OR (SELECT pg_catalog.count(*) FROM public.subscribers)
+        <> (SELECT pg_catalog.count(DISTINCT subscriber_number) FROM public.subscribers) THEN
+    RAISE EXCEPTION 'Subscriber numbers are not six-digit, assigned, and globally unique';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_indexes
+    WHERE schemaname='public'
+      AND indexname='subscribers_subscriber_number_global_uidx'
+      AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
+  ) THEN
+    RAISE EXCEPTION 'Global unique subscriber-number index is missing';
+  END IF;
+
+  IF pg_catalog.has_table_privilege('anon','water_management_private.subscriber_number_registry','SELECT')
+     OR pg_catalog.has_table_privilege('authenticated','water_management_private.subscriber_number_registry','SELECT')
+     OR pg_catalog.has_table_privilege('service_role','water_management_private.subscriber_number_registry','SELECT') THEN
+    RAISE EXCEPTION 'Subscriber number registry is exposed to an API role';
+  END IF;
+
+  BEGIN
+    UPDATE public.subscribers
+    SET subscriber_number = CASE WHEN subscriber_number = 999999 THEN 100000 ELSE subscriber_number + 1 END
+    WHERE id='30000000-0000-4000-8000-000000000001';
+    RAISE EXCEPTION 'Subscriber number mutation was not rejected';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM = 'Subscriber number mutation was not rejected' THEN RAISE; END IF;
+  END;
+
   SELECT * INTO v_result
   FROM public.lookup_subscriber_portal(v_number, '+970599111111', '203.0.113.10');
   IF NOT v_result.found
