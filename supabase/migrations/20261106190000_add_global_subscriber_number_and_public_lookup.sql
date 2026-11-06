@@ -8,13 +8,13 @@
 ALTER TABLE public.subscribers
   ADD COLUMN subscriber_number bigint
   GENERATED ALWAYS AS IDENTITY (
-    START WITH 100000000001
+    START WITH 100000
     INCREMENT BY 1
   );
 
 ALTER TABLE public.subscribers
   ADD CONSTRAINT subscribers_subscriber_number_range_check
-  CHECK (subscriber_number BETWEEN 100000000000 AND 999999999999);
+  CHECK (subscriber_number BETWEEN 100000 AND 999999);
 
 CREATE UNIQUE INDEX subscribers_subscriber_number_global_uidx
   ON public.subscribers (subscriber_number);
@@ -56,7 +56,9 @@ END;
 $function$;
 
 REVOKE ALL ON FUNCTION water_management_private.normalize_subscriber_phone(text)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION water_management_private.normalize_subscriber_phone(text)
+  TO service_role;
 
 -- Existing subscribers must have a valid phone before the portal can be enabled.
 DO $preflight$
@@ -192,7 +194,7 @@ DECLARE
   v_now timestamptz := pg_catalog.clock_timestamp();
 BEGIN
   IF p_subscriber_number IS NULL
-     OR p_subscriber_number NOT BETWEEN 100000000000 AND 999999999999 THEN
+     OR p_subscriber_number NOT BETWEEN 100000 AND 999999 THEN
     RETURN QUERY SELECT false, 0, false, NULL::bigint, NULL::text, NULL::text, NULL::text, NULL::text;
     RETURN;
   END IF;
