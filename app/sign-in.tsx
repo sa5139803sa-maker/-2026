@@ -9,7 +9,7 @@ import { colors, radius, spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth';
 
 export default function SignInScreen() {
-  const { session, signIn, signUp } = useAuth();
+  const { session, profile, signIn, signUp } = useAuth();
   const [mode, setMode] = useState<'signIn' | 'signUp'>('signIn');
   const [displayName, setDisplayName] = useState('');
   const [organizationName, setOrganizationName] = useState('');
@@ -19,10 +19,14 @@ export default function SignInScreen() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (session) router.replace('/(tabs)');
-  }, [session]);
+    if (session && profile && profile.role !== "platform_admin") {
+      router.replace('/(tabs)');
+    }
+  }, [session, profile]);
 
-  if (session) return null;
+  // Wait for the role check before navigating. Platform administrators are
+  // signed out by AuthProvider and receive the web-only access message.
+  if (session && profile && profile.role !== "platform_admin") return null;
 
   const submit = async () => {
     if (!email.trim() || password.length < 6 || (mode === 'signUp' && (!displayName.trim() || !organizationName.trim()))) {
