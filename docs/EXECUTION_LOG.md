@@ -723,3 +723,22 @@
 - **التحقق حتى لحظة التسجيل:** التغييرات المصدرية والوثائق أضيفت إلى الفرع. نتائج CI الخاصة بالويب والترحيلة الجديدة لم تصدر بعد. لم تُطبق الترحيلة على Supabase، ولم تنشر Edge Function المعدلة، ولم يُنشر Next.js.
 - **المتبقي:** إنشاء واعتماد lockfile، نتائج CI، تطبيق migration التطويرية ونشر Edge Function بالترتيب، اختبار staging، إكمال audit viewer وحالة المؤسسة، ثم تنفيذ بوابة المشترك بعد استكمال دفاعات الخصوصية.
 - **قرار القبول:** قبول الهيكل والوظائف الأساسية كإنجاز قيد التحقق، لا كإصدار جاهز للإنتاج. لا تغيير على `main` ولا دمج لـ PR #2.
+
+
+### 2026-11-06 — تفعيل إنشاء المؤسسات خادميًا ونشر واجهة إدارة الحسابات
+
+- **Supabase development:** المشروع `kxdncnswbwktbiphptbr`.
+- **Migration:** طُبقت `20261106180000_create_platform_organization_admin_rpc.sql` بنجاح، وسُجلت في سجل Supabase بالنسخة `20261106173412`؛ أصبح مجموع migrations المسجلة 13.
+- **RPC:** `public.create_platform_organization(uuid,text)` تعمل بـ `SECURITY INVOKER` و`search_path = ''`. لا يملك EXECUTE إلا `service_role`؛ تحققنا مباشرة أن `authenticated` و`anon` لا يملكان التنفيذ. يملك service_role صلاحية INSERT اللازمة على `organizations` و`account_audit_log`.
+- **اختبار فعلي مع rollback:** استدعينا RPC بحساب مدير المنصة داخل transaction على قاعدة التطوير، ورأينا سجل `organization_created` موجودًا ضمن المعاملة نفسها، ثم نفذنا `ROLLBACK`. تحققنا بعد ذلك أن عدد المؤسسات وسجلات التدقيق المتبقية باسم الاختبار يساوي صفرًا؛ لم نترك مؤسسة اختبار أو أثرًا تشغيليًا.
+- **Edge Function:** نُشرت `manage-accounts` بالإصدار 8، الحالة ACTIVE، و`verify_jwt=true`. يتضمن الإصدار الإجراء `create_organization`، ويستدعي RPC الخادمية.
+- **CI:**  
+  - Web console checks #26 — run `42263360340` — success؛ شمل توليد lock مؤقت واختبار `npm ci` والاختبارات وTypeScript وبناء Next.js للإنتاج ورفع artifact للـlockfile.
+  - Quality checks #186 — run `42263360368` — success؛ Deno Edge Function checks واختبارات الوحدة وTypeScript وتصدير Expo للويب.
+  - Supabase tenant isolation tests #272 — run `42263360136` — success؛ شمل اختبار صلاحيات RPC الجديدة.
+- **ملف الاعتماديات:** ولّد CI `apps/web/package-lock.json` بإصدار lockfile 3 واستخدمه في `npm ci` بنجاح. الملف محفوظ كـartifact من Workflow، لكنه لم يُعتمد كملف Git بعد. لا نمنح Workflow صلاحية كتابة للمستودع من أجل ارتكاب الملف تلقائيًا.
+- **Security Advisor:** بقي تحذير واحد `auth_leaked_password_protection` — ميزة حظر كلمات المرور المسرّبة معطلة في إعدادات Supabase Auth؛ يتطلب تفعيلها من إعدادات Auth قبل استقبال مستخدمين حقيقيين على الويب.
+- **Health Advisor:** `lints: []`.
+- **Performance Advisor:** لا توجد `unindexed_foreign_keys`؛ بقيت 11 ملاحظة `unused_index` بمستوى INFO على قاعدة تطوير ذات بيانات تشغيل قليلة، ولم نحذف أي فهرس.
+- **المتبقي:** اعتماد lockfile، اختبار الدخول والإنشاء عبر المتصفح بحساب مدير المنصة، اختبار staging ونشر تطبيق Next.js، تفعيل leaked-password protection، استكمال لوحة التدقيق وحالة تفعيل/تعليق المؤسسات، وإنجاز بوابة المشترك بعد ضوابط الاشتراك وOTP ومكافحة التعداد.
+- **قرار القبول:** قبول بنية التطبيق وأساس إدارة المنصة/المؤسسة كمرحلة تطوير ناجحة في CI ومفعّلة خلفيًا على Supabase development؛ لا تُعد Production-ready ولا يعني هذا نشر واجهة ويب عامة. لا تغيير على `main` ولا دمج PR #2.
