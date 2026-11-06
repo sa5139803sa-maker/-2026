@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { LockKeyhole } from "lucide-react";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export function PasswordChangeForm() {
   const router = useRouter();
@@ -49,6 +50,9 @@ export function PasswordChangeForm() {
         );
       }
 
+      // Password changes can invalidate the current access token. Clear the
+      // browser session and require a fresh login with the new password.
+      await createSupabaseBrowserClient().auth.signOut();
       setPassword("");
       setConfirmPassword("");
       router.replace("/login?password_changed=1");
