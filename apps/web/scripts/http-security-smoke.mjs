@@ -64,7 +64,7 @@ try {
   for (const response of [crossOrigin, missingOrigin]) {
     assert.match(
       response.headers.get("cache-control") ?? "",
-      /private,\\s*no-store/i,
+      /private,\s*no-store/i,
       "rejected account requests must not be cached",
     );
   }
