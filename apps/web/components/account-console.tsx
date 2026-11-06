@@ -63,6 +63,7 @@ export function AccountConsole({ mode, organizationId }: Props) {
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState(organizationId ?? "");
   const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [organizationName, setOrganizationName] = useState("");
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [newRole, setNewRole] = useState<ManagedRole>(isPlatform ? "manager" : "operator");
@@ -217,6 +218,33 @@ export function AccountConsole({ mode, organizationId }: Props) {
     }
   }
 
+  async function createOrganization(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = organizationName.trim();
+    if (name.length < 2 || name.length > 120) {
+      setError("اسم المؤسسة يجب أن يكون من حرفين إلى 120 حرفًا.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await callAccountsApi<{
+        organization: { id: string; name: string; account_limit: number };
+      }>({ action: "create_organization", name });
+
+      setOrganizationName("");
+      setSelectedOrganizationId(result.organization.id);
+      setNotice("تم إنشاء المؤسسة وتسجيل العملية في سجل التدقيق.");
+      await load(result.organization.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "تعذر إنشاء المؤسسة.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function copyTemporaryCredentials() {
     if (!temporaryCredentials) return;
     try {
@@ -254,6 +282,32 @@ export function AccountConsole({ mode, organizationId }: Props) {
               <div className="stat-icon"><ShieldCheck size={20} /></div>
             </div>
           </div>
+
+          <section className="surface-card" style={{ marginTop: 16 }}>
+            <h3>إنشاء مؤسسة جديدة</h3>
+            <p className="muted small" style={{ lineHeight: 1.8, margin: "7px 0 14px" }}>
+              ينشئ النظام المؤسسة ويسجل المنفذ واسم المؤسسة في سجل التدقيق ضمن معاملة قاعدة بيانات واحدة.
+            </p>
+            <form className="form-grid" onSubmit={(event) => void createOrganization(event)}>
+              <div className="field">
+                <label htmlFor="new-organization-name">اسم المؤسسة</label>
+                <input
+                  id="new-organization-name"
+                  value={organizationName}
+                  onChange={(event) => setOrganizationName(event.target.value)}
+                  minLength={2}
+                  maxLength={120}
+                  required
+                  placeholder="مثال: مؤسسة مياه النور"
+                />
+              </div>
+              <div style={{ alignSelf: "end" }}>
+                <button className="primary-button" type="submit" disabled={busy}>
+                  <Plus size={16} /> إنشاء المؤسسة
+                </button>
+              </div>
+            </form>
+          </section>
 
           <div className="section-heading">
             <div><h2>المؤسسات</h2><p>اختر مؤسسة لإدارة حساباتها وحدها المسموح.</p></div>
