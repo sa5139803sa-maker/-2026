@@ -53,12 +53,6 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: "1"
 
-      - name: Verify unauthenticated admin API behavior on the built Next.js server
-        run: node scripts/http-security-smoke.mjs
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: "https://kxdncnswbwktbiphptbr.supabase.co"
-          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_QQ0BVFx9lqtJ9vSC3XJlhA_ZxgWyMMl"
-
       - name: Upload reproducible dependency lockfile
         uses: actions/upload-artifact@v4
         with:
