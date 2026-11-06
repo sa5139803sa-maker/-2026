@@ -308,3 +308,15 @@ Health Advisor بلا ملاحظات. ظلت PR #2 مفتوحة ومسودة، �
 
 ### فهارس سجل التدقيق
 أضيفت فهارس تغطي المفاتيح الأجنبية الثلاثة في `account_audit_log` وفهرس زمني للترتيب. Performance Advisor لم يعد يعرض `unindexed_foreign_keys`؛ بقيت ملاحظات INFO على فهارس غير مستخدمة في قاعدة تطوير فارغة.
+
+
+## 10. تطبيق Next.js المستقل — مراجعة أولية 2026-11-06
+
+- تطبيق الويب في `apps/web/` منفصل عن Expo. الدور `platform_admin` مقيد بمسار `/platform` في الويب، ومدير المؤسسة بمسار `/organization`.
+- Supabase SSR يستخدم Cookies وPKCE، مع `proxy.ts` لتحديث الرموز. لا يُعد Proxy حاجز الصلاحيات النهائي؛ الصفحات المحمية تعيد التحقق من المستخدم عبر `auth.getUser()` وتقرأ `profiles` عبر RLS.
+- عمليات الإدارة تمر عبر `POST /api/admin/accounts`، وتتحقق من Origin والجلسة وملف الدور ونطاق المؤسسة، ثم تمرر access token الخاص بالمستخدم إلى Edge Function المحمية. لا يوجد مفتاح `service_role` داخل المتصفح أو متغيرات NEXT_PUBLIC.
+- مدير المؤسسة لا يستطيع اختيار organization_id من العميل؛ Route Handler يعيد تعيينه إلى organization_id الموجود في ملفه. أما مدير المنصة فله صلاحيات اختيار المؤسسة فقط في actions المسموحة.
+- ترحيلة `20261106180000_create_platform_organization_admin_rpc.sql` تضيف إنشاء مؤسسة خادميًا مع سجل تدقيق ذري، عبر SECURITY INVOKER وEXECUTE حصري لـ service_role. لم تُطبق بعد على Supabase، ولم تُنشر Edge Function المحدثة؛ يجب نجاح RLS CI أولًا.
+- ترويسات HTTP المبدئية: X-Content-Type-Options وX-Frame-Options وReferrer-Policy وPermissions-Policy وHSTS. لم يُعتمد CSP مخصص أو WAF/rate-limit للبوابة بعد.
+- بوابة المشترك غير متصلة بالبيانات والبحث معطل. لا تنشرها على أنها خدمة عاملة قبل رقم الاشتراك العشوائي الفريد والتحقق الإضافي (OTP) ومكافحة التعداد وتحديد المعدل وEdge Function محدودة الإرجاع واختبارات عزل المشترك.
+- **حواجز الإصدار المتبقية:** lockfile، CI، migration، deploy Edge Function، اختبار staging، توثيق الأسرار والنطاقات وHTTPS ومراقبة السجلات والنسخ الاحتياطية، واختبارات أمان تطبيق الويب.
