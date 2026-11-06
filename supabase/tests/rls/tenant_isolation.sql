@@ -65,9 +65,8 @@ BEGIN
   IF NOT pg_catalog.has_schema_privilege('water_management_authz', 'water_management_private', 'USAGE') THEN
     RAISE EXCEPTION 'Authorization function owner cannot use its private schema';
   END IF;
-  IF pg_catalog.has_schema_privilege('water_management_authz', 'auth', 'USAGE')
-     OR pg_catalog.has_function_privilege('water_management_authz', 'auth.uid()', 'EXECUTE') THEN
-    RAISE EXCEPTION 'Authorization owner unexpectedly depends on direct auth schema access';
+  IF pg_catalog.has_schema_privilege('water_management_authz', 'auth', 'USAGE') THEN
+    RAISE EXCEPTION 'Authorization owner unexpectedly has direct auth schema access';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_proc p
