@@ -151,7 +151,5 @@ REVOKE ALL ON FUNCTION public.create_organization(text)
 GRANT EXECUTE ON FUNCTION public.create_organization(text)
   TO authenticated;
 
-COMMENT ON FUNCTION water_management_private.create_organization(text) IS
-  'Internal onboarding implementation. Callable through the public SECURITY INVOKER wrapper; owner has column-scoped profile/organization privileges only.';
 COMMENT ON FUNCTION public.create_organization(text) IS
   'Authenticated onboarding RPC. SECURITY INVOKER wrapper around the unexposed private implementation.';
