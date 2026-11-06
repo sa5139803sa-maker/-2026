@@ -76,25 +76,20 @@ const manageInvalidJwt = await request(manageEndpoint, {
 });
 assert.equal(manageInvalidJwt.status, 401, "manage-accounts must reject an invalid JWT");
 
-const testStartedAt = new Date().toISOString();
-const portalLiveLookup = await request(endpoint, {
+// A valid-format lookup would write three rate-limit buckets. Keep recurring CI
+// non-mutating; the live RPC and rate limiter are separately exercised in an
+// operator-run transaction whose cleanup is verified before completion.
+const portalRejectedBeforeRateLimit = await request(endpoint, {
   method: "POST",
   headers: { "content-type": "application/json", origin: previewOrigin },
   body: JSON.stringify({
     subscriber_number: "999999",
-    phone: "0590000000",
+    phone: "123",
   }),
 });
-assert.equal(
-  portalLiveLookup.status,
-  200,
-  "valid-format lookup must pass the managed gateway IP check and reach the RPC",
-);
-assert.deepEqual(
-  await portalLiveLookup.json(),
-  { found: false },
-  "the synthetic unknown subscriber must not resolve",
-);
+assert.equal(portalRejectedBeforeRateLimit.status, 200);
+assert.deepEqual(await portalRejectedBeforeRateLimit.json(), { found: false });
+
 
 console.log(JSON.stringify({
   result: "PASS",
@@ -108,7 +103,7 @@ console.log(JSON.stringify({
     subscriberMalformedIdentityRejected: portalMalformedIdentity.status,
     manageAccountsNoJwtRejected: manageNoJwt.status,
     manageAccountsInvalidJwtRejected: manageInvalidJwt.status,
-    subscriberLiveGatewayAndRpc: portalLiveLookup.status,
+    subscriberMalformedIdentityWithoutRateLimitMutation: portalRejectedBeforeRateLimit.status,
   },
-  cleanupNote: "A single valid-format negative lookup updates three HMAC rate-limit buckets. Remove rows updated after testStartedAt after this run; no subscriber/account data is created.",
+  cleanupNote: "CI uses malformed identity input that exits before the rate limiter; it does not create subscriber, account, or rate-limit rows.",
 }));

@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
-const host = "http://localhost:3111";
+const host = "http://127.0.0.1:3111";
 const readyUrl = `${host}/api/admin/accounts`;
 const server = spawn(
   "npm",
-  ["run", "start", "--", "--hostname", "127.0.0.1", "--port", "3111"],
+  ["run", "start", "--", "--hostname", "0.0.0.0", "--port", "3111"],
   { stdio: ["ignore", "pipe", "pipe"], env: process.env },
 );
 
@@ -20,7 +20,7 @@ async function waitForServer() {
       throw new Error(`Next.js server exited early (${server.exitCode}).\n${output.slice(-6000)}`);
     }
     try {
-      const response = await fetch(readyUrl, { redirect: "manual" });
+      const response = await fetch(readyUrl, { redirect: "manual", signal: AbortSignal.timeout(2_000) });
       if (response.status === 405) return;
     } catch {
       // The production server may still be binding its local port.
@@ -36,7 +36,23 @@ async function post(body, headers = {}) {
     headers,
     body,
     redirect: "manual",
+    signal: AbortSignal.timeout(5_000),
   });
+}
+
+async function discoverSameOrigin() {
+  const candidates = [host, "http://localhost:3111"];
+  for (const origin of candidates) {
+    const response = await post("not-json", {
+      "content-type": "text/plain",
+      origin,
+    });
+    if (response.status === 415) return origin;
+    if (response.status !== 403) {
+      throw new Error(`Unexpected response while discovering same-origin host: ${response.status}`);
+    }
+  }
+  throw new Error("Could not determine a same-origin Host/Origin pair for Next.js.");
 }
 
 try {
@@ -44,6 +60,8 @@ try {
 
   const getResponse = await fetch(readyUrl, { redirect: "manual" });
   assert.equal(getResponse.status, 405, "GET must not be accepted by the admin accounts endpoint");
+
+  const sameOrigin = await discoverSameOrigin();
 
   const wrongOrigin = await post(JSON.stringify({ action: "list_users" }), {
     "content-type": "application/json",
@@ -58,7 +76,7 @@ try {
 
   const wrongContentType = await post(JSON.stringify({ action: "list_users" }), {
     "content-type": "text/plain",
-    origin: host,
+    origin: sameOrigin,
   });
   assert.equal(wrongContentType.status, 415, "non-JSON POST must be rejected");
 
