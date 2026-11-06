@@ -61,6 +61,37 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Private authorization helper has an unexpected owner';
   END IF;
+  IF NOT pg_catalog.has_schema_privilege('water_management_authz', 'water_management_private', 'USAGE') THEN
+    RAISE EXCEPTION 'Authorization function owner cannot use its private schema';
+  END IF;
+  IF pg_catalog.has_schema_privilege('water_management_authz', 'auth', 'USAGE')
+     OR pg_catalog.has_function_privilege('water_management_authz', 'auth.uid()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Authorization owner unexpectedly depends on direct auth schema access';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'water_management_private'
+      AND p.proname = 'request_user_id'
+      AND pg_catalog.pg_get_userbyid(p.proowner) = 'postgres'
+  ) THEN
+    RAISE EXCEPTION 'Request identity bridge must be owned by postgres';
+  END IF;
+  IF NOT pg_catalog.has_function_privilege(
+    'water_management_authz', 'water_management_private.request_user_id()', 'EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Authorization owner cannot call the restricted request identity bridge';
+  END IF;
+  IF pg_catalog.has_function_privilege(
+       'anon', 'water_management_private.request_user_id()', 'EXECUTE'
+     ) OR pg_catalog.has_function_privilege(
+       'authenticated', 'water_management_private.request_user_id()', 'EXECUTE'
+     ) OR pg_catalog.has_function_privilege(
+       'service_role', 'water_management_private.request_user_id()', 'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION 'API role can execute the restricted request identity bridge';
+  END IF;
+
   IF NOT pg_catalog.has_schema_privilege('authenticated', 'water_management_private', 'USAGE') THEN
     RAISE EXCEPTION 'Authenticated role cannot use the private authorization schema';
   END IF;
