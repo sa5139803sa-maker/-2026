@@ -650,3 +650,16 @@
   - Quality PR Run `42238745284` (#105): **success**؛ تثبيت الاعتماديات، تقرير npm، اختبارات الوحدة، TypeScript، وتصدير الويب.
 - **Supabase Advisors بعد التطبيق:** Security Advisor `lints: []`؛ Health Advisor `lints: []`؛ Performance Advisor بلا `unindexed_foreign_keys` وبقيت 7 ملاحظات `unused_index` من نوع INFO على قاعدة التطوير الصغيرة.
 - **قرار المرحلة:** أُزيل تحذير SECURITY DEFINER من RPC العامة بمعالجة بنيوية واختبار فعلي. تبقى استعادة جلسة React Native وتأكيد البريد ودعوات العضوية وفحص Storage الوظيفي ومتطلبات platform_admin/بوابة المشترك قبل إغلاق المرحلة 2. لا يُدمج PR #2 ولا يتغير `main` ضمن هذا الإنجاز.
+
+### 2026-11-06 — تخزين جلسات Expo واستعادة التوكن
+- **المرحلة:** 2 — الأساس التقني والمصادقة.
+- **الحالة:** مخزن الجلسة وتجديد التوكن مضافان إلى الشيفرة واجتازا CI؛ اختبار الاستعادة الفعلي على جهاز Android ما زال مطلوبًا.
+- **Commit الكود:** `175492c39bc30b0efc433e7b4680f2bea85b52f3`.
+- **التغييرات:**
+  - إضافة `expo-sqlite@~57.0.4` كاعتمادية متوافقة مع Expo SDK 57 وتحديث `package-lock.json` بقيد `await-lock` التابع لها.
+  - تثبيت `expo-sqlite/localStorage/install` قبل إنشاء عميل Supabase؛ يصبح `localStorage` مدعومًا بتخزين SQLite المستمر على Android/iOS، بينما يستعمل الويب `localStorage` الخاص بالمتصفح.
+  - تمرير `storage` صراحةً إلى Supabase مع الإبقاء على `persistSession`, `autoRefreshToken`, و`detectSessionInUrl: false`. أضيف fallback غير دائم فقط خلال SSR عندما لا يتوفر global `localStorage`.
+  - ربط تجديد التوكن بـ `AppState`: تشغيل `startAutoRefresh()` عند الحالة `active` وإيقاف `stopAutoRefresh()` عندما ينتقل التطبيق إلى الخلفية.
+- **التحقق:** نجح PostgreSQL RLS Push Run `42240436480` (#113)، وPR Run `42240446517` (#114)، وQuality PR Run `42240446515` (#107) على Commit `175492c39bc30b0efc433e7b4680f2bea85b52f3`. تضمنت الجودة `npm ci` وnpm audit report وunit tests وTypeScript وweb export.
+- **حدود التحقق:** CI يثبت توافق الحزم والنوعيات وحزمة الويب، لكنه لا يحاكي إنهاء عملية Android وإعادة فتحها. يلزم اختبار ميداني فعلي للجلسة وتجديد refresh token. التخزين الحالي دائم لكنه غير مشفر بـ SQLCipher أو AES؛ لا نصفه بأنه encrypted-at-rest، ونقيّم إضافة ذلك قبل الإنتاج.
+- **قرار المرحلة:** اعتماد تنفيذ persistence وAppState refresh في الشيفرة، مع إبقاء اختبار الجهاز وتقييم تشفير التخزين ضمن المهام المفتوحة. لا تغيير على قاعدة البيانات أو سياسات RLS في هذا الإنجاز.
