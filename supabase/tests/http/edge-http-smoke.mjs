@@ -93,7 +93,6 @@ assert.deepEqual(await portalRejectedBeforeRateLimit.json(), { found: false });
 
 console.log(JSON.stringify({
   result: "PASS",
-  testStartedAt,
   checks: {
     subscriberPreflight: preflight.status,
     preflightOrigin: preflight.headers.get("access-control-allow-origin"),

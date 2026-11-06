@@ -82,19 +82,19 @@ try {
 
   const malformedJson = await post("{", {
     "content-type": "application/json",
-    origin: host,
+    origin: sameOrigin,
   });
   assert.equal(malformedJson.status, 400, "malformed JSON must be rejected");
 
   const oversized = await post("x".repeat(9_000), {
     "content-type": "application/json",
-    origin: host,
+    origin: sameOrigin,
   });
   assert.equal(oversized.status, 413, "oversized POST must be rejected");
 
   const unauthenticated = await post(JSON.stringify({ action: "list_users" }), {
     "content-type": "application/json",
-    origin: host,
+    origin: sameOrigin,
   });
   assert.equal(unauthenticated.status, 401, "valid same-origin request without a session must return 401");
   assert.match(
