@@ -73,7 +73,14 @@ ALTER TABLE public.subscribers
 
 ALTER TABLE public.subscribers
   ADD CONSTRAINT subscribers_phone_normalized_format_check
-  CHECK (phone_normalized ~ '^[0-9]{8,15}
+  CHECK (phone_normalized ~ '^[0-9]{8,15}$');
+
+-- A phone may be shared by multiple household subscribers in one organization.
+-- Keep a lookup index, but do not impose uniqueness on the contact phone.
+DROP INDEX IF EXISTS public.subscribers_org_phone_normalized_idx;
+CREATE INDEX subscribers_org_phone_normalized_idx
+  ON public.subscribers (organization_id, phone_normalized)
+  WHERE phone_normalized IS NOT NULL;
 -- Reserve numbers independently of subscriber rows. Allocations are never
 -- deleted/reused, even if a subscriber is archived or deleted.
 ALTER TABLE public.subscribers
