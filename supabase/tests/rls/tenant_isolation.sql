@@ -49,6 +49,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261106180000_create_platform_organization_admin_rpc.sql
 \ir ../../migrations/20261106190000_add_global_subscriber_number_and_public_lookup.sql
 \ir ../../migrations/20261107010000_enable_private_schema_rls.sql
+\ir ../../migrations/20261107020000_grant_profile_select_to_authenticated.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -115,6 +116,18 @@ BEGIN
 
   IF NOT pg_catalog.has_schema_privilege('authenticated', 'water_management_private', 'USAGE') THEN
     RAISE EXCEPTION 'Authenticated role cannot use the private authorization schema';
+  END IF;
+
+  IF NOT pg_catalog.has_table_privilege(
+    'authenticated', 'public.profiles', 'SELECT'
+  ) THEN
+    RAISE EXCEPTION 'Authenticated web users cannot read their RLS-scoped profile';
+  END IF;
+  IF pg_catalog.has_table_privilege('authenticated', 'public.profiles', 'UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.profiles', 'INSERT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.profiles', 'DELETE')
+     OR pg_catalog.has_table_privilege('anon', 'public.profiles', 'SELECT') THEN
+    RAISE EXCEPTION 'Profile access must remain read-only for authenticated users and denied to anon';
   END IF;
   IF pg_catalog.has_schema_privilege('anon', 'water_management_private', 'USAGE')
      OR NOT pg_catalog.has_schema_privilege('service_role', 'water_management_private', 'USAGE') THEN
