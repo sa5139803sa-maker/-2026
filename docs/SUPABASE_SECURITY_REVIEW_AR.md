@@ -398,3 +398,12 @@ Health Advisor بلا ملاحظات. ظلت PR #2 مفتوحة ومسودة، �
 - حساب المستخدم المقدم مهيأ `platform_admin` مع `organization_id = NULL`.
 - Security Advisor: تحذير واحد `auth_leaked_password_protection` يجب تفعيله قبل فتح الدخول العام. Health بلا ملاحظات. Performance: لا توجد `unindexed_foreign_keys`، مع 12 unused indexes من INFO.
 - لا يوجد حتى الآن نشر Next.js عام أو نطاق HTTPS. يلزم ربط استضافة مثل Vercel، وضبط متغيرات Supabase العامة، ثم اختبار HTTP/المتصفح على المشروع الأساسي نفسه قبل إعلان الإتاحة العامة.
+
+
+### 10.8 تقوية IP rate limiting — subscriber-portal v2 — 2026-11-06
+
+- أزيلت الثقة من رؤوس `x-vercel-forwarded-for` و`x-forwarded-for` و`x-real-ip`؛ لأن عنوان IP القادم من هذه الرؤوس قد يكون تحت سيطرة العميل في سياق endpoint عام أو proxy غير مضبوط.
+- المصدر الوحيد الآن هو `cf-connecting-ip` المضاف عند مرور الطلب عبر Cloudflare edge الخاص ببوابة Supabase. Cloudflare توثق أن هذا الرأس يحتوي عنوان العميل إلى الأصل، وتوصي باستخدامه بدل `X-Forwarded-For` لاستعادة عنوان الزائر. إذا غاب الرأس أو كان متعدد القيم/مشوهًا، ترفض الدالة الطلب بـ503 بدل تخفيف الحماية.
+- اختبارات Deno تؤكد تجاهل الرؤوس التي يستطيع العميل تمريرها، وقبول الرأس الموثوق وحده. نجح type-check واختبار Deno في CI.
+- نُشرت `subscriber-portal` v2 على المشروع الأساسي؛ لا تغيير على سياسة RPC أو مفاتيح HMAC أو عدم كشف سجلات المشتركين.
+- لا يزال التحقق الحي من headers عبر HTTP والمتصفح مطلوبًا قبل الإطلاق العام، للتأكد من أن مسار Supabase الحالي يمرر `cf-connecting-ip` كما هو متوقع.
