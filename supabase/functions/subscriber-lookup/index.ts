@@ -74,6 +74,10 @@ Deno.serve(async (req: Request) => {
       : "";
   const phone =
     typeof payload.phone === "string" ? payload.phone.trim() : "";
+  const clientIp =
+    typeof payload.client_ip === "string" && payload.client_ip.length <= 64
+      ? payload.client_ip.trim()
+      : "0.0.0.0";
 
   if (!/^\d{6}$/.test(numberInput) || Number(numberInput) < 100_000 || Number(numberInput) > 999_999) {
     return json(400, { error: "أدخل رقم اشتراك صحيحًا من 6 خانات." });
@@ -83,16 +87,8 @@ Deno.serve(async (req: Request) => {
     return json(400, { error: "أدخل رقم الهاتف المسجل للاشتراك." });
   }
 
-  // The trusted hosting/API gateway must overwrite or sanitize this header.
-  // Database limits additionally apply per subscriber number and HMAC(phone),
-  // so the IP bucket is not the only abuse-prevention control.
-  const forwarded = req.headers.get("x-forwarded-for");
-  const realIp = req.headers.get("x-real-ip");
-  const clientIp =
-    forwarded?.split(",")[0]?.trim() ||
-    realIp?.trim() ||
-    "0.0.0.0";
-
+  // The same-origin Next.js route supplies the client IP from the hosting
+  // proxy. Database HMAC limits also apply per number and per phone.
   try {
     const { data, error } = await admin.rpc("lookup_subscriber_portal", {
       p_subscriber_number: Number(numberInput),
