@@ -147,9 +147,9 @@ CREATE OR REPLACE FUNCTION water_management_private.request_user_id()
 RETURNS uuid
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = ''
-AS $
+AS $request_user_id$
   SELECT auth.uid()
-$;
+$request_user_id$;
 REVOKE ALL ON FUNCTION water_management_private.request_user_id()
   FROM PUBLIC, anon, authenticated, service_role, water_management_authz;
 GRANT EXECUTE ON FUNCTION water_management_private.request_user_id()
