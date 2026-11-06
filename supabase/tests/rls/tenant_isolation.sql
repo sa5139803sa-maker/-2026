@@ -46,6 +46,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261106173000_serialize_organization_account_limit_updates.sql
 \ir ../../migrations/20261106174000_scope_account_audit_log_policy.sql
 \ir ../../migrations/20261106175000_index_account_audit_log_foreign_keys.sql
+\ir ../../migrations/20261106180000_create_platform_organization_admin_rpc.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -563,6 +564,14 @@ $onboarding_replay$;
 RESET ROLE;
 
 
+-- Platform administrator is a web-console role and organization provisioning is server-only.
+INSERT INTO auth.users (id,email,raw_user_meta_data)
+VALUES ('10000000-0000-4000-8000-000000000012','platform-admin@example.test','{"display_name":"مدير المنصة"}');
+UPDATE public.profiles
+SET role='platform_admin'::public.app_role,
+    organization_id=NULL
+WHERE id='10000000-0000-4000-8000-000000000012';
+
 -- Managed account quotas, forced password change, and old-token fencing.
 INSERT INTO auth.users (id,email,raw_user_meta_data) VALUES
 ('10000000-0000-4000-8000-000000000010','managed-10@example.test','{"display_name":"موظف مؤقت"}'),
@@ -607,7 +616,57 @@ BEGIN
  IF pg_catalog.has_function_privilege('authenticated','public.assign_managed_user(uuid, uuid, public.app_role, text, text)','EXECUTE')
  OR NOT pg_catalog.has_function_privilege('service_role','public.assign_managed_user(uuid, uuid, public.app_role, text, text)','EXECUTE') THEN RAISE EXCEPTION 'Managed account assignment RPC grants are incorrect';END IF;
  IF pg_catalog.has_table_privilege('authenticated','public.account_audit_log','SELECT') OR pg_catalog.has_table_privilege('anon','public.account_audit_log','SELECT') THEN RAISE EXCEPTION 'Account audit log is exposed to API clients';END IF;
+ IF pg_catalog.has_function_privilege('anon','public.create_platform_organization(uuid,text)','EXECUTE')
+ OR pg_catalog.has_function_privilege('authenticated','public.create_platform_organization(uuid,text)','EXECUTE')
+ OR NOT pg_catalog.has_function_privilege('service_role','public.create_platform_organization(uuid,text)','EXECUTE') THEN
+  RAISE EXCEPTION 'Platform organization provisioning RPC grants are incorrect';
+ END IF;
+ IF EXISTS (
+  SELECT 1 FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+  WHERE n.nspname='public' AND p.proname='create_platform_organization' AND p.prosecdef
+ ) THEN RAISE EXCEPTION 'Platform organization provisioning must use SECURITY INVOKER';END IF;
 END;$account_management_acl$;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000012',true);
+DO $platform_admin_direct_rpc$
+DECLARE v_rejected boolean:=false;
+BEGIN
+ BEGIN
+  PERFORM public.create_platform_organization('10000000-0000-4000-8000-000000000012','مؤسسة ممنوعة');
+ EXCEPTION WHEN insufficient_privilege THEN v_rejected:=true;END;
+ IF NOT v_rejected THEN RAISE EXCEPTION 'Authenticated platform admin directly executed privileged organization RPC';END IF;
+END;$platform_admin_direct_rpc$;
+RESET ROLE;
+
+SET LOCAL ROLE service_role;
+SELECT * FROM public.create_platform_organization(
+ '10000000-0000-4000-8000-000000000012',
+ 'مؤسسة أنشأها مدير المنصة'
+);
+RESET ROLE;
+
+DO $platform_organization_audit$
+DECLARE v_org public.organizations%ROWTYPE;
+BEGIN
+ SELECT * INTO v_org FROM public.organizations
+ WHERE name='مؤسسة أنشأها مدير المنصة';
+ IF v_org.id IS NULL
+ OR v_org.created_by<>'10000000-0000-4000-8000-000000000012'::uuid
+ OR v_org.account_limit<>5 THEN
+  RAISE EXCEPTION 'Platform organization was not provisioned with the expected owner and default quota';
+ END IF;
+ IF NOT EXISTS (
+  SELECT 1 FROM public.account_audit_log
+  WHERE actor_id='10000000-0000-4000-8000-000000000012'::uuid
+    AND organization_id=v_org.id
+    AND action='organization_created'
+    AND metadata->>'organization_name'='مؤسسة أنشأها مدير المنصة'
+ ) THEN
+  RAISE EXCEPTION 'Platform organization creation was not atomically audited';
+ END IF;
+END;$platform_organization_audit$;
 DELETE FROM public.pumps WHERE id = '20000000-0000-4000-8000-000000000003';
 DO $delete_behavior$
 BEGIN
