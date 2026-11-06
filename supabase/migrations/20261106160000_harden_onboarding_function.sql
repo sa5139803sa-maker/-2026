@@ -12,8 +12,23 @@ BEGIN
 END;
 $onboarding_role$;
 
-ALTER ROLE water_management_onboarding
-  NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
+DO $onboarding_role_guard$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+    WHERE rolname = 'water_management_onboarding'
+      AND rolcanlogin = false
+      AND rolsuper = false
+      AND rolcreatedb = false
+      AND rolcreaterole = false
+      AND rolreplication = false
+      AND rolbypassrls = false
+      AND rolinherit = false
+  ) THEN
+    RAISE EXCEPTION 'Existing onboarding role has unsafe attributes';
+  END IF;
+END;
+$onboarding_role_guard$;
 
 -- Only the migration owner can assume this role. No API role is made a member.
 GRANT water_management_onboarding TO CURRENT_USER WITH SET TRUE, INHERIT FALSE;
