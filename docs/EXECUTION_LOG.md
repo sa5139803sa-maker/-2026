@@ -877,3 +877,18 @@
 - **المتبقي من اختبارات HTTP:** لم يُنفذ POST فعلي إلى `/api/admin/accounts` ولا POST حي إلى `subscriber-portal`؛ لذلك لا نسجل 401/403 أو اختبار `cf-connecting-ip`/429 كنجاح. مسار GET إلى endpoint إداري كان يعيد 405 لأنه يقبل POST فقط.
 - **بوابات أمان قاعدة البيانات:** RPC الحساسة service_role-only وRLS مفعّل على الجداول العامة الأساسية. Advisor ما زال يرفع `rls_disabled` على الجداول الخاصة الثلاثة رغم عدم وجود ACL مباشر لـanon/authenticated؛ لم تُنفذ أوامر ENABLE RLS. كما يبقى تحذير `auth_leaked_password_protection` دون تغيير.
 - **قرار الإطلاق:** قبول بناء ومعاينة الويب فقط. لا فتح عام، ولا Production Deployment، ولا نطاق مخصص، ولا دمج لـPR #2، ولا تغيير على `main`.
+
+
+### 2026-11-07 — إعادة تدقيق ACL والـTrigger وتحديث حالة الفرع
+
+- **النطاق:** تحقق GitHub وSupabase للفرع الأمني وPR #2، واستعلامات PostgreSQL للقراءة فقط.
+- **Git:** PR #2 ما زال مفتوحًا كـDraft وغير مدمج؛ لا توجد مراجعات أو Review Threads مسجلة. الفرع الرئيسي لم يتغير.
+- **Commit الكود الذي أُعيد التحقق منه:** `5d405c277988faf679324dbf225523256cf46c2c`.
+- **GitHub Actions:** Quality checks #278 وWeb console checks #118 وSupabase tenant isolation tests #472 — جميعها `success`.
+- **Vercel:** فحص الحالة المرتبط بـDeployment `dpl_4tCdWobWCXVitbXoM4SwxQp8rp9B` أعاد `success`؛ المعاينة Preview وليست Production.
+- **PostgreSQL ACL:** تأكد تعطيل RLS على الجداول الخاصة الثلاثة وعدم تفعيل FORCE RLS. `anon` لا يملك USAGE للمخطط ولا CRUD على الجداول؛ `authenticated` يملك USAGE للمخطط دون CRUD. `service_role` و`postgres` يملكان BYPASSRLS.
+- **الامتيازات الخلفية:** `service_role` يقرأ جدول سر HMAC فقط، ويملك CRUD على جدول rate limits، ولا يملك امتيازات مباشرة على registry. trigger `subscribers_enforce_portal_fields` ينفذ بدالة مملوكة لـ`postgres` من نوع SECURITY DEFINER مع `search_path = ''`.
+- **RPC:** `lookup_subscriber_portal` SECURITY INVOKER وتنفيذها محصور في `service_role` و`postgres` بحسب ACL.
+- **Advisors:** Security ما زال يعرض التحذير الحرج `rls_disabled` على الجداول الخاصة الثلاثة، والتحذير `auth_leaked_password_protection`؛ Health بلا ملاحظات؛ Performance يعرض 12 ملاحظة unused-index بمستوى INFO.
+- **ما لم يُنفذ:** لم تُجرَ تغييرات SQL أو إعدادات Auth، ولم تُنشأ مؤسسات أو حسابات اختبار، ولم يُنفذ POST فعلي لمسار إدارة الحسابات أو اختبار HTTP حي لـsubscriber-portal/429. لا يمكن إعلان قبول الإنتاج.
+- **قرار العمل:** مواصلة التوثيق والفحوص غير التغييرية فقط؛ تفعيل RLS ينتظر قرار المالك، ولا دمج لـPR #2 ولا تعديل للفرع الرئيسي.
