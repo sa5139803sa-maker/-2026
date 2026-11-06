@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { Search, ShieldCheck, UserRound, RefreshCw } from "lucide-react";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type SubscriberResult = {
   subscriber_number: string;
@@ -52,29 +53,27 @@ export function SubscriberLookupForm() {
 
     setBusy(true);
     try {
-      const response = await fetch("/api/portal/lookup", {
-        method: "POST",
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          subscriber_number: normalizedNumber,
-          phone: normalizedPhone,
-        }),
-      });
-      const data = (await response.json().catch(() => null)) as LookupResponse | null;
-
-      if (response.status === 429) {
-        const retryAfter = Number(response.headers.get("retry-after") ?? "0");
-        const minutes = Math.max(1, Math.ceil(retryAfter / 60));
-        throw new Error(`تجاوزت عدد محاولات البحث المسموح. أعد المحاولة بعد ${minutes} دقيقة تقريبًا.`);
-      }
-      if (!response.ok || !data?.found || !data.subscriber) {
-        throw new Error(
-          typeof data?.error === "string"
-            ? data.error
-            : "لم نعثر على اشتراك يطابق البيانات المدخلة.",
+      const { data, error: requestError } =
+        await createSupabaseBrowserClient().functions.invoke<LookupResponse>(
+          "subscriber-portal",
+          {
+            body: {
+              subscriber_number: normalizedNumber,
+              phone: normalizedPhone,
+            },
+          },
         );
+
+      if (requestError) {
+        const status = (requestError as { context?: Response }).context?.status;
+        if (status === 429) {
+          throw new Error("تجاوزت عدد محاولات البحث المسموح. حاول بعد قليل.");
+        }
+        throw new Error("تعذر الاتصال بخدمة الاستعلام. حاول مجددًا.");
+      }
+
+      if (!data?.found || !data.subscriber) {
+        throw new Error("لم نعثر على اشتراك يطابق البيانات المدخلة.");
       }
 
       setResult(data.subscriber);
