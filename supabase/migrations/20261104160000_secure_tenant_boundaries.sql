@@ -106,7 +106,7 @@ COMMENT ON CONSTRAINT subscribers_pump_tenant_fkey ON public.subscribers IS
 
 CREATE SCHEMA IF NOT EXISTS water_management_private;
 REVOKE ALL ON SCHEMA water_management_private FROM PUBLIC, anon, authenticated, service_role;
-GRANT USAGE ON SCHEMA water_management_private TO authenticated, water_management_authz;
+GRANT USAGE ON SCHEMA water_management_private TO authenticated;
 
 -- Own authorization helpers with a dedicated NOLOGIN role, not postgres.
 -- It can bypass RLS only to read profiles, which is required to avoid policy recursion.
@@ -127,6 +127,7 @@ ALTER ROLE water_management_authz NOLOGIN BYPASSRLS;
 GRANT water_management_authz TO CURRENT_USER WITH SET TRUE, INHERIT FALSE;
 
 GRANT USAGE ON SCHEMA public TO water_management_authz;
+GRANT USAGE ON SCHEMA water_management_private TO water_management_authz;
 GRANT SELECT ON TABLE public.profiles TO water_management_authz;
 GRANT USAGE ON TYPE public.app_role TO water_management_authz;
 GRANT CREATE ON SCHEMA water_management_private TO water_management_authz;
