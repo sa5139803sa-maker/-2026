@@ -65,6 +65,11 @@ CREATE POLICY "onboarding_insert_organizations" ON public.organizations
     created_by = (SELECT water_management_private.request_user_id())
   );
 
+-- Function creation occurs while SET ROLE is active so the managed
+-- postgres role does not need to transfer ownership with ALTER FUNCTION.
+GRANT CREATE ON SCHEMA water_management_private TO water_management_onboarding;
+
+SET LOCAL ROLE water_management_onboarding;
 CREATE OR REPLACE FUNCTION water_management_private.create_organization(p_name text)
 RETURNS uuid
 LANGUAGE plpgsql
@@ -115,24 +120,21 @@ BEGIN
   RETURN v_organization_id;
 END;
 $function$;
-
--- ALTER FUNCTION OWNER requires CREATE on the target schema. Grant it only
--- for the ownership transfer, then remove it immediately.
-GRANT CREATE ON SCHEMA water_management_private TO water_management_onboarding;
-ALTER FUNCTION water_management_private.create_organization(text)
-  OWNER TO water_management_onboarding;
-REVOKE CREATE ON SCHEMA water_management_private FROM water_management_onboarding;
-
--- Helpers created by this owner must not inherit API EXECUTE privileges.
-SET LOCAL ROLE water_management_onboarding;
-ALTER DEFAULT PRIVILEGES
-  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role;
-RESET ROLE;
-
 REVOKE ALL ON FUNCTION water_management_private.create_organization(text)
   FROM PUBLIC, anon, service_role, water_management_authz;
 GRANT EXECUTE ON FUNCTION water_management_private.create_organization(text)
   TO authenticated;
+
+-- Helpers created by this owner must not inherit API EXECUTE privileges.
+ALTER DEFAULT PRIVILEGES
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role;
+
+COMMENT ON FUNCTION water_management_private.create_organization(text) IS
+  'Internal onboarding implementation. Callable through the public SECURITY INVOKER wrapper; owner has column-scoped profile/organization privileges only.';
+
+RESET ROLE;
+
+REVOKE CREATE ON SCHEMA water_management_private FROM water_management_onboarding;
 
 -- Exposed RPC is invoker-only. It delegates to the unexposed, least-privilege helper.
 CREATE OR REPLACE FUNCTION public.create_organization(p_name text)
@@ -149,8 +151,6 @@ REVOKE ALL ON FUNCTION public.create_organization(text)
 GRANT EXECUTE ON FUNCTION public.create_organization(text)
   TO authenticated;
 
-COMMENT ON ROLE water_management_onboarding IS
-  'NOLOGIN, NOBYPASSRLS owner for the single-purpose first-organization onboarding function. Not granted to API roles.';
 COMMENT ON FUNCTION water_management_private.create_organization(text) IS
   'Internal onboarding implementation. Callable through the public SECURITY INVOKER wrapper; owner has column-scoped profile/organization privileges only.';
 COMMENT ON FUNCTION public.create_organization(text) IS
