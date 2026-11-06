@@ -242,3 +242,37 @@
 ما زال تحذير `authenticated_security_definer_function_executable` ظاهرًا على `public.create_organization(p_name text)`. راجعنا التعريف الحي: الدالة مملوكة لـ `postgres`، تستخدم `SECURITY DEFINER` و`search_path = ''`، وتقرأ هوية `auth.uid()`، وتتحقق من الاسم وملف المستخدم غير المرتبط، وتقفل صف الملف قبل إنشاء المؤسسة، ولا تقبل role أو organization_id من العميل. التنفيذ مسموح لـ `authenticated` فقط؛ لا تمنح `anon` أو `PUBLIC` التنفيذ. لم نخْف التحذير أو نسجله كمقبول للإنتاج؛ يلزم مراجع أمني مستقل قبل الإنتاج.
 
 Health Advisor بلا ملاحظات. ظلت PR #2 مفتوحة ومسودة، ولم يتغير `main`. لا تعتبر المرحلة 2 مكتملة لأن استعادة جلسة React Native وتأكيد البريد والدعوات وفحص سياسات Storage ما زالت غير منجزة.
+
+## 8.8 معالجة onboarding وإزالة تحذير SECURITY DEFINER — 2026-11-06
+
+**الترحيل السادس:** `20261106160000_harden_onboarding_function` — مسجل في Supabase بالإصدار `20261106145921`.
+
+### البنية والصلاحيات بعد المعالجة
+
+- `public.create_organization(p_name text)` أصبحت `SECURITY INVOKER`، مملوكة لـ `postgres` لكنها لا تنفذ بامتيازاته؛ ACL التنفيذ إلى `authenticated` فقط، ولا يوجد EXECUTE لـ `anon` أو `PUBLIC`.
+- نُقل التنفيذ الفعلي إلى `water_management_private.create_organization(p_name text)`، وهي `SECURITY DEFINER` مملوكة للدور `water_management_onboarding` غير القابل لتسجيل الدخول ولا يتجاوز RLS ولا يرث العضوية.
+- المنح العمودية للمالك الداخلي تقتصر على قراءة `profiles(id, organization_id, role)` وتحديث `profiles(organization_id, role)` وإضافة `organizations(id, name, created_by)`. لا يستطيع تحديث display_name أو تعديل اسم مؤسسة بعد الإنشاء أو حذف المؤسسات.
+- لا يملك `water_management_onboarding` عضوية موروثة/قابلة للاستخدام لدى `authenticated` أو `anon` أو `service_role`، ولا يملك CREATE على `water_management_private` بعد الترحيل.
+- منطق الدالة يقصر الإنشاء على هوية الطلب الحالية، مع ملف `operator` غير مرتبط بمؤسسة؛ ينشئ المؤسسة باسمه ويحوّل الملف إلى `manager` لمؤسسة واحدة فقط.
+
+### نتيجة التحقق الحي
+
+نجح اختبار RPC من خلال دور `authenticated` على مشروع التطوير:
+- إنشاء مؤسسة واحدة مع `created_by` مطابق للمستخدم الحالي.
+- تحديث ملف المستخدم إلى `manager` وربطه بالمؤسسة المنشأة.
+- رفض إنشاء مؤسسة ثانية لنفس الحساب.
+- رفض اسم مؤسسة غير صالح.
+- انتهى الاختبار بـ `ROLLBACK`، ثم تحققنا أن سجلات الاختبار المتبقية في `auth.users` و`profiles` و`organizations` تساوي صفرًا.
+
+### Advisors وCI
+
+- **Security Advisor:** `lints: []` — اختفى تحذير `authenticated_security_definer_function_executable` عن RPC العامة.
+- **Health Advisor:** `lints: []`.
+- **Performance Advisor:** لا ملاحظات `unindexed_foreign_keys`؛ 7 ملاحظات `unused_index` من نوع INFO فقط على قاعدة تطوير صغيرة بلا عمليات تشغيل كافية.
+- **PostgreSQL RLS Push Run #109:** `42238737173` — success.
+- **PostgreSQL RLS PR Run #110:** `42238745246` — success.
+- **Quality PR Run #105:** `42238745284` — success، ويشمل npm install/audit report/unit tests/TypeScript/web export.
+
+### حدود القبول
+
+هذه المعالجة تغلق تحذير onboarding المحدد، لكنها لا تغلق المرحلة 2 بالكامل ولا تعتبر اعتماد إنتاجي. لا تزال استعادة جلسة React Native وتأكيد البريد ودعوات العضوية وفحص Storage عند إضافة المرفقات، وتنفيذ دور `platform_admin` وبوابة المشترك، ضمن العمل اللاحق. بقي PR #2 مفتوحًا ومسودة ولم يتغير `main`.

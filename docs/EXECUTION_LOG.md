@@ -628,3 +628,25 @@
   - Quality PR Run `42236090460` (Run #99): **success**؛ تثبيت الاعتماديات، تقرير npm، اختبارات الوحدة، TypeScript، وتصدير الويب.
 - **المراجعة الأمنية المتبقية:** ما زال Security Advisor يعرض تحذير `authenticated_security_definer_function_executable` على `public.create_organization(p_name text)`. تمت مراجعة الدالة: تتحقق من `auth.uid()`، وتتحقق من الاسم، وتقفل ملف المستخدم `FOR UPDATE`، وترفض المستخدم غير الموجود أو المرتبط بمؤسسة، وتنشئ المؤسسة باسم المستخدم الحالي وتحدّث ملفه فقط إلى manager. الدالة مملوكة لـ `postgres` و`search_path = ''`؛ التنفيذ ممنوح إلى `authenticated` فقط وليس `anon` أو `PUBLIC`. رغم هذه الضوابط، بقي التحذير ظاهرًا عمدًا ويتطلب مراجعة أمنية مستقلة قبل الإنتاج.
 - **حدود التغيير:** لم ننشئ مستخدمين أو مؤسسات أو مشتركين تشغيليين حقيقيين، ولم نغير `main`، ولم ندمج PR #2. لا تزال مراجعة التحذير الأمني وAuth/الجلسات/الدعوات وفحص Storage بوابات مفتوحة.
+
+### 2026-11-06 — عزل صلاحيات إنشاء المؤسسة وإزالة تحذير SECURITY DEFINER
+- **المرحلة:** 2 — الأساس التقني والأمان والمصادقة.
+- **الحالة:** مكتمل ومطبق على مشروع التطوير، واختبر على PostgreSQL CI وعلى Supabase المستضاف؛ لا يعني إكمال المرحلة 2 أو اعتماد الإنتاج.
+- **المشكلة الأصلية:** كانت `public.create_organization(p_name text)` مملوكة للدور `postgres` وتعمل بـ `SECURITY DEFINER` مع EXECUTE لـ `authenticated`. رغم فحص `auth.uid()` وقفل الملف الشخصي ومنع تمرير `organization_id/role` من العميل، كان المالك يتجاوز RLS، لذلك بقي تحذير Advisor صحيحًا ويستحق المعالجة بدل إسكات التحذير.
+- **التصميم الجديد:**
+  - أصبحت `public.create_organization(text)` واجهة RPC من نوع `SECURITY INVOKER` في المخطط العام.
+  - ينفذ العمل الفعلي `water_management_private.create_organization(text)` في مخطط غير معروض لواجهة Data API.
+  - مالك الدالة الداخلية هو `water_management_onboarding`: `NOLOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, `NOBYPASSRLS`, `NOINHERIT`.
+  - مُنح المالك فقط SELECT على `profiles(id, organization_id, role)` وUPDATE على `profiles(organization_id, role)` وINSERT على `organizations(id, name, created_by)`، إضافة إلى ما يلزم لاستدعاء جسر هوية الطلب ونوع الدور.
+  - أُضيفت سياسات RLS تستهدف هذا الدور الداخلي المحدد. لا توجد عضوية للدور لدى `authenticated` أو `anon` أو `service_role`، ولا يحتفظ بصلاحية CREATE على المخطط الخاص بعد إنشاء الدالة.
+  - ترفض الدالة أي مستخدم بلا هوية، وتتحقق من اسم المؤسسة، وتقفل صف الملف، ولا تسمح إلا للمستخدم غير المرتبط ذي الدور الأولي `operator` بإنشاء مؤسسته الأولى، ثم تغير دوره إلى `manager`. إعادة الاستدعاء بعد الالتحاق مرفوضة.
+- **الترحيل:** `20261106160000_harden_onboarding_function`، وسجلته قاعدة التطوير بالإصدار `20261106145921`.
+- **اختبار PostgreSQL CI:** شُغلت الترحيلات الست على قاعدة PostgreSQL 17 نظيفة، مع تأكيد أن العامة invoker، والداخلية مملوكة للدور المحدود، وأن الدور لا يتجاوز RLS ولا يملك CREATE الدائم ولا عضوية API، مع اختبارات onboarding/replay والرفض. 
+- **اختبار Supabase المستضاف:** نجح إنشاء مؤسسة واحدة للمستخدم الاصطناعي وتحويل ملفه إلى manager، ورُفضت محاولة إنشاء مؤسسة ثانية والاسم الأقصر من الحد. انتهت المعاملة بـ `ROLLBACK`؛ تحققنا خارج المعاملة أن عدد سجلات اختبار `auth.users` و`profiles` و`organizations` المتبقية يساوي صفرًا.
+- **أخطاء النشر والتصحيح:** المحاولة الأولى فشلت لأن Supabase المُدار لا يسمح بتعديل خصائص الدور عبر `ALTER ROLE` في هذا السياق؛ والثانية فشلت لأن نقل ملكية الدالة عبر `ALTER FUNCTION OWNER` لم يكن مسموحًا للمالك الحالي. لم تترك أي منهما أثرًا مسجلاً. عولج ذلك بإنشاء الدور بالخصائص المطلوبة والتحقق منها، ثم إنشاء الدالة أثناء `SET LOCAL ROLE water_management_onboarding`، وسحب CREATE بعد ذلك. نجح الترحيل النهائي.
+- **GitHub Actions على Commit التنفيذ `8bca7e6d9f5311a2d8c5aac53f3226ff70d0509b`:**
+  - PostgreSQL RLS Push Run `42238737173` (#109): **success**.
+  - PostgreSQL RLS PR Run `42238745246` (#110): **success**.
+  - Quality PR Run `42238745284` (#105): **success**؛ تثبيت الاعتماديات، تقرير npm، اختبارات الوحدة، TypeScript، وتصدير الويب.
+- **Supabase Advisors بعد التطبيق:** Security Advisor `lints: []`؛ Health Advisor `lints: []`؛ Performance Advisor بلا `unindexed_foreign_keys` وبقيت 7 ملاحظات `unused_index` من نوع INFO على قاعدة التطوير الصغيرة.
+- **قرار المرحلة:** أُزيل تحذير SECURITY DEFINER من RPC العامة بمعالجة بنيوية واختبار فعلي. تبقى استعادة جلسة React Native وتأكيد البريد ودعوات العضوية وفحص Storage الوظيفي ومتطلبات platform_admin/بوابة المشترك قبل إغلاق المرحلة 2. لا يُدمج PR #2 ولا يتغير `main` ضمن هذا الإنجاز.
