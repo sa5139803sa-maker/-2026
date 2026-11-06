@@ -39,6 +39,6 @@ CORS is wildcard because this is intentionally a public, non-cookie, read-only l
 ## Development deployment status
 
 - Migration `20261106190000_add_global_subscriber_number_and_public_lookup.sql` applied to the primary project `kxdncnswbwktbiphptbr`.
-- Function `subscriber-portal` deployed as version 1, ACTIVE, with `verify_jwt=false`; version 2 updates IP trust to accept only `cf-connecting-ip`.
-- PostgreSQL RLS, web console, and quality CI passed on commit `86dad24be7aa8895bcda34ed6884ed20db527af3`.
+- Function `subscriber-portal` deployed as version 2, ACTIVE, with `verify_jwt=false`. Version 2 trusts only `cf-connecting-ip` from Supabase's Cloudflare gateway and rejects caller-controlled forwarding headers.
+- PostgreSQL RLS, web console, and quality CI passed on the pre-hardening baseline. The follow-up CI adds Deno tests proving caller-supplied `x-forwarded-for`, `x-real-ip`, and `x-vercel-forwarded-for` cannot set the IP rate-limit identity.
 - Live SQL verification confirmed service-role-only RPC execution and a non-matching lookup result. The primary database has no subscriber rows yet, so a successful match has been tested using transaction-scoped synthetic data with ROLLBACK. A live browser HTTP test is still required.
