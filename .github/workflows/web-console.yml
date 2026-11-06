@@ -5,7 +5,7 @@ on:
     paths:
       - "apps/web/**"
       - "supabase/functions/manage-accounts/**"
-      - "supabase/functions/subscriber-lookup/**"
+      - "supabase/functions/subscriber-portal/**"
       - "supabase/migrations/**"
       - "supabase/tests/rls/tenant_isolation.sql"
       - ".github/workflows/web-console.yml"
