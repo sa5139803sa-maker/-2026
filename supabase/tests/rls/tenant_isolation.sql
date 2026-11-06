@@ -32,6 +32,7 @@ GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 \ir ../../migrations/20261104120358_create_water_management_foundation.sql
 \ir ../../migrations/20261104120514_tighten_water_management_grants.sql
 \ir ../../migrations/20261104160000_secure_tenant_boundaries.sql
+\ir ../../migrations/20261106104135_secure_request_identity_bridge_for_authz.sql
 
 -- Future helper functions must inherit the dedicated owner's closed default ACL.
 SET LOCAL ROLE water_management_authz;
