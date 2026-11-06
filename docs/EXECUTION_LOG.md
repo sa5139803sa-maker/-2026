@@ -866,3 +866,14 @@
 - **اختبارات HTTP:** سبق أن نجح GET smoke للصفحات `/`, `/login`, `/portal`، وتحولت `/platform` و`/organization` لغير المسجل إلى `/login`. لا يزال POST لمسار الحسابات واختبار HTTP مباشر لـ`subscriber-portal` (بما فيه `cf-connecting-ip` وحدود المحاولات) غير منفذين، فلا تسجل كنجاح.
 - **التوثيق:** صُحح `apps/web/README.md` ليثبت أن v2 من subscriber-portal تثق فقط بـ`cf-connecting-ip` ولا تستخدم رؤوس Vercel forwarding. أضيفت ملاحظة تحذير RLS الخاص وAuth إلى `docs/SUPABASE_SECURITY_REVIEW_AR.md`.
 - **Git:** جميع التغييرات على `security/tenant-isolation-rls` ضمن PR #2؛ لا دمج ولا تعديل `main`.
+
+### 2026-11-07 — اكتمال CI ومعاينة الويب بعد تدقيق الاعتماديات
+
+- **Commit المفحوص:** `22dabfb3708200c42a1394185214275ddd83c85d`.
+- **GitHub Actions:** Quality checks #277 وSupabase tenant isolation tests #470 وWeb console checks #117 — جميعها `success` على SHA أعلاه.
+- **Vercel:** deployment `dpl_3A4nP7oX6y9iJvBQJmFVRovuCDbL` أصبح `READY` من الفرع الأمني وعلى SHA نفسه؛ `target=null` (معاينة وليست إنتاجًا).
+- **أمر التثبيت المنفذ في Vercel:** توليد lockfile، ثم `npm audit --audit-level=high`، ثم `npm ci`. السجلات: 43 حزمة مدققة، `found 0 vulnerabilities`، ونجاح Next.js 16.4.5 وTypeScript وإنشاء الصفحات.
+- **التحقق من HTTP GET على alias الحالي:** `/` و`/login` و`/portal` أعادت 200؛ `/platform` و`/organization` و`/change-password` أعادت صفحة الدخول عند غياب جلسة. رؤوس DENY/nosniff/HSTS موجودة.
+- **المتبقي من اختبارات HTTP:** لم يُنفذ POST فعلي إلى `/api/admin/accounts` ولا POST حي إلى `subscriber-portal`؛ لذلك لا نسجل 401/403 أو اختبار `cf-connecting-ip`/429 كنجاح. مسار GET إلى endpoint إداري كان يعيد 405 لأنه يقبل POST فقط.
+- **بوابات أمان قاعدة البيانات:** RPC الحساسة service_role-only وRLS مفعّل على الجداول العامة الأساسية. Advisor ما زال يرفع `rls_disabled` على الجداول الخاصة الثلاثة رغم عدم وجود ACL مباشر لـanon/authenticated؛ لم تُنفذ أوامر ENABLE RLS. كما يبقى تحذير `auth_leaked_password_protection` دون تغيير.
+- **قرار الإطلاق:** قبول بناء ومعاينة الويب فقط. لا فتح عام، ولا Production Deployment، ولا نطاق مخصص، ولا دمج لـPR #2، ولا تغيير على `main`.
