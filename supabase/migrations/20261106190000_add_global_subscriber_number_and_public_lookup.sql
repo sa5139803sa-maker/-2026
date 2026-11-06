@@ -205,6 +205,8 @@ REVOKE ALL ON TABLE
   water_management_private.portal_rate_limits
   FROM PUBLIC, anon, authenticated, service_role;
 
+-- The trusted RPC role needs the pgcrypto schema to compute HMAC rate-limit keys.
+GRANT USAGE ON SCHEMA extensions TO service_role;
 GRANT USAGE ON SCHEMA water_management_private TO service_role;
 GRANT SELECT ON water_management_private.portal_rate_limit_secret TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE
