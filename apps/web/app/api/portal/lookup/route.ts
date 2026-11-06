@@ -61,11 +61,15 @@ export async function POST(request: NextRequest) {
     return error("تحقق من رقم الاشتراك ورقم الهاتف.", 400);
   }
 
-  // Production hosting must sanitize/overwrite forwarded client-IP headers.
-  // Never deploy this endpoint behind a proxy that accepts arbitrary XFF values.
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const realIp = request.headers.get("x-real-ip")?.trim();
-  const candidateIp = forwarded || realIp || "";
+  // Prefer the hosting provider's sanitized client-IP header. Vercel
+  // overwrites x-forwarded-for and provides x-vercel-forwarded-for.
+  // Other hosting providers must similarly sanitize XFF at their edge.
+  const candidateIp =
+    request.headers.get("x-vercel-forwarded-for")?.trim() ||
+    request.headers.get("cf-connecting-ip")?.trim() ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip")?.trim() ||
+    "";
   const clientIp =
     isIP(candidateIp) !== 0
       ? candidateIp
