@@ -38,3 +38,8 @@ yarn-error.*
 .env
 .env.*
 !.env.example
+
+# Next.js web application
+apps/web/.next/
+apps/web/out/
+apps/web/.turbo/
