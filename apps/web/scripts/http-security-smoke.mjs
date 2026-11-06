@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
-const host = "http://127.0.0.1:3111";
+const host = "http://localhost:3111";
 const readyUrl = `${host}/api/admin/accounts`;
 const server = spawn(
   "npm",
