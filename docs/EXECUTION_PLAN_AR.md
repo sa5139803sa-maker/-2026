@@ -501,3 +501,14 @@
 - [ ] يظل فحص الفروع والنسخ الخارجية (forks/clones) خارج حدود ما يثبته هذا Workflow في المستودع الحالي.
 
 **قرار الاعتماد:** لا يوجد في الفحص كشف مثبت لسر خادمي في تاريخ Git أو داخل الأرشيف التاريخي. الرمز المكتشف مفتاح Supabase anon عام مخصص لعميل التطبيق، لذلك لا يلزم تدويره استنادًا إلى هذا الكشف وحده. يبقى RLS هو الحد الأمني الفعلي لحماية بيانات الجداول من أي عميل يحمل المفتاح العام؛ وتحذير private-schema RLS ما زال منفصلًا ومعلقًا بقرار المالك.
+
+### إعادة تحقق CI ومعاينة الويب — 2026-11-07
+
+- [x] على HEAD `01283fc68083c25c9d6cef77c2fbbb5d4ce39056` نجحت Quality checks #42307191809 وWeb console checks #42307191709 وSupabase tenant isolation #42307191770 وSecret history scan #42307191789 (كلها Pull Request success). كما نجح Secret history scan push #42307184867 وSupabase tenant isolation push #42307184855.
+- [x] معاينة Vercel للـHEAD نفسه أصبحت READY: deployment `dpl_8D4Hr5SiDXmxnVjZpmDFoq2wLaPW`، Preview فقط (`target=null`)، لا Production.
+- [x] HTTP smoke من خلال معاينة Vercel: `/login` و`/portal` يعيدان 200، مع HTML عربي RTL. `/organization` و`/change-password` يعيدان صفحة تسجيل الدخول عند غياب الجلسة، وهو سلوك الحماية المتوقع.
+- [x] `GET /api/admin/accounts` يعيد 405 Method Not Allowed، بما يتفق مع كون endpoint مخصصًا لـPOST.
+- [ ] اختبار POST فعلي لمسار الإدارة، بما في ذلك حالات 401/403/نجاح مخول، ما زال مفتوحًا. لم تُرسل أي بيانات أو تنشأ حسابات.
+- [ ] اختبار browser-to-Edge Function لبوابة المشترك وCORS و`cf-connecting-ip` وحدود 429 ما زال مفتوحًا. HTTP 200 للصفحة يثبت تقديم HTML فقط ولا يثبت نجاح استعلام المشترك.
+- [ ] لا يوجد نشر إنتاجي أو نطاق عام، ولا دمج لـPR #2. جميع فحوص CI الناجحة لا تغلق بوابات Supabase Advisor أو اختبارات API الحية.
+
