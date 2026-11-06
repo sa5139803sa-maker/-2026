@@ -4,6 +4,11 @@
   Public lookup is rate-limited and executable only by service_role.
 */
 
+-- Supabase installs pgcrypto in the extensions schema. CI PostgreSQL starts
+-- with a clean cluster, so create the same schema/extension explicitly here.
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+
 -- Normalize Palestinian and international phone formats into one canonical
 -- representation. Arabic-Indic and Persian digits are accepted.
 CREATE OR REPLACE FUNCTION water_management_private.normalize_subscriber_phone(p_phone text)
