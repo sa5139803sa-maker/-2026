@@ -45,6 +45,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261106172000_fence_sessions_after_password_reset.sql
 \ir ../../migrations/20261106173000_serialize_organization_account_limit_updates.sql
 \ir ../../migrations/20261106174000_scope_account_audit_log_policy.sql
+\ir ../../migrations/20261106175000_index_account_audit_log_foreign_keys.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
