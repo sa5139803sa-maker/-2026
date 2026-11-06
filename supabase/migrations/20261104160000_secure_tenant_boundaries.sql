@@ -121,6 +121,11 @@ END;
 $authz_role$;
 ALTER ROLE water_management_authz NOLOGIN BYPASSRLS;
 
+-- Supabase's hosted postgres role is CREATEROLE but not SUPERUSER. PostgreSQL
+-- creates the admin membership with SET FALSE by default, so explicitly allow
+-- this migration role to SET ROLE before changing its own default privileges.
+GRANT water_management_authz TO CURRENT_USER WITH SET TRUE, INHERIT FALSE;
+
 GRANT USAGE ON SCHEMA public, auth TO water_management_authz;
 GRANT SELECT ON TABLE public.profiles TO water_management_authz;
 GRANT USAGE ON TYPE public.app_role TO water_management_authz;
@@ -129,8 +134,10 @@ GRANT CREATE ON SCHEMA water_management_private TO water_management_authz;
 
 -- This owner is dedicated to this application's helper functions, so its global
 -- function defaults can be closed without changing postgres defaults for other apps.
-ALTER DEFAULT PRIVILEGES FOR ROLE water_management_authz
+SET ROLE water_management_authz;
+ALTER DEFAULT PRIVILEGES
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated, service_role;
+RESET ROLE;
 
 CREATE OR REPLACE FUNCTION water_management_private.current_user_organization_id()
 RETURNS uuid
