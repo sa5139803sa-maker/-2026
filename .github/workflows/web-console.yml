@@ -41,8 +41,11 @@ jobs:
         with:
           node-version: "22.12.0"
 
-      - name: Install pinned direct dependencies
-        run: npm install --no-audit --no-fund --package-lock=false
+      - name: Resolve and lock the exact dependency tree
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Install from the generated lockfile
+        run: npm ci --no-audit --no-fund
 
       - name: Unit tests
         run: npm test
@@ -54,3 +57,11 @@ jobs:
         run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Upload reproducible dependency lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-package-lock
+          path: apps/web/package-lock.json
+          if-no-files-found: error
+          retention-days: 7
