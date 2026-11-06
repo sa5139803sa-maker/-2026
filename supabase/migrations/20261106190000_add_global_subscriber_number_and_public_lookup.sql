@@ -56,6 +56,18 @@ BEGIN
     RAISE EXCEPTION
       'Subscriber portal migration stopped: every subscriber must have a valid phone number (8 to 15 digits)';
   END IF;
+
+  IF EXISTS (
+    SELECT organization_id,
+           water_management_private.normalize_subscriber_phone(phone) AS canonical_phone
+    FROM public.subscribers
+    GROUP BY organization_id,
+             water_management_private.normalize_subscriber_phone(phone)
+    HAVING pg_catalog.count(*) > 1
+  ) THEN
+    RAISE EXCEPTION
+      'Subscriber portal migration stopped: normalized phone numbers must be unique within each organization';
+  END IF;
 END;
 $preflight$;
 
@@ -180,7 +192,7 @@ INSERT INTO water_management_private.portal_rate_limit_secret(singleton, pepper)
 VALUES (true, extensions.gen_random_bytes(32));
 
 CREATE TABLE water_management_private.portal_rate_limits (
-  bucket_kind text NOT NULL CHECK (bucket_kind IN ('ip', 'subscriber')),
+  bucket_kind text NOT NULL CHECK (bucket_kind IN ('ip', 'subscriber', 'phone')),
   bucket_hash bytea NOT NULL,
   window_started_at timestamptz NOT NULL,
   attempt_count integer NOT NULL CHECK (attempt_count >= 0),
@@ -231,6 +243,7 @@ DECLARE
   v_ip inet;
   v_ip_hash bytea;
   v_subscriber_hash bytea;
+  v_phone_hash bytea;
   v_phone_normalized text;
   v_bucket record;
   v_started timestamptz;
@@ -275,15 +288,25 @@ BEGIN
     'sha256'
   );
 
-  -- 10 attempts per IP / 15 minutes; 5 attempts per subscriber number / hour.
-  -- Counters are updated under row locks, making concurrent requests atomic.
+  IF v_phone_normalized IS NOT NULL THEN
+    v_phone_hash := extensions.hmac(
+      pg_catalog.convert_to('phone:' || v_phone_normalized, 'UTF8'),
+      v_pepper,
+      'sha256'
+    );
+  END IF;
+
+  -- 10 attempts/IP per 15 minutes, 5/subscriber per hour, and
+  -- 5/phone per hour. Phone is HMACed: no clear phone is persisted.
   FOR v_bucket IN
     SELECT *
     FROM (
       VALUES
         ('ip'::text, v_ip_hash, 10, interval '15 minutes'),
-        ('subscriber'::text, v_subscriber_hash, 5, interval '1 hour')
+        ('subscriber'::text, v_subscriber_hash, 5, interval '1 hour'),
+        ('phone'::text, v_phone_hash, 5, interval '1 hour')
     ) AS limits(bucket_kind, bucket_hash, max_attempts, bucket_window)
+    WHERE bucket_hash IS NOT NULL
   LOOP
     INSERT INTO water_management_private.portal_rate_limits (
       bucket_kind, bucket_hash, window_started_at, attempt_count
