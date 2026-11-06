@@ -94,6 +94,16 @@ export async function POST(request: NextRequest) {
     if (typeof body.new_password !== "string") {
       return jsonError("كلمة المرور الجديدة غير صالحة.", 400);
     }
+  } else if (action === "create_organization") {
+    if (
+      profile.role !== "platform_admin" ||
+      typeof body.name !== "string" ||
+      body.name.trim().length < 2 ||
+      body.name.trim().length > 120
+    ) {
+      return jsonError("إنشاء المؤسسة متاح لمدير المنصة وباسم صالح فقط.", 403);
+    }
+    body = { action, name: body.name.trim() };
   } else if (action === "list_users") {
     if (profile.role === "manager") {
       body = { action, organization_id: profile.organization_id };
