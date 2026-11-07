@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getJwtIssuedAtSeconds } from "./session-token.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,6 +22,7 @@ type Profile = {
   username: string | null;
   display_name: string;
   must_change_password: boolean;
+  session_invalid_before: string | null;
 };
 
 function response(status: number, body: Record<string, unknown>) {
@@ -89,12 +91,22 @@ Deno.serve(async (req: Request) => {
   const actorId = authData.user.id;
   const { data: actorData, error: actorError } = await admin
     .from("profiles")
-    .select("id,organization_id,role,username,display_name,must_change_password")
+    .select("id,organization_id,role,username,display_name,must_change_password,session_invalid_before")
     .eq("id", actorId)
     .single();
   if (actorError || !actorData) return response(403, { error: "لا يوجد ملف صلاحيات صالح لهذا الحساب." });
 
   const actor = actorData as Profile;
+  const issuedAtSeconds = getJwtIssuedAtSeconds(authorization);
+  if (issuedAtSeconds === null) {
+    return response(401, { error: "رمز الجلسة غير صالح. سجّل الدخول مجددًا." });
+  }
+  if (actor.session_invalid_before) {
+    const invalidBeforeMs = Date.parse(actor.session_invalid_before);
+    if (!Number.isFinite(invalidBeforeMs) || issuedAtSeconds * 1000 < invalidBeforeMs) {
+      return response(401, { error: "انتهت صلاحية الجلسة بعد إعادة تعيين كلمة المرور. سجّل الدخول مجددًا." });
+    }
+  }
 
   // Enforce role-to-tenant invariants inside the privileged function itself.
   // The web Route Handler also checks these values, but direct Edge Function
