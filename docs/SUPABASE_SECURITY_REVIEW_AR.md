@@ -537,3 +537,14 @@ ALTER TABLE water_management_private.portal_rate_limits ENABLE ROW LEVEL SECURIT
 - CI على HEAD `49365180df5bd00a24d86a35e133bdb04e1a3290`: Web Console وQuality وPostgreSQL RLS وSecret history جميعها success؛ Push RLS وPush Secret history كذلك success.
 - Vercel Preview READY فقط. لا دمج ولا Production.
 - لم يتغير مبدأ أن مدير المنصة يدير المؤسسات عبر واجهة الويب وEdge Function، ولا يحصل على وصول Data API مباشر إلى بيانات المستأجرين.
+
+
+## 10.17 فرض إبطال الجلسات القديمة داخل Edge Function — 2026-11-07
+
+- **الملاحظة الأمنية:** كان مسار إعادة التعيين يحدّث `profiles.session_invalid_before`، لكن `manage-accounts` لم يكن يتحقق من claim `iat` في JWT الوارد. ولأن الدالة تنفذ باستعمال `service_role`، لا تكفي قيود RLS وحدها لمنع الرمز القديم من الوصول إلى عمليات الحسابات.
+- **المعالجة:** تقرأ الدالة `session_invalid_before` مع الملف الشخصي، وتستخرج وقت إصدار JWT من Bearer token. ترفض الدالة الرمز برسالة 401 إذا كان `iat` مفقودًا/غير صالح أو صدر قبل الحد المخزن. لا تتغير صلاحية تغيير كلمة المرور المؤقتة: يجب أن يسجل المستخدم الدخول بكلمة المرور الجديدة المؤقتة للحصول على رمز حديث، ثم يغيّرها.
+- **الاختبارات:** أضيفت اختبارات Deno لوظيفة استخراج `iat`، ونجحت ضمن Quality CI على HEAD `2c5620324fcaff02306c7193e0df785abaa0109b`. كما اجتازت Web Console وPostgreSQL RLS وSecret History جميعها على SHA نفسه.
+- **النشر:** Edge Function `manage-accounts` v11 نشطة مع JWT verification.
+- **حدود التحقق:** لم يُنفذ بعد اختبار جلسة Auth حقيقية لدور platform_admin/manager وإعادة تعيين كلمة مرور يتبعها رفض JWT قديم عبر HTTP. وافق المستخدم على هويات اختبار مؤقتة، لكن آلية إنشاء Auth مؤقتة لم تكن متاحة ضمن صلاحيات التنفيذ؛ لم ننشئ بيانات اختبار ولم نغيّر المستخدم الأساسي. بقي Auth users=1 وprofiles=1، وامتداد HTTP المؤقت أزيل بعد فحص الشبكة.
+- Security Advisor ما زال يعرض WARN حماية كلمات المرور المسرّبة، إضافة إلى ثلاث INFO مقصودة لعدم وجود سياسات عميل على جداول المخطط الخاص.
+- PR #2 ما زال Draft وغير مدمج، وVercel Preview READY فقط؛ لا Production ولا تغيير على main.
