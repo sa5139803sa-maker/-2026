@@ -42,7 +42,7 @@ jobs:
         run: deno test supabase/functions/subscriber-portal/trusted-gateway-ip.deno.ts
 
       - name: Test account session reset fence
-        run: deno test supabase/functions/manage-accounts/session-token.test.ts
+        run: deno test supabase/functions/manage-accounts/session-token.deno.ts
 
       - name: Dependency vulnerability report
         shell: bash
