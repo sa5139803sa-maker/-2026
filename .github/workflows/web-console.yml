@@ -1,0 +1,62 @@
+name: Web console checks
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "supabase/functions/manage-accounts/**"
+      - "supabase/functions/subscriber-portal/**"
+      - "supabase/migrations/**"
+      - "supabase/tests/rls/tenant_isolation.sql"
+      - ".github/workflows/web-console.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-console-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Next.js typecheck, tests, and production build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+
+      - name: Resolve and lock the exact dependency tree
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Install from the generated lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: Audit dependency vulnerabilities
+        run: npm audit --audit-level=high
+
+      - name: Unit tests
+        run: npm test
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Upload reproducible dependency lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-package-lock
+          path: apps/web/package-lock.json
+          if-no-files-found: error
+          retention-days: 7

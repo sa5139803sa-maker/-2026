@@ -13,11 +13,16 @@ import { useAuth } from "@/lib/auth";
 import { canAccessFeature } from "@/lib/permissions";
 
 export default function TabLayout() {
-  const { session, profile, loading, profileError, refreshProfile } = useAuth();
+  const { session, profile, loading, profileError, refreshProfile, signOut } = useAuth();
 
   useEffect(() => {
+    if (!loading && session && profile?.role === "platform_admin") {
+      void signOut().finally(() => router.replace("/sign-in"));
+      return;
+    }
     if (!loading && !session) router.replace("/sign-in");
-  }, [loading, session]);
+    if (!loading && session && profile?.must_change_password) router.replace("/change-password");
+  }, [loading, session, profile?.role, profile?.must_change_password, signOut]);
 
   if (loading) {
     return (
@@ -27,7 +32,7 @@ export default function TabLayout() {
     );
   }
 
-  if (!session) return null;
+  if (!session || profile?.must_change_password || profile?.role === "platform_admin") return null;
 
   if (!profile) {
     return (

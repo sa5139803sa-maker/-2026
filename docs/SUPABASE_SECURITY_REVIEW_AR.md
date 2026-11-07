@@ -73,9 +73,9 @@
 - يجب تجنب سياسات RLS متكررة ذاتية الاستدعاء عند فحص دور المدير؛ استخدم دالة تفويض آمنة ومحدودة أو تصميمًا لا يسبب recursion.
 
 ### SEC-05 — حسم علاقة التعيينات قبل مخطط الصلاحيات النهائي
-**الخطورة: قرار تصميم مانع**
+**الخطورة: قرار تصميم — حُسم في الفرع المرشح وبانتظار الاختبار**
 
-تذكر وثائق المشروع الاسمين `user_pump_assignments` و`pump_assignments`. الترحيلات الحالية أنشأت `pump_assignments` فقط. لا ينبغي بناء سياسات التعيين أو مزامنة SQLite أو واجهة إدارة المستخدمين قبل حسم هل العلاقة واحدة أم علاقتان مختلفتان.
+تذكر وثائق المشروع الاسمين `user_pump_assignments` و`pump_assignments`. القرار المرشح في فرع `security/tenant-isolation-rls` هو اعتماد `pump_assignments` كجدول علاقة موحد، وعدم إنشاء جدول موازٍ باسم `user_pump_assignments`. يطابق `assignment_role` دور الملف الشخصي، ويشمل المشرف كإسناد قراءة فقط. يبقى القرار غير معتمد نهائيًا حتى اجتياز اختبارات PostgreSQL ومراجعة تطبيقه على بيئة اختبار.
 
 ## 4. ضوابط إيجابية موجودة بالفعل
 
@@ -96,7 +96,7 @@
 5. اختبار عزل المؤسسات A/B واختبارات الدور والغطاس غير المعيّن، ثم تشغيل Supabase Security Advisors.
 6. بعد نجاح الاختبارات فقط، اعتماد الترحيل ونشره على المشروع المحدد.
 
-## 6. ما لم يتم
+## 6. ما لم يتم حتى 2026-11-04 (لقطة تاريخية)
 
 - لم يتم الاتصال بقاعدة بيانات نشطة.
 - لم يتم تنفيذ SQL أو apply migration.
@@ -105,3 +105,446 @@
 - لم يتم تعديل الأدوار الحالية أو إضافة Super Admin أو Accountant.
 
 **قرار المراجعة:** قبول المراجعة الساكنة فقط. لا تعتبر قاعدة البيانات آمنة للإنتاج حتى إغلاق SEC-01 إلى SEC-04 وتجاوز اختبارات RLS السلبية.
+
+
+## 7. معالجة مرشحة — فرع عزل المؤسسات
+
+**الفرع:** `security/tenant-isolation-rls`  
+**الحالة:** اجتاز PostgreSQL CI وQuality CI على commit `06d0df1bc1297286dff6f5f082dceab01e800381`، وهو ما يثبت نجاح الترحيل واختبارات RLS على قاعدة PostgreSQL 17 نظيفة. لا يُعد مغلقًا أمنيًا للإنتاج قبل مراجعة بشرية واختبار مشروع Supabase مخصص نشط؛ لم يجرِ نشر أي SQL على خدمة مستضافة.
+
+التغييرات المرشحة في `20261104160000_secure_tenant_boundaries.sql`:
+
+- **SEC-01:** إضافة `organization_id` إلى `pump_assignments` وفرض تطابق المؤسسة والغطاس والمستخدم والدور بعلاقات أجنبية مركبة.
+- **SEC-02:** فرض تطابق مؤسسة المشترك والغطاس بعلاقة مركبة. عند حذف الغطاس يصبح `pump_id` فارغًا مع الاحتفاظ بمؤسسة المشترك.
+- **SEC-03:** قصر قراءة المشغّل والمحصّل والمشرف على الغطاس المعيّن لهم؛ المدير يقرأ موارد مؤسسته. المشرف قراءة فقط. لا تتضمن المعالجة أي تحكم كهربائي فعلي.
+- **SEC-04:** السماح للمدير بقراءة ملفات موظفي مؤسسته، مع إبقاء تعديل الملف الشخصي محصورًا بالاسم، ومنع تعديل الدور أو المؤسسة من العميل.
+- **SEC-05:** اعتماد `pump_assignments` كجدول العلاقة الوحيد بدل إنشاء `user_pump_assignments` موازٍ. تم توسيع دور التعيين إلى `supervisor` مع اشتراط مطابقته لدور profile.
+- **تخصيص المقاعد:** فهرسان فريدان يفرضان مشغّلًا واحدًا ومحصّلًا واحدًا لكل غطاس؛ يمكن إسناد المشرف لأكثر من غطاس.
+- **الدوال الحساسة:** نقل دوال قراءة نطاق المستخدم إلى schema غير معروض باسم water_management_private، دون معاملات تحدد مستخدمًا آخر، وتثبيت search_path الفارغ للدوال ذات صلاحيات المالك. أصبحت ملكية الدالتين لدور داخلي water_management_authz لا يملك LOGIN وله BYPASSRLS وSELECT محدود على profiles فقط، لتجنب recursion دون منح صلاحيات جداول إضافية.
+- **الصلاحيات الافتراضية:** ضبط ALTER DEFAULT PRIVILEGES FOR ROLE water_management_authz لمنع EXECUTE التلقائي عن PUBLIC/anon/authenticated/service_role للدوال المستقبلية التي ينشئها هذا الدور، دون تعديل الإعدادات العامة لدور postgres. الاختبار ينشئ دالة مؤقتة تحت الدور نفسه ويتحقق من عدم وراثة صلاحية التنفيذ.
+- **منع استدعاء RLS الدائري:** سياسات INSERT/UPDATE للتعيينات لا تستعلم عن `pumps`؛ تطابق الغطاس والمؤسسة يضمنه المفتاح الأجنبي المركب، بينما سياسة قراءة `pumps` تستطيع فحص assignments دون أن تعود إليها سياسة الكتابة بصورة دائرية.
+
+### بوابة التحقق قبل اعتماد المعالجة
+
+أضيفت مجموعة اختبار PostgreSQL مستقلة تستخدم مؤسستين ومستخدمين من أدوار مختلفة. اجتازت الاختبارات: نطاق قراءة المدير والمشغّل والمحصّل والمشرف والموظف غير المعيّن، منع ظهور بيانات المؤسسة الأخرى، رفض الوصول المجهول، منع assignment/subscriber cross-tenant عند INSERT وUPDATE، منع تكرار المشغّل، رفض assignment بدور لا يطابق profile، منع تغيير الدور من العميل، السماح بتعيين صحيح داخل المؤسسة، onboarding، حذف الغطاس مع إبقاء المشترك تابعًا لمؤسسته، وحذف المؤسسة مع تنظيف بياناتها. انتهت المعاملة بـ `ROLLBACK`.
+
+- **CI:** أضيف سير `.github/workflows/supabase-rls.yml` لتشغيل الترحيلات والاختبارات على PostgreSQL 17.
+- **حالة CI:** على commit `8a27a597` فشل الاختبار قبل تطبيق migrations بسبب dollar-quote ناقص في دالتي الاختبار؛ تم تصحيحه في `c2f5cc00`. على commit `c2f5cc00` طبقت PostgreSQL 17 الترحيلات بنجاح ثم كشفت حالة اختبار الإدخال حلقة RLS متكررة في سياسة assignment بسبب استعلام متبادل مع سياسة pumps. عولجت الحلقة بإزالة الاستعلام الزائد والاعتماد على FK المركب في commit لاحق؛ اختبار أحدث head بانتظار النتيجة. لا تغلق أي SEC قبل نجاح أحدث CI.
+- **حدود الاختبار:** قاعدة CI تحاكي `auth.uid()` وأدوار Supabase في PostgreSQL نظيف؛ لا تغني عن تجربة المشروع المختار، ومستشاري Supabase، ومراجعة Data API وStorage.
+- **عدم النشر:** لم يُحدد مشروع Supabase نشط خاص بإدارة المياه، لذلك لم يتم تنفيذ migration أو استعلام على أي مشروع مستضاف.
+- **Data API:** اعتبارًا من 30 أكتوبر 2026 أصبح عدم منح التعريض التلقائي للجداول العامة الجديدة مطبقًا على المشاريع القائمة أيضًا؛ أما المشاريع الجديدة فبدأ السلوك الافتراضي في 30 مايو 2026. يجب فحص إعداد Data API والمنح الصريحة للجداول في المشروع المستهدف قبل الإطلاق، دون فتح schema `water_management_private` للواجهة.
+
+**قرار المرحلة:** اجتازت المعالجة PostgreSQL CI وQuality CI. البنود SEC-01 إلى SEC-04 أصبحت «مختبرة في CI / بانتظار تحقق Supabase المستضاف»، ولا تعتبر مغلقة أمنيًا للإنتاج حتى يكتمل فحص RLS وSecurity Advisors واختبار الأدوار على مشروع اختبار Supabase الصحيح.
+
+
+## 8. تحقق مستضاف على مشروع التطوير — 2026-11-06
+
+**المشروع:** `Water Management`  
+**Project Ref:** `kxdncnswbwktbiphptbr`  
+**المنطقة:** ألمانيا — فرانكفورت (`eu-central-1`)  
+**الحالة وقت التحقق:** `ACTIVE_HEALTHY`  
+**الغرض:** تطوير واختبار مستقل؛ ليس مشروع إنتاج، ولم تُنقل إليه بيانات حقيقية من المشاريع الأخرى.
+
+### 8.1 الترحيلات المنشورة فعليًا
+
+سُجلت الترحيلات التالية في قاعدة البيانات:
+
+| الإصدار المسجل | اسم الترحيل | النتيجة |
+|---|---|---|
+| `20261106102841` | `20261104120358_create_water_management_foundation` | ناجح |
+| `20261106102854` | `20261104120514_tighten_water_management_grants` | ناجح |
+| `20261106103040` | `20261104160000_secure_tenant_boundaries` | ناجح |
+| `20261106104135` | `secure_request_identity_bridge_for_authz` | ناجح |
+
+أنشأت الترحيلات خمس جداول عامة: `organizations` و`profiles` و`pumps` و`pump_assignments` و`subscribers`. RLS مفعّل على الجداول الخمسة، وجرى التحقق من وجود 15 سياسة. لا تمنح جداول التطبيق صلاحيات على مستوى الجدول إلى `anon`.
+
+### 8.2 توافق الدوال مع صلاحيات Supabase المستضاف
+
+كشف الاختبار الحي أن مخطط `auth` مملوك لدور إدارة Supabase `supabase_auth_admin`، وأن دور المشروع `postgres` لا يستطيع منح `USAGE` عليه للدور الداخلي. لم نرفع صلاحيات المشروع أو نغير ملكية مخطط Supabase.
+
+المعالجة المنشورة:
+- بقيت دالتا `current_user_organization_id` و`current_user_role` مملوكتين للدور الداخلي `water_management_authz`، وهو `NOLOGIN BYPASSRLS)، مع قراءة `SELECT` على `public.profiles` لأغراض التفويض فقط.
+- أضيفت دالة داخلية ضيقة `water_management_private.request_user_id()` يملكها `postgres`، لا تقبل أي معامل، وتعيد فقط نتيجة `auth.uid()` الخاصة بالطلب الحالي.
+- مُنحت صلاحية تنفيذ جسر الهوية إلى `water_management_authz` فقط؛ سُحبت من `PUBLIC` و`anon` و`authenticated` و`service_role`.
+- أُثبت `search_path = ''` للدوال ذات `SECURITY DEFINER`، ولا يُعرض مخطط `water_management_private` ضمن صلاحيات Data API العامة.
+- نُفّذ اختبار مباشر بعد الترحيل وتأكدت صلاحيات المخطط والدوال وملكية الدوال كما هو متوقع.
+
+### 8.3 نتيجة اختبار RLS على الخدمة المستضافة
+
+أُنشئت مؤقتًا بيانات اصطناعية لمؤسستين ومستخدمين بأدوار manager وoperator وcollector وsupervisor. نجح الاختبار داخل معاملة انتهت بـ `ROLLBACK`، وتحقّقنا بعد ذلك أن عدد سجلات المستخدمين والمؤسسات والغطاسات والمشتركين التجريبية المتبقية يساوي صفرًا.
+
+الحالات التي اجتازت الاختبار:
+- مدير المؤسسة A يرى موارد مؤسسته ويستطيع تعديل غطاس تابع لها، ولا يرى بيانات المؤسسة B.
+- مشغّل A يرى الغطاس والمشترك المعيّن له فقط، ولا يستطيع تعديل الغطاس.
+- مشرف A يرى الغطاس المعيّن له للقراءة فقط.
+- مدير B يرى مورد مؤسسته فقط.
+- المستخدم غير المعيّن لا يرى الغطاسات.
+- رُفض تعيين موظف من المؤسسة B على غطاس المؤسسة A.
+- رُفض ربط مشترك المؤسسة A بغطاس المؤسسة B.
+- مُنع المستخدم من تغيير دور ملف موظف آخر عبر العميل.
+- نجح مسار `create_organization` لمستخدم جديد غير مرتبط بمؤسسة، وأصبح دوره manager للمؤسسة المنشأة.
+
+هذه نتائج اختبار حية على PostgreSQL الخاص بالمشروع الجديد. لكنها لا تغطي بعد كل مسارات Auth والبريد الإلكتروني والجلسات والدعوات أو تدفق Storage.
+
+### 8.4 نتائج Security وPerformance Advisors
+
+**Security Advisor:** ظهر تحذير واحد من النوع `authenticated_security_definer_function_executable` على `public.create_organization(p_name text)`. هذا الاستدعاء مقصود لمسار onboarding: يتحقق من `auth.uid()`، ومن وجود ملف غير مرتبط بمؤسسة، ويقفل صف المستخدم قبل الإنشاء، ويمنع تمرير دور أو معرف مؤسسة من العميل، ويستخدم `search_path = ''`. لا يُخفى التحذير؛ يجب أن يراجعه مراجع أمني قبل قبول الإنتاج.  
+مرجع المعالجة: https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable
+
+**Performance Advisor:** ظهرت 5 ملاحظات INFO على فهارس المفاتيح الأجنبية، و3 ملاحظات INFO لفهارس لم تُستخدم بعد. عدم استخدام بعض الفهارس متوقع حاليًا لأن قاعدة التطوير فارغة من بيانات التشغيل. ينبغي إضافة فهارس تغطي ترتيب أعمدة المفاتيح الأجنبية قبل نمو البيانات، وعدم حذف الفهارس بسبب كونها غير مستخدمة في قاعدة فارغة. لم تظهر ملاحظات Health.
+
+**Data API:** ثبت أن جداول التطبيق لا تمنح `anon` صلاحيات قراءة، وأن الأدوار الموثوقة فقط تحصل على المنح المقصودة وتخضع لسياسات RLS. مخطط `water_management_private` لا يُمنح `USAGE` إلى `anon` أو `service_role`. لا تعتبر مراجعة Storage مكتملة؛ لم يتم إنشاء buckets أو بيانات تخزين ولم يُنفذ فحص سياسات Storage بعد.
+
+### 8.5 الربط البرمجي وحدود الاعتماد
+
+- تم تحديث `.env.example` بعنوان المشروع ومفتاح `publishable` العام فقط؛ لا يوجد `service_role` أو مفتاح سري في ملف المثال.
+- أصبح `lib/supabase.ts` يفضّل `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`، مع إبقاء أسماء `ANON_KEY` القديمة للتوافق الانتقالي.
+- لم ننشئ مستخدمًا حقيقيًا أو مؤسسة تشغيلية أو مضخة أو مشتركًا في قاعدة التطوير.
+- لا تزال PR #2 مسودة وغير مدمجة؛ يلزم انتظار نتائج CI على أحدث commit ومراجعة بشرية لنتائج Advisor وتحسينات الأداء وفحص Storage.
+
+**قرار المراجعة الحالي:** نجحت الترحيلات واختبارات العزل على Supabase المستضاف. تُقبل المعالجة كنقطة أساس لبيئة التطوير، ولا تعني اعتماد قاعدة البيانات للإنتاج. تبقى مراجعة التحذير المقصود، تحسين الفهارس، اختبار Storage، وإكمال Auth/العضويات قبل بوابة قبول المرحلة 2.
+
+
+### 8.6 نتائج CI وStorage بعد التحديث
+
+- **PostgreSQL RLS CI:** Run `42205474789` على Commit `b9c6b80a347edd9c0e90252f0b516241d904ff74` — success؛ طبق الترحيلات الأربع من الصفر واجتاز مجموعة الاختبارات.
+- **Quality CI:** Run `42205474781` على Commit نفسه — success؛ تثبيت الاعتماديات، تقرير npm، اختبارات الوحدة، TypeScript وتصدير الويب.
+- **Storage:** `storage.buckets = 0` و`storage.objects = 0`؛ جميع جداول مخطط `storage` التي أعادتها معاينة المشروع مفعّل عليها RLS. لا توجد سياسات تطبيق مخصصة لأن التطبيق لم ينشئ bucket بعد؛ عند إضافة المرفقات يجب إنشاء bucket خاص وسياسات محددة بالمؤسسة/المالك، مع روابط مؤقتة للعرض.
+- **Data API:** لا تزال صلاحيات جداول التطبيق إلى `anon` مسحوبة؛ لا يُمنح مخطط التفويض الداخلي إلى `anon` أو `service_role`.
+
+**قرار التحقق:** أصبحت ترحيلات المصدر واختبارات CI متطابقة مع مخطط قاعدة التطوير المنشورة. تبقى مراجعة التحذير المقصود وتحسين الفهارس واختبارات Auth/Storage الفعلية قبل أي اعتماد إنتاجي.
+
+## 8.7 تحديث الفهارس واختبارات CI — 2026-11-06
+
+**المشروع:** `kxdncnswbwktbiphptbr` — Water Management، فرانكفورت، بيئة تطوير.
+
+### الترحيل الخامس والفهارس
+
+تم تطبيق الترحيل `20261106143808_add_tenant_foreign_key_indexes` بنجاح، وسجلته قاعدة التطوير بالإصدار `20261106143808`. الفهارس المضافة هي:
+- `organizations(created_by)` عبر `organizations_created_by_idx`.
+- `profiles(organization_id)` عبر `profiles_organization_id_idx`.
+- `pump_assignments(pump_id, organization_id)` عبر `pump_assignments_pump_tenant_idx`.
+- `pump_assignments(user_id, organization_id, assignment_role)` عبر `pump_assignments_user_tenant_role_idx`.
+- `subscribers(pump_id, organization_id)` عبر `subscribers_pump_tenant_idx`.
+
+تم التحقق من التعريف الفعلي لكل فهرس في `pg_indexes`. أزيلت جميع نتائج `unindexed_foreign_keys` من Performance Advisor. بقيت 8 ملاحظات `unused_index` من نوع INFO لأن قاعدة التطوير لا تحتوي بيانات تشغيل كافية؛ لم تُحذف هذه الفهارس.
+
+### اختبارات PostgreSQL والجودة
+
+تم تحديث `supabase/tests/rls/tenant_isolation.sql` ليستدعي ترحيل الفهارس الخامس على قاعدة PostgreSQL نظيفة، ويتأكد من وجود الفهارس وتعريف ترتيب الأعمدة. فشل التشغيل الأول على Commit `b6ef622...` لأن الترحيل لم يكن مستدعى من الاختبار؛ تم إصلاح ترتيب الترحيل وفحص `regclass` في Commit `37687bf0d15ee769dec4eea8c511ebc5d0a08298`.
+
+- PostgreSQL RLS PR Run `42236090457` (Run #98): **success**.
+- Quality PR Run `42236090460` (Run #99): **success**.
+- شملت Quality: تثبيت الاعتماديات، تقرير npm، اختبارات الوحدة، TypeScript، وتصدير الويب.
+
+### ما بقي مفتوحًا أمنيًا
+
+ما زال تحذير `authenticated_security_definer_function_executable` ظاهرًا على `public.create_organization(p_name text)`. راجعنا التعريف الحي: الدالة مملوكة لـ `postgres`، تستخدم `SECURITY DEFINER` و`search_path = ''`، وتقرأ هوية `auth.uid()`، وتتحقق من الاسم وملف المستخدم غير المرتبط، وتقفل صف الملف قبل إنشاء المؤسسة، ولا تقبل role أو organization_id من العميل. التنفيذ مسموح لـ `authenticated` فقط؛ لا تمنح `anon` أو `PUBLIC` التنفيذ. لم نخْف التحذير أو نسجله كمقبول للإنتاج؛ يلزم مراجع أمني مستقل قبل الإنتاج.
+
+Health Advisor بلا ملاحظات. ظلت PR #2 مفتوحة ومسودة، ولم يتغير `main`. لا تعتبر المرحلة 2 مكتملة لأن استعادة جلسة React Native وتأكيد البريد والدعوات وفحص سياسات Storage ما زالت غير منجزة.
+
+## 8.8 معالجة onboarding وإزالة تحذير SECURITY DEFINER — 2026-11-06
+
+**الترحيل السادس:** `20261106160000_harden_onboarding_function` — مسجل في Supabase بالإصدار `20261106145921`.
+
+### البنية والصلاحيات بعد المعالجة
+
+- `public.create_organization(p_name text)` أصبحت `SECURITY INVOKER`، مملوكة لـ `postgres` لكنها لا تنفذ بامتيازاته؛ ACL التنفيذ إلى `authenticated` فقط، ولا يوجد EXECUTE لـ `anon` أو `PUBLIC`.
+- نُقل التنفيذ الفعلي إلى `water_management_private.create_organization(p_name text)`، وهي `SECURITY DEFINER` مملوكة للدور `water_management_onboarding` غير القابل لتسجيل الدخول ولا يتجاوز RLS ولا يرث العضوية.
+- المنح العمودية للمالك الداخلي تقتصر على قراءة `profiles(id, organization_id, role)` وتحديث `profiles(organization_id, role)` وإضافة `organizations(id, name, created_by)`. لا يستطيع تحديث display_name أو تعديل اسم مؤسسة بعد الإنشاء أو حذف المؤسسات.
+- لا يملك `water_management_onboarding` عضوية موروثة/قابلة للاستخدام لدى `authenticated` أو `anon` أو `service_role`، ولا يملك CREATE على `water_management_private` بعد الترحيل.
+- منطق الدالة يقصر الإنشاء على هوية الطلب الحالية، مع ملف `operator` غير مرتبط بمؤسسة؛ ينشئ المؤسسة باسمه ويحوّل الملف إلى `manager` لمؤسسة واحدة فقط.
+
+### نتيجة التحقق الحي
+
+نجح اختبار RPC من خلال دور `authenticated` على مشروع التطوير:
+- إنشاء مؤسسة واحدة مع `created_by` مطابق للمستخدم الحالي.
+- تحديث ملف المستخدم إلى `manager` وربطه بالمؤسسة المنشأة.
+- رفض إنشاء مؤسسة ثانية لنفس الحساب.
+- رفض اسم مؤسسة غير صالح.
+- انتهى الاختبار بـ `ROLLBACK`، ثم تحققنا أن سجلات الاختبار المتبقية في `auth.users` و`profiles` و`organizations` تساوي صفرًا.
+
+### Advisors وCI
+
+- **Security Advisor:** `lints: []` — اختفى تحذير `authenticated_security_definer_function_executable` عن RPC العامة.
+- **Health Advisor:** `lints: []`.
+- **Performance Advisor:** لا ملاحظات `unindexed_foreign_keys`؛ 7 ملاحظات `unused_index` من نوع INFO فقط على قاعدة تطوير صغيرة بلا عمليات تشغيل كافية.
+- **PostgreSQL RLS Push Run #109:** `42238737173` — success.
+- **PostgreSQL RLS PR Run #110:** `42238745246` — success.
+- **Quality PR Run #105:** `42238745284` — success، ويشمل npm install/audit report/unit tests/TypeScript/web export.
+
+### حدود القبول
+
+هذه المعالجة تغلق تحذير onboarding المحدد، لكنها لا تغلق المرحلة 2 بالكامل ولا تعتبر اعتماد إنتاجي. أصبح دور `platform_admin` مضافًا إلى قاعدة التطوير ومهيأً لأول حساب، وهو مخصص للويب فقط؛ تطبيق Expo يرفض تسجيل دخوله ويغلق الجلسات القديمة. لا تزال لوحة Next.js المستقلة وبوابة المشترك الفعلية واستعادة جلسة React Native وتأكيد البريد ودعوات العضوية وفحص Storage ضمن العمل اللاحق. بقي PR #2 مفتوحًا كمسودة ولم يتغير `main`.
+
+## 8.9 تخزين جلسة Supabase في Expo — 2026-11-06
+
+**Commit:** `175492c39bc30b0efc433e7b4680f2bea85b52f3`.
+
+- أضيف `expo-sqlite@~57.0.4` المتوافق مع Expo SDK 57.
+- يستورد `lib/supabase.ts` الوحدة `expo-sqlite/localStorage/install` قبل إنشاء العميل؛ تُستخدم واجهة `localStorage` المستمرة على الأجهزة الأصلية، وتظل واجهة المتصفح الأصلية على الويب.
+- يمرر العميل مخزن الجلسة صراحةً، مع تفعيل `persistSession` و`autoRefreshToken`.
+- على الأنظمة الأصلية، يوقف المستمع تجديد التوكن عند الخلفية ويعيد تشغيله عند عودة التطبيق إلى المقدمة عبر `AppState`. على الويب يظل سلوك Supabase المرتبط بظهور التبويب هو المستخدم.
+- أضيف fallback غير دائم فقط عند SSR/مرحلة التصدير التي لا يتوفر فيها `localStorage`؛ لا يُستخدم كبديل لتخزين جهاز حقيقي.
+- **CI:** PostgreSQL RLS Push Run #113 (`42240436480`) وPR Run #114 (`42240446517`) وQuality PR Run #107 (`42240446515`) — جميعها success.
+- **حدود الأمان:** تخزين SQLite المستمر ليس مشفرًا بـ SQLCipher أو تشفير إضافي في هذا التغيير. يجب اتخاذ قرار صريح بشأن تشفير تخزين الجلسة قبل الإنتاج. كما يلزم اختبار عملي لفرض إيقاف تطبيق Android وإعادة فتحه والتحقق من استمرار الجلسة وتجديد refresh token؛ نجاح CI وحده لا يثبت السلوك على جهاز فعلي.
+
+**قرار المراجعة:** اعتماد الشيفرة كتنفيذ أولي صحيح لتخزين الجلسة وتجديد التوكن. تبقى تجربة الجهاز والتشفير عند التخزين المحلي ضمن بوابة ما قبل الإنتاج.
+
+
+## 9. مراجعة إدارة الحسابات وكلمات المرور المؤقتة — 2026-11-06
+- دور `platform_admin` مضاف إلى `app_role`، منفصل عن عضوية المؤسسة. لا توجد ترقية عامة من العميل؛ تعيين أول مدير منصة يتطلب إجراء bootstrap يدويًا.
+- `organizations.account_limit` افتراضيه 5، ويشمل مدير المؤسسة. إنشاء الحساب وتعديل الحد يستخدمان دوالًا خادمية تقفل صف المؤسسة وتتحقق من العدد الحالي.
+- `profiles.username` فريد دون حساسية لحالة الأحرف، و`must_change_password` يفرض بوابة تغيير كلمة المرور.
+- عمليات Auth Admin تتم داخل Edge Function `manage-accounts` مع JWT verification وهوية منفذ متحققة من Supabase Auth. مفتاح service role لا يوجد في تطبيق الهاتف.
+- مدير المؤسسة لا ينشئ إلا operator/collector/supervisor داخل مؤسسته، ولا يعيد تعيين إلا حسابات الموظفين في مؤسسته. مدير المنصة يدير حسابات المؤسسات وحدودها وينشئ مدير مؤسسة أو موظفًا في مؤسسة محددة.
+- لا يمكن قراءة `account_audit_log` من `anon` أو `authenticated`. لا يسجل النظام كلمات المرور المؤقتة.
+- الحساب الذي يملك `must_change_password=true` لا يحصل على `organization_id` أو `role` عبر دوال RLS المساعدة، فلا يصل إلى بيانات المؤسسة قبل التغيير.
+- عند إعادة التعيين، يحدّث الخادم `session_invalid_before` ويضع الحساب في حالة تغيير إلزامي. يرفض RLS رموز JWT الأقدم من هذا الحد حتى بعد تغيير كلمة المرور. هذا يمنع وصول الجلسات السابقة إلى بيانات المؤسسة؛ لا يعني أن JWT القديم اختفى تشفيريًا، وقد يظل صالحًا لدى Auth حتى انتهاء access token.
+- **التحقق:** نجحت اختبارات PostgreSQL RLS CI رقمَي #131 و#132، ونجح Quality CI رقم #116 (Deno Edge Function check وnpm tests وTypeScript وتصدير Expo للويب). تم التحقق من تهيئة أول حساب `platform_admin` في قاعدة التطوير. أضيفت حواجز تطبيق Expo لمنع هذا الدور من الدخول.
+- **فحوص فصل Expo عن إدارة المنصة:** نجح Quality CI #128 (`42256504153`) بما فيه unit tests وTypeScript وExpo web export؛ ونجح PostgreSQL isolation CI #156 (`42256504101`).
+- **التحقق المتبقي:** دورة اختبار حسابات المؤسسة على Android، واختبار تطبيق Next.js عند إنشائه. لا تعني حزمة Expo Web وجود لوحة الويب المستقلة.
+
+
+### فهارس سجل التدقيق
+أضيفت فهارس تغطي المفاتيح الأجنبية الثلاثة في `account_audit_log` وفهرس زمني للترتيب. Performance Advisor لم يعد يعرض `unindexed_foreign_keys`؛ بقيت ملاحظات INFO على فهارس غير مستخدمة في قاعدة تطوير فارغة.
+
+
+## 10. تطبيق Next.js المستقل — مراجعة أولية 2026-11-06
+
+- تطبيق الويب في `apps/web/` منفصل عن Expo. الدور `platform_admin` مقيد بمسار `/platform` في الويب، ومدير المؤسسة بمسار `/organization`.
+- Supabase SSR يستخدم Cookies وPKCE، مع `proxy.ts` لتحديث الرموز. لا يُعد Proxy حاجز الصلاحيات النهائي؛ الصفحات المحمية تعيد التحقق من المستخدم عبر `auth.getUser()` وتقرأ `profiles` عبر RLS.
+- عمليات الإدارة تمر عبر `POST /api/admin/accounts`، وتتحقق من Origin والجلسة وملف الدور ونطاق المؤسسة، ثم تمرر access token الخاص بالمستخدم إلى Edge Function المحمية. لا يوجد مفتاح `service_role` داخل المتصفح أو متغيرات NEXT_PUBLIC.
+- مدير المؤسسة لا يستطيع اختيار organization_id من العميل؛ Route Handler يعيد تعيينه إلى organization_id الموجود في ملفه. أما مدير المنصة فله صلاحيات اختيار المؤسسة فقط في actions المسموحة.
+- طُبقت ترحيلة `20261106180000_create_platform_organization_admin_rpc.sql` على Supabase development (migration version `20261106173412`). RPC إنشاء المؤسسة تعمل بـ SECURITY INVOKER، وEXECUTE حصري لـ service_role. اختُبرت داخل transaction مع سجل التدقيق ثم ROLLBACK وتأكدنا من عدم بقاء بيانات الاختبار. نُشرت `manage-accounts` version 10 مع `verify_jwt=true`.
+- ترويسات HTTP المبدئية: X-Content-Type-Options وX-Frame-Options وReferrer-Policy وPermissions-Policy وHSTS. لم يُعتمد CSP مخصص أو WAF/rate-limit للبوابة بعد.
+- بوابة المشترك لها الآن واجهة بحث برقم عالمي عشوائي من 6 خانات ورقم الهاتف المسجل فقط، دون OTP. تستدعي Edge Function `subscriber-portal` مباشرة، وتبقى RPC داخلية service_role-only. لم تطبق الترحيلة الجديدة ولم تنشر الدالة بعد؛ لذا لا تزال الخدمة غير مفعلة في Supabase حتى إكمال CI والتطبيق والنشر.
+- **CI:** Web console #26 وQuality #186 وPostgreSQL RLS #272 — جميعها success. فحص الويب شمل `npm ci` باستخدام lockfile مولد أثناء التشغيل ثم اختبار الإنتاج. lockfile لم يُضم بعد إلى Git.
+- **Supabase Advisors بعد النشر:** Health بلا ملاحظات. Security Advisor يعرض تحذير `auth_leaked_password_protection` لأن حماية كلمات المرور المسرّبة معطلة في Auth؛ يجب تفعيلها قبل فتح التسجيل/الدخول العام. Performance لا يعرض مفاتيح أجنبية غير مفهرسة؛ بقيت 11 ملاحظة `unused_index` INFO على قاعدة التطوير.
+- **حواجز الإصدار المتبقية:** اعتماد lockfile، تفعيل leaked-password protection، اختبار الدخول والتعامل مع الحسابات عبر المتصفح، اختبار staging ونشر Next.js، توثيق الأسرار والنطاقات وHTTPS ومراقبة السجلات والنسخ الاحتياطية، واختبارات أمان تطبيق الويب.
+
+
+## 10.1 تحقق إنشاء المؤسسة ونشر Edge Function — 2026-11-06
+
+- migration `20261106180000_create_platform_organization_admin_rpc.sql` مطبقة على قاعدة التطوير؛ الإصدار المسجل `20261106173412`.
+- RPC `public.create_platform_organization(uuid,text)`: `SECURITY INVOKER`، لا يوجد `EXECUTE` لـ `anon` أو `authenticated`، و`service_role` فقط يملك التنفيذ وإدخال المؤسسة وسجل التدقيق.
+- إنشاء المؤسسة وإدراج سجل التدقيق يحدثان داخل المعاملة نفسها. اختبار Supabase التطويري أنشأ سجلًا داخل transaction ثم ألغاه؛ تحققنا أن بيانات الاختبار لم تبق.
+- Edge Function `manage-accounts` نشطة بالإصدار 8 مع `verify_jwt=true`، وتحتوي على الإجراء `create_organization`.
+- CI: Web #26، Quality #186، PostgreSQL RLS #272 — جميعها success.
+- **تحذير أمني مفتوح:** Supabase Security Advisor يعرض `auth_leaked_password_protection` (تعطيل فحص كلمات المرور المسرّبة). لا نعتبر ذلك مغلقًا حتى تفعيل الميزة من إعدادات Auth وإعادة تشغيل Advisor.
+- **ملاحظة أداء:** 11 فهرسًا لم يستخدم بعد (INFO) في قاعدة تطوير قليلة البيانات؛ لم تُحذف لتجنب إزالة فهارس لازمة قبل توفر حمل استعلام فعلي.
+
+
+## 10.2 حواجز الدور داخل Edge Function — 2026-11-06
+
+- يتحقق الخادم داخل `manage-accounts` من أن `platform_admin` لا يملك `organization_id` وأن `manager` مرتبط بمؤسسة؛ لا يعتمد على Route Handler وحده.
+- تُرفض العمليات الإدارية من الأدوار الميدانية حتى لو استدعيت Edge Function مباشرة.
+- استثناء واحد مقصود: `change_password` مسموح لأي دور عندما تكون `must_change_password=true`، حتى يستطيع الموظف تغيير كلمة المرور المؤقتة في أول دخول عبر Expo. لا يفتح ذلك له أي صلاحيات إدارية.
+- Edge Function منشورة بالإصدار 10، نشطة مع `verify_jwt=true`.
+- CI: Web #31، Quality #191، PostgreSQL RLS #282 — جميعها success.
+- تنبيه Auth لم يتغير: `auth_leaked_password_protection` ما زال WARN، لأن فحص كلمات المرور المسرّبة معطل في إعدادات Supabase Auth. يجب تفعيله وإعادة فحص Security Advisor قبل الإطلاق العام.
+
+
+## 10.3 بوابة المشترك — رقم عالمي من 6 خانات والهاتف فقط | 2026-11-06
+
+- **قرار المالك الأحدث:** الاستعلام يتطلب رقم المشترك ورقم الهاتف المسجل فقط؛ لا OTP، لا SMS، ولا حساب Auth للمشترك. هذا القرار يحل محل توجيه OTP الوارد في نسخ سابقة من خطة المنتج.
+- **المعرّف:** رقم عشوائي من 6 خانات (100000–999999)، عالمي على مستوى المنصة، مستقل عن UUID الداخلي، بقيد UNIQUE عالمي. يتم حجز الرقم في جدول داخلي ولا يعاد استخدامه بعد حذف السجل.
+- **إلزام الهاتف:** رقم الهاتف أصبح إلزاميًا عند إنشاء سجل المشترك. دالة داخلية توحّد الأرقام العربية/الفارسية والصيغ المحلية/الدولية، وتفرض قيود طول 8–15 رقمًا بعد التطبيع.
+- **عدم كشف البيانات:** المتصفح يتصل مباشرة بـ Edge Function `subscriber-portal`. الدالة تستدعي `public.lookup_subscriber_portal(integer,text,text)` التي تعمل بـ SECURITY INVOKER، ولا يملك EXECUTE إلا `service_role`. لا تمنح `anon` أو `authenticated` صلاحية قراءة جدول `subscribers` أو تشغيل RPC.
+- **محددات المحاولات:** 10 محاولات لكل عنوان IP خلال 15 دقيقة، و5 محاولات لكل رقم مشترك في الساعة، و5 محاولات لكل رقم هاتف معياري في الساعة. تستخدم HMAC بمفتاح سري محفوظ في المخطط الداخلي؛ لا يتم تخزين أرقام الهاتف أو IP الخام في سجل الحصص.
+- **الاستجابة:** رقم غير موجود/هاتف غير مطابق/اشتراك غير نشط يرجع إلى نفس استجابة عدم التطابق. عند تجاوز المعدل تعاد 429 وRetry-After. عند صحة المطابقة يُرجع الاسم ورقم المشترك واسم/رمز الغطاس وآخر أربعة أرقام من الهاتف فقط.
+- **حدود الثقة:** رقم الاشتراك والهاتف معلومتان مشتركتان وليستا إثباتًا تقنيًا لملكية SIM. لذلك لا تُعرض في هذه المرحلة كشوف مالية أو دفعات أو معلومات شخصية عالية الحساسية؛ المخطط الحالي لا يحتوي بعد جداول تلك السجلات.
+- **IP rate limit:** يعتمد عنوان IP على الهيدر الذي يضبطه مضيف الويب. عند النشر يجب استخدام مضيف يزيل/يستبدل X-Forwarded-For القادم من العميل؛ عند Vercel يفضل `x-vercel-forwarded-for`. لا تنشر عبر Proxy غير موثوق.
+- **حالة النشر:** الكود والترحيلة واختبارات RLS أضيفت إلى الفرع، لكن ترحيلة `20261106190000` لم تطبق بعد على Supabase، وEdge Function العامة لم تنشر بعد. لا تعتبر البوابة فعالة قبل نجاح CI والتطبيق والنشر واختبار staging.
+
+
+## 10.4 تدقيق بوابة المشترك — 2026-11-06
+
+- رقم الاشتراك المخصص للبوابة يتكون من ست خانات ضمن 100000–999999، عشوائي، مستقل عن UUID، مع UNIQUE عالمي وجدول حجز داخلي يمنع إعادة الاستخدام بعد الحذف.
+- لا يوجد تفرد مفروض على الهاتف؛ قد يتشارك أفراد الأسرة الهاتف نفسه. الهاتف يطبع إلى صيغة رقمية معيارية ويستخدم في المطابقة ومحدد المحاولات فقط.
+- الاستعلام العام يمر عبر Edge Function، وRPC الداخلية متاحة لـ`service_role` فقط. لا تمنح `anon` أو `authenticated` صلاحية قراءة المشتركين أو سجل حجز الأرقام أو تنفيذ RPC.
+- محددات المحاولات تعتمد HMAC بمفتاح سري منفصل، ولا تحفظ IP أو الهاتف الخام في جدول الحصص.
+- لا يُعد الرقم والهاتف إثباتًا تقنيًا لملكية الهاتف؛ لذلك يقتصر الرد على الاسم ورقم الاشتراك والغطاس ورمزه وآخر أربعة أرقام للهاتف.
+- أول CI بعد إدخال بوابة المشترك كشف خطأ TypeScript في invoke واختبار ACL لا يعكس منح `USAGE` المقصود لـservice_role. تم تعديل الاستدعاء والاختبار، مع توسيع اختبارات الست خانات والتفرد وعدم قابلية التعديل.
+- لا تزال الترحيلة غير مطبقة على قاعدة التطوير، والدالة غير منشورة للعامة حتى نجاح أحدث CI.
+
+
+## 10.5 حالة النشر والتحقق الحي لبوابة المشترك — 2026-11-06
+
+- ترحيلة `20261106190000_add_global_subscriber_number_and_public_lookup.sql` مطبقة على Supabase development بالإصدار `20261106205705`.
+- `subscriber_number` إلزامي ضمن 100000–999999 وفريد عالميًا، مع سجل حجز داخلي يمنع إعادة الاستخدام. `phone` و`phone_normalized` إلزاميان، لكن الهاتف غير فريد؛ يسمح بمشاركة رقم الأسرة.
+- الفهرس `subscribers_subscriber_number_global_uidx` فريد عالميًا، والفهرس `subscribers_org_phone_normalized_idx` غير فريد.
+- Edge Function `subscriber-portal` نشطة بالإصدار 1 مع `verify_jwt=false`. لا يوجد `service_role` في الواجهة؛ وظيفة Edge هي المستهلك الخادمي للسر.
+- تحققنا من أن `anon` و`authenticated` لا يملكان EXECUTE على RPC، وأن `service_role` فقط يملك التنفيذ، كما أن registry وجداول rate limit غير مكشوفة إلى API roles.
+- اختبار RPC حي تحت `service_role` لرقم غير موجود أعاد `found=false` دون خطأ. نُفذ داخل معاملة انتهت بـ`ROLLBACK`. لا توجد سجلات مشتركين في قاعدة التطوير، لذا لا يمكن إثبات تطابق سجل حقيقي حتى إدخال بيانات اختبارية.
+- CI على SHA `86dad24be7aa8895bcda34ed6884ed20db527af3`: Web #89 وQuality #249 وPostgreSQL RLS #403 — جميعها success.
+- Health Advisor بلا ملاحظات. Security Advisor ما زال يحذر من تعطيل `auth_leaked_password_protection`؛ يجب تفعيله قبل إطلاق حسابات الإدارة للعامة. Performance Advisor لا يعرض مفاتيح أجنبية غير مفهرسة، مع 12 ملاحظة `unused_index` من نوع INFO بسبب قلة البيانات.
+- اختبار HTTP من متصفح حقيقي، وIP headers/rate limiting عبر مضيف staging، ونشر Next.js، ما زالت بوابات قبل الإنتاج.
+
+
+### 10.6 اختبار المطابقة الحية — بيانات مؤقتة وROLLBACK
+
+- أنشأنا مؤسسة وغطاسًا ومشتركًا اصطناعيًا داخل معاملة مؤقتة، وولّد Trigger رقمًا من ست خانات.
+- نجح التطابق بالهاتف الصحيح، وفشل الهاتف الخاطئ برسالة نتيجة عامة، ونجح التطبيع مع الأرقام العربية-الهندية.
+- نفذنا الاختبار بصلاحية `service_role` ثم `ROLLBACK`؛ تحققنا أن المؤسسات والغطاسات والمشتركين وسجل حجز الأرقام لا يحتوي أي أثر من بيانات الاختبار.
+- لا يثبت هذا اختبار واجهة HTTP أو صحة IP القادم من المضيف؛ يلزم اختبار متصفح/staging قبل النشر العام.
+
+
+## 10.7 قرار المشروع الأساسي المباشر — 2026-11-06
+
+- المشروع `kxdncnswbwktbiphptbr` هو المشروع الأساسي الذي سيصبح الإنتاج لاحقًا، بناءً على توجيه المستخدم. لا يُنشأ مشروع staging منفصل ولا تُنقل قاعدة البيانات لاحقًا إلى مشروع آخر.
+- يظل الاختبار الآمن ممكنًا على المشروع نفسه باستخدام بيانات اصطناعية داخل معاملات تنتهي بـ`ROLLBACK`، كما فعلنا في اختبار تطابق بوابة المشترك.
+- حالة المشروع `ACTIVE_HEALTHY`، PostgreSQL 17.11، أربعة عشر ترحيلًا مسجلًا. `manage-accounts` v10 نشطة مع JWT، و`subscriber-portal` v1 نشطة دون تحقق JWT المنصي، وتتحقق من الطلب وتستخدم RPC محصورة في `service_role`.
+- حساب المستخدم المقدم مهيأ `platform_admin` مع `organization_id = NULL`.
+- Security Advisor: تحذير واحد `auth_leaked_password_protection` يجب تفعيله قبل فتح الدخول العام. Health بلا ملاحظات. Performance: لا توجد `unindexed_foreign_keys`، مع 12 unused indexes من INFO.
+- لا يوجد حتى الآن نشر Next.js عام أو نطاق HTTPS. يلزم ربط استضافة مثل Vercel، وضبط متغيرات Supabase العامة، ثم اختبار HTTP/المتصفح على المشروع الأساسي نفسه قبل إعلان الإتاحة العامة.
+
+
+### 10.8 تقوية IP rate limiting — subscriber-portal v2 — 2026-11-06
+
+- أزيلت الثقة من رؤوس `x-vercel-forwarded-for` و`x-forwarded-for` و`x-real-ip`؛ لأن عنوان IP القادم من هذه الرؤوس قد يكون تحت سيطرة العميل في سياق endpoint عام أو proxy غير مضبوط.
+- المصدر الوحيد الآن هو `cf-connecting-ip` المضاف عند مرور الطلب عبر Cloudflare edge الخاص ببوابة Supabase. Cloudflare توثق أن هذا الرأس يحتوي عنوان العميل إلى الأصل، وتوصي باستخدامه بدل `X-Forwarded-For` لاستعادة عنوان الزائر. إذا غاب الرأس أو كان متعدد القيم/مشوهًا، ترفض الدالة الطلب بـ503 بدل تخفيف الحماية.
+- اختبارات Deno تؤكد تجاهل الرؤوس التي يستطيع العميل تمريرها، وقبول الرأس الموثوق وحده. نجح type-check واختبار Deno في CI.
+- نُشرت `subscriber-portal` v2 على المشروع الأساسي؛ لا تغيير على سياسة RPC أو مفاتيح HMAC أو عدم كشف سجلات المشتركين.
+- لا يزال التحقق الحي من headers عبر HTTP والمتصفح مطلوبًا قبل الإطلاق العام، للتأكد من أن مسار Supabase الحالي يمرر `cf-connecting-ip` كما هو متوقع.
+
+## 10.9 مراجعة صلاحيات الجداول الخاصة وتحذير RLS — 2026-11-07
+
+### نتيجة الفحص الحالي
+- أظهر Supabase Security/Database Advisor تحذيرًا حرجًا `rls_disabled` على ثلاثة جداول في المخطط `water_management_private`: `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits`.
+- لذلك تبقى هذه الجداول دون Row Level Security مفعّل؛ هذا نقص دفاعي يجب إغلاقه قبل الإطلاق العام، ولا ينبغي إسقاط التحذير.
+- فحص الصلاحيات الفعلية عبر PostgreSQL أظهر أن `anon` لا يملك USAGE على `water_management_private` ولا أي صلاحية SELECT/INSERT/UPDATE/DELETE على الجداول الثلاثة.
+- يملك `authenticated` صلاحية USAGE على المخطط، لكنه لا يملك أي صلاحية SELECT/INSERT/UPDATE/DELETE مباشرة على الجداول الثلاثة.
+- الدور `service_role` يملك `BYPASSRLS`. لديه صلاحيات القراءة/الكتابة اللازمة على جدولي rate-limit والسر؛ جدول registry لا يملك له صلاحيات مباشرة، ويُدار عبر Trigger مملوك لـ`postgres` بصلاحية `SECURITY DEFINER`.
+- دوال RPC العامة الحساسة (`lookup_subscriber_portal`, `assign_managed_user`, `set_organization_account_limit`, `create_platform_organization`) هي `SECURITY INVOKER`، وEXECUTE متاح لـ`service_role` فقط؛ لم يجد الفحص صلاحية تنفيذها لـ`anon` أو `authenticated`.
+- بناءً على هذه الـACLs لا توجد صلاحية مباشرة حالية لعميل `anon` أو `authenticated` على الجداول الخاصة. لكن هذا لا يعادل تفعيل RLS، ولا يلغي تحذير Advisor؛ كما لم يُتحقق من إعداد exposed schemas في لوحة Data API ضمن هذا الفحص.
+
+### خيار المعالجة المقترح — لم يُنفذ
+تفعيل RLS على الجداول الثلاثة دون إضافة سياسات للعميل سيجعل الوصول الافتراضي مرفوضًا للأدوار التي لا تتجاوز RLS. الدور الخادمي `service_role` ومالك Trigger `postgres` لهما تجاوز RLS بحسب فحص الأدوار الحالي. قبل التطبيق يجب الحفاظ على حظر منح هذه الجداول إلى `anon` و`authenticated`، ثم إعادة اختبار مسارات الـRPC والـTrigger.
+
+```sql
+ALTER TABLE water_management_private.subscriber_number_registry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE water_management_private.portal_rate_limit_secret ENABLE ROW LEVEL SECURITY;
+ALTER TABLE water_management_private.portal_rate_limits ENABLE ROW LEVEL SECURITY;
+```
+
+**الحالة:** لا تنفذ هذه الأوامر تلقائيًا. يلزم قرار مالك المشروع بالموافقة على تفعيل RLS بلا سياسات عميل، أو تحديد سياسات خاصة إن كانت هناك حاجة جديدة ومبررة. لا تُمنح `anon` أو `authenticated` أي وصول مباشر لهذه الجداول.
+
+## 10.10 إعداد كلمات المرور المسرّبة — 2026-11-07
+
+- ما زال Security Advisor يعرض `auth_leaked_password_protection` بمستوى WARN؛ الميزة غير مفعّلة في إعدادات Auth حتى وقت هذا الفحص.
+- توثيق Supabase الحالي يوضح أن الحماية تستخدم قاعدة HaveIBeenPwned Pwned Passwords API، وأن الميزة متاحة على Pro وما فوق: https://supabase.com/docs/guides/auth/password-security.
+- لم تُغيّر إعدادات Auth عبر أدوات هذه الجلسة؛ يلزم تفعيلها من Authentication → Settings في لوحة Supabase إذا كانت الخطة تدعمها، ثم إعادة فحص Advisor.
+
+## 10.11 مراجعة سلوك معاينة الويب وRuntime — 2026-11-07
+
+- مشروع Vercel `water-management-web` يستخدم Next.js من `apps/web` وNode.js 22.x، ومعاينات الفرع محمية بـSSO.
+- متغيرات Supabase العامة موجودة في Preview للفرع الأمني فقط؛ لا توجد قيمة `service_role` أو Secret في `NEXT_PUBLIC_*`.
+- جرى ضبط أمر تثبيت Vercel ليولّد lockfile من `package.json`، ثم يشغّل `npm audit --audit-level=high` و`npm ci` قبل البناء. CI ينفذ الترتيب نفسه تقريبًا ويحتفظ بنسخة lockfile الناتجة كأثر مؤقت؛ lockfile ليس متتبعًا في Git حاليًا.
+- نجحت معاينة سابقة في Next build وTypeScript وHTTP smoke للصفحات الأساسية. لا يزال اختبار POST لمسار الإدارة والاختبار الحي لبوابة المشترك غير منفذين بسبب عدم توفر عميل HTTP POST في أدوات الفحص المستخدمة؛ لا تسجل كاختبارات ناجحة.
+
+
+## 10.12 إعادة تحقق مباشرة من ACL والـTrigger — 2026-11-07
+
+أُعيد تنفيذ استعلامات قراءة فقط على مشروع Supabase الأساسي بعد التحقق من حالة Advisor.
+
+- تأكد أن RLS ما زال **غير مفعّل** على الجداول الثلاثة: `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits`؛ كما أن `FORCE ROW LEVEL SECURITY` غير مفعّل.
+- `anon` لا يملك `USAGE` على `water_management_private`، ولا يملك أي امتياز CRUD مباشر على الجداول الثلاثة.
+- `authenticated` يملك `USAGE` على المخطط الخاص، لكنه لا يملك أي امتياز `SELECT/INSERT/UPDATE/DELETE` مباشر على أي من الجداول الثلاثة.
+- `anon` و`authenticated` لا يملكان `BYPASSRLS`. كل من `service_role` و`postgres` يملك `BYPASSRLS`.
+- جدول `portal_rate_limit_secret`: لدى `service_role` صلاحية SELECT فقط؛ ولا يملك INSERT أو UPDATE أو DELETE. جدول `portal_rate_limits`: لدى `service_role` صلاحيات CRUD اللازمة. جدول `subscriber_number_registry`: لا يملك `service_role` امتيازات مباشرة؛ Trigger المشترك هو مسار التخصيص.
+- Trigger `subscribers_enforce_portal_fields` على `public.subscribers` يستدعي `water_management_private.enforce_subscriber_portal_fields`؛ الدالة مملوكة لـ`postgres`، من نوع `SECURITY DEFINER`، وضُبط لها `search_path = ''`، ولا يملك EXECUTE عليها إلا `postgres`.
+- RPC `public.lookup_subscriber_portal` من نوع `SECURITY INVOKER`، وACL التنفيذ الظاهر هو `postgres` و`service_role` فقط. دالة تطبيع الهاتف الداخلية `SECURITY INVOKER` والتنفيذ لـ`service_role` فقط.
+
+**تفسير النتيجة:** لم يثبت هذا الفحص وجود صلاحية مباشرة لـ`anon` أو`authenticated` على الجداول الخاصة وفق ACL الحالية. مع ذلك يظل تحذير `rls_disabled` الحرج قائمًا؛ عدم وجود GRANT مباشر لا يعادل تفعيل RLS ولا يبرر تجاهل التحذير. لم تُنفذ أي أوامر DDL أو تغييرات على السياسات أو البيانات. تفعيل RLS ما زال ينتظر قرار مالك المشروع.
+
+- Security Advisor: تحذير `auth_leaked_password_protection` ما زال WARN.
+- Health Advisor: بلا ملاحظات.
+- Performance Advisor: 12 ملاحظة `unused_index` من نوع INFO؛ لم تُحذف فهارس لأن قاعدة البيانات لا تزال بلا بيانات تشغيل كافية للحكم على استخدامها.
+
+
+## 10.13 موافقة المالك وإعداد معالجة RLS — 2026-11-07
+
+- وافق المالك صراحة على تفعيل RLS على الجداول الثلاثة: `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits`.
+- التغيير المحدد لا ينشئ أي سياسة وصول جديدة؛ تبقى الجداول بلا سياسات، فلا يحصل `anon` أو`authenticated` على وصول عبر RLS.
+- أُعدت ترحيلة `supabase/migrations/20261107010000_enable_private_schema_rls.sql` لتفعيل RLS وإعادة سحب أي صلاحيات موروثة/مباشرة من `PUBLIC` و`anon` و`authenticated`. لا تسحب الترحيلة منح `service_role` المحددة سابقًا، ولا تفعّل `FORCE ROW LEVEL SECURITY`.
+- أضيفت اختبارات PostgreSQL للتحقق من حالة RLS وغياب السياسات وغياب CRUD للعميل والحفاظ على صلاحيات `service_role` وBYPASSRLS.
+- **الحالة قبل التطبيق:** الترحيلة والاختبارات أُعدتا على فرع العمل؛ ينتظر التطبيق نجاح CI. بعد ذلك يجب التحقق على مشروع Supabase من Trigger تخصيص الرقم وRPC البحث، ثم إعادة تشغيل Advisors.
+
+
+## 10.14 تنفيذ RLS والتحقق بعد التطبيق — 2026-11-07
+
+**القرار والتطبيق**
+- وافق المالك صراحة على تفعيل RLS للجداول الخاصة الثلاثة دون سياسات عميل.
+- طُبقت ترحيلة `enable_private_schema_rls` على المشروع `kxdncnswbwktbiphptbr`، وسُجلت بإصدار migration `20261106230704`.
+- الجداول `subscriber_number_registry` و`portal_rate_limit_secret` و`portal_rate_limits` أصبحت جميعها `relrowsecurity = true` و`relforcerowsecurity = false`.
+- لا توجد سياسات على هذه الجداول، وأعيد تأكيد سحب جميع صلاحيات الجدول من `PUBLIC` و`anon` و`authenticated`. لا يملك `anon` أو`authenticated` أي امتياز CRUD مباشر.
+- لم تتغير منح `service_role`: SELECT على `portal_rate_limit_secret` وCRUD على `portal_rate_limits`، ولا وصول مباشر إلى `subscriber_number_registry`. يظل `service_role` ذا `BYPASSRLS`. Trigger التخصيص يبقى بدالة `SECURITY DEFINER` يملكها `postgres` مع `search_path = ''`.
+
+**الاختبار الحي**
+- اجتازت معاملة اختبار اصطناعية إنشاء مؤسسة وغطاس ومشترك، وتخصيص رقم سداسي وحجزه.
+- عبر `service_role`: نجح تطابق رقم المشترك والهاتف الصحيح؛ رُفض الهاتف الخطأ؛ نجح التطبيع للأرقام العربية؛ وعمل rate limiting.
+- انتهى الاختبار بـ`ROLLBACK`. تحققنا بعده من أن أعداد المؤسسات والمضخات والمشتركين وسجل الأرقام المحجوزة وسجلات rate-limit الاختبارية كلها صفر.
+- هذا تحقق وظيفي مباشر للـTrigger وRPC وrate limiting بعد تفعيل RLS، وليس اختبار HTTP browser-to-Edge Function.
+
+**Advisors**
+- لم يعد Security Advisor يعرض `rls_disabled`. يعرض ثلاث ملاحظات INFO `rls_enabled_no_policy`؛ هذه متوقعة ومقصودة لأن الجداول خاصة ولا يجب إتاحة سياسات عميل لها.
+- بقي `auth_leaked_password_protection` بمستوى WARN. حالة مؤسسة Supabase على خطة Free، وتحتاج معالجة هذا التحذير إلى قرار ترقية/خطة منفصل.
+- Performance Advisor: 12 ملاحظة INFO من نوع `unused_index`؛ Health Advisor بلا ملاحظات.
+
+**Git وCI**
+- على commit التصحيح `f7a6efd63c39de7fa56ba3f92c84f5c7380f6043`: Supabase tenant isolation PR #42309581706، Quality #42309581790، Web console #42309581865، Secret history PR #42309581738 — جميعها success. Push RLS #42309575765 وSecret history #42309575778 — success.
+- بقي PR #2 مفتوحًا كمسودة وغير مدمج؛ لم يتغير `main` ولم يحدث نشر إنتاجي.
+
+**الحكم:** بوابة RLS للجداول الخاصة مكتملة بالاختبار. ما زال الإطلاق العام ممنوعًا حتى إغلاق تحذير كلمات المرور المسرّبة وبقية اختبارات HTTP/Auth والنسخ الاحتياطي المشار إليها في خطة التنفيذ.
+
+
+## 10.15 اختبار الأدوار وعزل المستأجرين وHTTP — 2026-11-07
+
+**إثبات RLS الحي**
+- اختُبرت قاعدة Supabase الأساسية باستخدام هويات اصطناعية داخل معاملة تنتهي بـ`ROLLBACK`، مع مؤسستين مستقلتين وحسابات manager/operator/supervisor/platform_admin.
+- مدير المؤسسة A يرى المؤسسة A وكل مضخاتها ومشتركيها وتكليفاتها فقط؛ ومحاولة تعديل مضخة B لا تؤثر في أي صف.
+- المشغّل والمشرف يريان فقط المضخة المعيّنة لكل منهما ومشتركيها، ولا يملكان صلاحيات التعديل التشغيلية المختبرة.
+- مدير المؤسسة B يرى بيانات B فقط، والمشغّل B يرى نطاق تكليفه فقط.
+- مدير المنصة لا يحصل على وصول مباشر إلى جداول المستأجرين عبر دور `authenticated` في Data API؛ عمليات المنصة تمر عبر المسار الخادمي.
+- تم التحقق من حاجز `must_change_password` ومن حاجز `session_invalid_before`؛ كلاهما أزال نطاق المؤسسة من الرمز القديم/الحساب الذي لم ينه تغيير كلمة المرور.
+- بعد `ROLLBACK` كانت أعداد صفوف بيانات الاختبار في `auth.users` و`profiles` و`organizations` و`pumps` و`pump_assignments` و`subscribers` وregistry وrate-limit وaudit-log تساوي صفرًا.
+
+**حدود HTTP**
+- اختبارات HTTP المباشرة لوظائف Supabase أثبتت رفض JWT المفقود وغير الصالح في `manage-accounts` (401)، وسلوك CORS و405/415/400 والمدخل غير المكتمل في `subscriber-portal`.
+- نُفذ طلب حي واحد منسق إلى بوابة المشترك ووصل إلى RPC وأعاد `found:false`؛ ثم أزيلت خانات rate-limit التي أنشأها، وتأكد الصفر. سير CI الحالي لا ينفذ طلبًا صالحًا يكتب rate-limit حتى لا يراكم بيانات اختبار.
+- معاينة Vercel: `/login` و`/portal` = 200؛ المساران الإداريان يعيدان إلى تسجيل الدخول دون جلسة؛ و`GET /api/admin/accounts` = 405.
+- لم يُختبر POST إلى Route Handler بجلسة مستخدم حقيقية، ولم يُنفذ إنشاء مستخدم manager مؤقت واختبار قائمة الحسابات/تعديل كلمة مرور من خلال JWT صالح. اختبارات قاعدة البيانات المعاملاتية لا تثبت سلامة تسجيل الدخول HTTP بالكامل؛ تبقى هذه نقطة قبول مفتوحة.
+
+**المراجعة الحالية**
+- Security Advisor: لا يوجد `rls_disabled`. توجد ثلاث ملاحظات INFO `rls_enabled_no_policy` على جداول المخطط الخاص، وهي متوقعة لأن وصول العميل محظور ولا نريد سياسات لها.
+- ما زال WARN `auth_leaked_password_protection` قائمًا، ويلزم تفعيل الحماية من إعدادات Auth مع خطة تدعمها قبل الإنتاج.
+- Health Advisor بلا ملاحظات. لم تُحذف فهارس unused_index بناءً على قاعدة قليلة البيانات.
+
+**الإطلاق**
+- معاينة Vercel على commit `af94554eb946b38870e91298a1a046e1cb11a162` READY: `dpl_9fwZ5CA9VoX7KNyNjiwXQ51tUU9a`، Preview وليست Production.
+- CI على هذا HEAD: Web console #42313065317، Quality #42313065259، RLS #42313065258، Secret history #42313065270، وPush RLS #42313059419 وSecret history #42313059440 — success.
+- PR #2 لا يزال Draft وغير مدمج؛ لا تغيير على `main` ولا Production deploy.
+
+
+## 10.16 إصلاح امتياز قراءة ملف المستخدم — 2026-11-07
+
+- **السبب الجذري:** كان جدول `public.profiles` محميًا بسياسة RLS الصحيحة، لكن دور `authenticated` لا يمتلك امتياز SQL `SELECT`. لذلك كان استعلام تسجيل الدخول يفشل ويُترجم إلى رسالة «الحساب غير مخصص للوحة الويب أو لا يملك نطاق صلاحيات صالحًا».
+- **الإصلاح:** ترحيلة `20261107020000_grant_profile_select_to_authenticated.sql` تمنح `SELECT` فقط إلى `authenticated`. لا تمنح أي امتياز كتابة ولا تمنح `anon` قراءة.
+- **التحقق:** ACL أكد SELECT=true وUPDATE/INSERT/DELETE=false لدور authenticated. اختبار الدور والهوية الحقيقية لمدير المنصة ضمن SQL أكد رؤية صفه الشخصي مع role=platform_admin وorganization_id=NULL.
+- **اختبار قبول المستخدم:** أكد المستخدم نجاح تسجيل الدخول الفعلي بعد تطبيق الترحيلة.
+- **الحماية المستمرة:** أضيفت assertions إلى مجموعة PostgreSQL RLS للتحقق من الامتيازات نفسها في CI.
+- CI على HEAD `49365180df5bd00a24d86a35e133bdb04e1a3290`: Web Console وQuality وPostgreSQL RLS وSecret history جميعها success؛ Push RLS وPush Secret history كذلك success.
+- Vercel Preview READY فقط. لا دمج ولا Production.
+- لم يتغير مبدأ أن مدير المنصة يدير المؤسسات عبر واجهة الويب وEdge Function، ولا يحصل على وصول Data API مباشر إلى بيانات المستأجرين.
+
+
+## 10.17 فرض إبطال الجلسات القديمة داخل Edge Function — 2026-11-07
+
+- **الملاحظة الأمنية:** كان مسار إعادة التعيين يحدّث `profiles.session_invalid_before`، لكن `manage-accounts` لم يكن يتحقق من claim `iat` في JWT الوارد. ولأن الدالة تنفذ باستعمال `service_role`، لا تكفي قيود RLS وحدها لمنع الرمز القديم من الوصول إلى عمليات الحسابات.
+- **المعالجة:** تقرأ الدالة `session_invalid_before` مع الملف الشخصي، وتستخرج وقت إصدار JWT من Bearer token. ترفض الدالة الرمز برسالة 401 إذا كان `iat` مفقودًا/غير صالح أو صدر قبل الحد المخزن. لا تتغير صلاحية تغيير كلمة المرور المؤقتة: يجب أن يسجل المستخدم الدخول بكلمة المرور الجديدة المؤقتة للحصول على رمز حديث، ثم يغيّرها.
+- **الاختبارات:** أضيفت اختبارات Deno لوظيفة استخراج `iat`، ونجحت ضمن Quality CI على HEAD `2c5620324fcaff02306c7193e0df785abaa0109b`. كما اجتازت Web Console وPostgreSQL RLS وSecret History جميعها على SHA نفسه.
+- **النشر:** Edge Function `manage-accounts` v11 نشطة مع JWT verification.
+- **حدود التحقق:** لم يُنفذ بعد اختبار جلسة Auth حقيقية لدور platform_admin/manager وإعادة تعيين كلمة مرور يتبعها رفض JWT قديم عبر HTTP. وافق المستخدم على هويات اختبار مؤقتة، لكن آلية إنشاء Auth مؤقتة لم تكن متاحة ضمن صلاحيات التنفيذ؛ لم ننشئ بيانات اختبار ولم نغيّر المستخدم الأساسي. بقي Auth users=1 وprofiles=1، وامتداد HTTP المؤقت أزيل بعد فحص الشبكة.
+- Security Advisor ما زال يعرض WARN حماية كلمات المرور المسرّبة، إضافة إلى ثلاث INFO مقصودة لعدم وجود سياسات عميل على جداول المخطط الخاص.
+- PR #2 ما زال Draft وغير مدمج، وVercel Preview READY فقط؛ لا Production ولا تغيير على main.
