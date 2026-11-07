@@ -1041,3 +1041,17 @@
 - Vercel Preview deployment `dpl_E2dKALGN7UDAVTx2U34GJriMsgCs` أصبح READY؛ /login يعيد 200، وGET /api/admin/accounts يعيد 405، والوصول غير المصادق إلى /platform يعيد المستخدم إلى login. لم يُختبر POST إداري مصادق في هذه الجولة.
 - PR #2 ما زال Draft وغير مدمج؛ لا تغيير على main ولا Production deployment.
 - المتبقي: authenticated POST وعمليات إدارة الحسابات عبر JWT حقيقي لدور manager/platform_admin، تفعيل leaked-password protection قبل الإطلاق العام، وإكمال مراجعة إعدادات النسخ الاحتياطي.
+
+
+## 2026-11-07 — فرض حاجز الجلسة داخل manage-accounts
+
+- كشفت مراجعة إعادة تعيين كلمة المرور أن Edge Function كانت تضبط `session_invalid_before` في الملف الشخصي، لكنها لم تكن تتحقق من claim `iat` للرمز الوارد قبل تنفيذ العمليات بصلاحية `service_role`. سياسات RLS وحدها لا تحمي الاستدعاءات التي تنفذها الدالة بصلاحية الخادم.
+- أضيف الملف `supabase/functions/manage-accounts/session-token.ts` لاستخراج وقت إصدار JWT من Bearer token، وأصبحت الدالة تقرأ `session_invalid_before` وترفض الرمز المفقود `iat` أو الأقدم من حد الإبطال برد 401 قبل أي عملية إدارية.
+- أضيفت اختبارات Deno للرمز الصحيح، وغياب Bearer، وغياب/عدم صحة `iat`، والرمز المشوه. أُدرج الاختبار في Quality CI بامتداد `.deno.ts` حتى لا يلتقطه مشغّل Node لاختبارات التطبيق.
+- نجحت CI على HEAD `2c5620324fcaff02306c7193e0df785abaa0109b`: Quality #42316019213، Web Console #42316019124، PostgreSQL RLS #42316019175، وSecret History #42316019238. كما نجح Push RLS #42316013093 وPush Secret History #42316013104.
+- نُشرت `manage-accounts` على مشروع Supabase الأساسي بالإصدار **11** مع `verify_jwt=true`.
+- عاينة Vercel الأحدث `dpl_YdMmCqigDoZjH2YUn6RfPZzw4Tor` أصبحت READY، وهي Preview فقط (`target=null`).
+- وافق المستخدم على اختبار هويات Auth مؤقتة وتنظيفها. لكن مسارات التنفيذ المتاحة رفضت إنشاء حسابات اختبار عبر Admin API أو تعديل `auth.users` مباشرة؛ لذلك **لم تُنشأ أي هوية/مؤسسة اختبارية** ولم يجر اختبار JWT حقيقي end-to-end. بقيت أعداد `auth.users` و`profiles` كما هي: حساب واحد وملف واحد، ولم توجد مؤسسة أو بيانات اختبار. أُزيل امتداد HTTP المؤقت المستخدم للتحقق من إمكانية الاتصال، وتأكد غيابه بعد التنظيف.
+- لا ندّعي اختبار POST مصادق إلى `/api/admin/accounts` أو دورة إنشاء/إعادة تعيين الحسابات عبر JWT حقيقي حتى الآن. يمكن تنفيذها من جلسة مدير المنصة المصرّح بها بعد إنشاء حساب اختبار من واجهة الإدارة.
+- Security Advisor: ثلاث ملاحظات INFO `rls_enabled_no_policy` مقصودة للجداول الخاصة الثلاثة، وWARN `auth_leaked_password_protection` ما زال قائمًا.
+- PR #2 يبقى Draft وغير مدمج؛ لا تغيير على `main` ولا نشر Production.
