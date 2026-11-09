@@ -39,12 +39,60 @@ export type DailyScheduleEntry = {
   weekday: number;
   sort_order: number;
   planned_minutes: number;
+  entry_type?: "weekly" | "weekly_reassigned";
+  schedule_entry_id?: string | null;
+  weekly_entitlement_allocation_id?: string | null;
+  reassigned_from_date?: string | null;
   subscribers: {
     id: string;
     full_name: string;
     subscriber_number: number;
     branch_id: string | null;
   };
+};
+
+export type WeeklyEntitlementAllocationForDay = {
+  id: string;
+  subscriber_id: string;
+  allocation_date: string;
+  source_schedule_entry_id: string | null;
+  original_minutes: number;
+  allocated_minutes: number;
+  consumed_minutes: number;
+  available_minutes: number;
+  subscribers: {
+    id: string;
+    full_name: string;
+    subscriber_number: number;
+    branch_id: string | null;
+  };
+};
+
+export type WeeklyEntitlementTransferOption = {
+  allocation_id: string;
+  subscriber_id: string;
+  subscriber_name: string;
+  source_date: string;
+  original_minutes: number;
+  allocated_minutes: number;
+  consumed_minutes: number;
+  available_minutes: number;
+  target_allocated_minutes: number;
+  weekly_quota_minutes: number;
+  weekly_consumed_minutes: number;
+  weekly_remaining_minutes: number;
+  cycle_start: string;
+  cycle_end: string;
+};
+
+export type WeeklyQueueOperationLink = {
+  id: string;
+  subscriber_id: string;
+  operation_id: string | null;
+  weekly_entitlement_allocation_id: string | null;
+  source_type: "weekly" | "weekly_reassigned";
+  planned_minutes: number;
+  status: "queued" | "running" | "completed" | "delayed" | "cancelled";
 };
 
 export type DailyQueueItem = {
@@ -99,7 +147,7 @@ export type DailyWorkReportDetails = {
   }[];
   items: {
     id: string;
-    entry_type: "weekly" | "additional_registered" | "additional_guest";
+    entry_type: "weekly" | "weekly_reassigned" | "additional_registered" | "additional_guest";
     sort_order: number;
     subscriber_name_snapshot: string | null;
     external_beneficiary_name: string | null;
@@ -222,7 +270,7 @@ export const pumpOperationsRepository = {
 
     const itemsResult = await supabase
       .from("queue_items")
-      .select("id,daily_queue_id,source_type,schedule_entry_id,subscriber_id,subscriber_name_snapshot,branch_id,branch_name_snapshot,planned_minutes,sort_order,status,operation_id,started_at,completed_at")
+      .select("id,daily_queue_id,source_type,schedule_entry_id,subscriber_id,subscriber_name_snapshot,branch_id,branch_name_snapshot,planned_minutes,sort_order,status,operation_id,started_at,completed_at,weekly_entitlement_allocation_id")
       .eq("organization_id", organizationId)
       .eq("daily_queue_id", queueResult.data.id)
       .order("sort_order", { ascending: true })
@@ -301,6 +349,49 @@ export const pumpOperationsRepository = {
       .lte("weekly_schedules.effective_from", workDate)
       .or(`effective_to.is.null,effective_to.gte.${workDate}`, { referencedTable: "weekly_schedules" })
       .order("sort_order", { ascending: true });
+  },
+
+  listWeeklyEntitlementAllocationsForDay(organizationId: string, pumpId: string, workDate: string) {
+    return supabase
+      .from("weekly_entitlement_allocations")
+      .select("id,subscriber_id,allocation_date,source_schedule_entry_id,original_minutes,allocated_minutes,consumed_minutes,available_minutes,subscribers!inner(id,full_name,subscriber_number,branch_id)")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .eq("allocation_date", workDate)
+      .gt("allocated_minutes", 0)
+      .order("subscriber_id", { ascending: true });
+  },
+
+  listWeeklyQueueItemsForReport(organizationId: string, pumpId: string, workDate: string) {
+    return supabase
+      .from("queue_items")
+      .select("id,subscriber_id,operation_id,weekly_entitlement_allocation_id,source_type,planned_minutes,status,daily_queues!inner(queue_date)")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .eq("daily_queues.queue_date", workDate)
+      .in("source_type", ["weekly", "weekly_reassigned"])
+      .order("sort_order", { ascending: true });
+  },
+
+  getWeeklyEntitlementTransferOptions(pumpId: string, targetDate: string) {
+    return supabase.rpc("get_weekly_entitlement_transfer_options", {
+      p_pump_id: pumpId,
+      p_target_date: targetDate,
+    });
+  },
+
+  transferWeeklyEntitlementMinutes(args: {
+    sourceAllocationId: string;
+    targetDate: string;
+    minutes: number;
+    reason: string;
+  }) {
+    return supabase.rpc("transfer_weekly_entitlement_minutes", {
+      p_source_allocation_id: args.sourceAllocationId,
+      p_target_date: args.targetDate,
+      p_minutes: args.minutes,
+      p_reason: args.reason,
+    });
   },
 
   getScheduleWeekStartsOn(organizationId: string, pumpId: string, workDate: string) {
