@@ -173,6 +173,7 @@ function OperationsScreenContent() {
   const [surveyManualMinutes, setSurveyManualMinutes] = useState<Record<string, string>>({});
   const [surveyExtraMinutes, setSurveyExtraMinutes] = useState<Record<string, string>>({});
   const autoAdvanceInFlight = useRef<string | null>(null);
+  const handoverStartTimer = useRef<{ key: string; timer: ReturnType<typeof setTimeout> } | null>(null);
   const minuteAlertPlayedForOperation = useRef<string | null>(null);
   const [alertSettings, setAlertSettings] = useState<AlertSettings | null>(null);
   const [pauseReason, setPauseReason] = useState("");
@@ -473,14 +474,19 @@ function OperationsScreenContent() {
 
     const alertKey = `handover:${token}`;
     const startTimer = setTimeout(() => {
+      if (handoverStartTimer.current?.key === alertKey) handoverStartTimer.current = null;
       void playAlertSound(preference.soundUri, window.durationMs, alertKey);
       if (preference.vibrate) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
       }
     }, window.delayMs);
+    handoverStartTimer.current = { key: alertKey, timer: startTimer };
 
     return () => {
-      clearTimeout(startTimer);
+      if (handoverStartTimer.current?.key === alertKey) {
+        clearTimeout(handoverStartTimer.current.timer);
+        handoverStartTimer.current = null;
+      }
       stopAlertSound(alertKey);
     };
   }, [
@@ -531,6 +537,16 @@ function OperationsScreenContent() {
     setBusy(false);
   };
 
+  const stopHandoverAlert = (token: string | null | undefined) => {
+    if (!token) return;
+    const key = `handover:${token}`;
+    if (handoverStartTimer.current?.key === key) {
+      clearTimeout(handoverStartTimer.current.timer);
+      handoverStartTimer.current = null;
+    }
+    stopAlertSound(key);
+  };
+
   const startQueueItem = async (item: DailyQueueItem) => {
     if (!dailyQueue || busy || activeOperation) return;
     if (!selectedPowerSourceId) {
@@ -542,9 +558,7 @@ function OperationsScreenContent() {
       setError("يمكن بدء أول عنصر منتظر فقط. أعد ترتيب الطابور أولًا عند الحاجة.");
       return;
     }
-    if (dailyQueue.auto_advance_token) {
-      stopAlertSound(`handover:${dailyQueue.auto_advance_token}`);
-    }
+    stopHandoverAlert(dailyQueue.auto_advance_token);
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -640,7 +654,7 @@ function OperationsScreenContent() {
 
   const cancelAutoAdvance = async () => {
     if (!dailyQueue?.auto_advance_token || busy) return;
-    stopAlertSound(`handover:${dailyQueue.auto_advance_token}`);
+    stopHandoverAlert(dailyQueue.auto_advance_token);
     setBusy(true);
     setError(null);
     const { error: cancelError } = await pumpOperationsRepository.cancelDailyQueueAutoAdvance(
