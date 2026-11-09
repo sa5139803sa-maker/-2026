@@ -2413,6 +2413,109 @@ END;
 $multi_operator_daily_reports_manager$;
 RESET ROLE;
 
+-- A shared pump-energy draft belongs to the pump/day, not to a single
+-- operator report. Another operator may reuse or submit it unchanged, but
+-- cannot silently overwrite the first operator's physical energy totals.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $shared_pump_energy_draft_creator$
+DECLARE
+  v_source_id uuid;
+  v_report public.daily_work_reports%ROWTYPE;
+BEGIN
+  SELECT id INTO v_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+    AND name = 'طاقة شمسية – مزود 1';
+
+  v_report := public.save_daily_work_report(
+    '20000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000002',
+    '2026-01-21 07:00:00+02'::timestamptz,
+    '2026-01-21 08:00:00+02'::timestamptz,
+    0,
+    jsonb_build_array(jsonb_build_object('power_source_id', v_source_id, 'minutes', 60)),
+    '[]'::jsonb,
+    false,
+    NULL
+  );
+
+  IF v_report.created_by <> auth.uid()
+     OR v_report.operator_id <> auth.uid()
+     OR v_report.status <> 'draft' THEN
+    RAISE EXCEPTION 'First operator did not create their own report and shared pump-energy draft';
+  END IF;
+END;
+$shared_pump_energy_draft_creator$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000003', true);
+DO $shared_pump_energy_draft_second_operator$
+DECLARE
+  v_source_id uuid;
+  v_report public.daily_work_reports%ROWTYPE;
+  v_rejected boolean := false;
+BEGIN
+  SELECT id INTO v_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+    AND name = 'طاقة شمسية – مزود 1';
+
+  BEGIN
+    PERFORM public.save_daily_work_report(
+      '20000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000003',
+      '2026-01-21 07:00:00+02'::timestamptz,
+      '2026-01-21 08:00:00+02'::timestamptz,
+      0,
+      jsonb_build_array(jsonb_build_object('power_source_id', v_source_id, 'minutes', 59)),
+      '[]'::jsonb,
+      false,
+      NULL
+    );
+    RAISE EXCEPTION 'A second operator replaced another operator shared energy draft';
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN
+    v_rejected := true;
+  END;
+
+  IF NOT v_rejected OR EXISTS (
+    SELECT 1 FROM public.daily_work_reports
+    WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+      AND work_date = DATE '2026-01-21'
+      AND operator_id = auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'Mismatched shared energy values were not rejected atomically';
+  END IF;
+
+  v_report := public.save_daily_work_report(
+    '20000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000003',
+    '2026-01-21 07:00:00+02'::timestamptz,
+    '2026-01-21 08:00:00+02'::timestamptz,
+    0,
+    jsonb_build_array(jsonb_build_object('power_source_id', v_source_id, 'minutes', 60)),
+    '[]'::jsonb,
+    false,
+    NULL
+  );
+
+  IF v_report.operator_id <> auth.uid()
+     OR v_report.created_by <> auth.uid()
+     OR (SELECT count(*) FROM public.daily_pump_energy_reports
+         WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+           AND work_date = DATE '2026-01-21') <> 1
+     OR (SELECT count(*) FROM public.daily_pump_energy_source_totals totals
+         JOIN public.daily_pump_energy_reports energy
+           ON energy.id = totals.daily_pump_energy_report_id
+         WHERE energy.pump_id = '20000000-0000-4000-8000-000000000001'
+           AND energy.work_date = DATE '2026-01-21') <> 1 THEN
+    RAISE EXCEPTION 'Second operator could not reuse the exact shared draft without duplicating pump-energy totals';
+  END IF;
+END;
+$shared_pump_energy_draft_second_operator$;
+RESET ROLE;
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
 DO $multi_operator_daily_reports_operator_one$
