@@ -50,6 +50,9 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261106190000_add_global_subscriber_number_and_public_lookup.sql
 \ir ../../migrations/20261107010000_enable_private_schema_rls.sql
 \ir ../../migrations/20261107020000_grant_profile_select_to_authenticated.sql
+\ir ../../migrations/20261109065108_allow_multiple_collectors_and_create_pump_operations.sql
+\ir ../../migrations/20261109065908_harden_pump_operations_grants_and_indexes.sql
+\ir ../../migrations/20261109070000_restrict_pump_operation_lifecycle_to_guarded_rpcs.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -641,6 +644,239 @@ BEGIN
 END;
 $supervisor_write$;
 RESET ROLE;
+
+-- A collector may share a pump with other collectors; an employee still
+-- cannot be duplicated for the same pump and role.
+UPDATE public.profiles
+SET role = 'collector'::public.app_role
+WHERE id = '10000000-0000-4000-8000-000000000003';
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
+VALUES (
+  '20000000-0000-4000-8000-000000000002',
+  '10000000-0000-4000-8000-000000000003',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  'collector'
+);
+DO $multiple_collectors$
+DECLARE v_count bigint; v_rejected boolean := false;
+BEGIN
+  SELECT count(*) INTO v_count FROM public.pump_assignments
+  WHERE pump_id = '20000000-0000-4000-8000-000000000002'
+    AND assignment_role = 'collector';
+  IF v_count <> 2 THEN
+    RAISE EXCEPTION 'A pump must allow multiple distinct collectors';
+  END IF;
+
+  BEGIN
+    INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
+    VALUES (
+      '20000000-0000-4000-8000-000000000002',
+      '10000000-0000-4000-8000-000000000003',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      'collector'
+    );
+  EXCEPTION WHEN unique_violation THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'The same collector was assigned twice to one pump';
+  END IF;
+END;
+$multiple_collectors$;
+SELECT test_support.assert_scope('manager A after multiple collectors', 1, 2, 3, 4, 5);
+RESET ROLE;
+
+-- Operation RPC access is scoped to the actor, organization, and pump.
+DO $pump_operation_acl$
+BEGIN
+  IF NOT pg_catalog.has_table_privilege('authenticated', 'public.pump_operations', 'SELECT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.pump_operations', 'INSERT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.pump_operations', 'UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.pump_operations', 'DELETE')
+     OR pg_catalog.has_table_privilege('anon', 'public.pump_operations', 'SELECT') THEN
+    RAISE EXCEPTION 'Pump operation table privileges are not least-privilege';
+  END IF;
+  IF pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'started_at', 'INSERT')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'operator_id', 'UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'started_at', 'UPDATE') THEN
+    RAISE EXCEPTION 'Clients can directly forge operation identity or timestamps';
+  END IF;
+  IF NOT pg_catalog.has_function_privilege('authenticated', 'public.start_pump_operation(uuid,uuid,text,integer)', 'EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated', 'public.pause_pump_operation(uuid)', 'EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated', 'public.resume_pump_operation(uuid)', 'EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated', 'public.complete_pump_operation(uuid)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'public.start_pump_operation(uuid,uuid,text,integer)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'public.pause_pump_operation(uuid)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'public.resume_pump_operation(uuid)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'public.complete_pump_operation(uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Pump operation RPC grants are incorrect';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname IN ('pause_pump_operation', 'resume_pump_operation', 'complete_pump_operation')
+      AND (NOT p.prosecdef OR NOT (p.proconfig @> ARRAY['search_path=""']))
+  ) THEN
+    RAISE EXCEPTION 'Operation lifecycle RPCs must be hardened SECURITY DEFINER functions';
+  END IF;
+END;
+$pump_operation_acl$;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DO $manager_operation_lifecycle$
+DECLARE
+  v_operation public.pump_operations%ROWTYPE;
+  v_rejected boolean := false;
+BEGIN
+  SELECT * INTO v_operation
+  FROM public.start_pump_operation(
+    '20000000-0000-4000-8000-000000000001',
+    '30000000-0000-4000-8000-000000000001',
+    NULL,
+    10
+  );
+  IF v_operation.status <> 'running' OR v_operation.operator_id <> auth.uid() THEN
+    RAISE EXCEPTION 'Manager could not start a pump operation as the authenticated actor';
+  END IF;
+
+  BEGIN
+    PERFORM public.start_pump_operation(
+      '20000000-0000-4000-8000-000000000001',
+      '30000000-0000-4000-8000-000000000001',
+      NULL,
+      10
+    );
+  EXCEPTION WHEN unique_violation THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'A second active operation was allowed on one pump';
+  END IF;
+
+  v_operation := public.pause_pump_operation(v_operation.id);
+  IF v_operation.status <> 'paused' OR v_operation.paused_at IS NULL THEN
+    RAISE EXCEPTION 'Manager pause transition did not persist';
+  END IF;
+
+  v_operation := public.resume_pump_operation(v_operation.id);
+  IF v_operation.status <> 'running' OR v_operation.paused_at IS NOT NULL THEN
+    RAISE EXCEPTION 'Manager resume transition did not persist';
+  END IF;
+
+  v_operation := public.complete_pump_operation(v_operation.id);
+  IF v_operation.status <> 'completed'
+     OR v_operation.ended_at IS NULL
+     OR v_operation.actual_seconds IS NULL
+     OR v_operation.actual_seconds < 0 THEN
+    RAISE EXCEPTION 'Manager completion did not persist the final duration';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    UPDATE public.pump_operations SET status = 'running' WHERE id = v_operation.id;
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Authenticated manager directly modified an operation outside the RPC';
+  END IF;
+END;
+$manager_operation_lifecycle$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $operator_operation_scope$
+DECLARE
+  v_operation public.pump_operations%ROWTYPE;
+  v_rejected boolean := false;
+BEGIN
+  IF (SELECT count(*) FROM public.pump_operations
+      WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 1 THEN
+    RAISE EXCEPTION 'Assigned operator cannot read the pump operation history';
+  END IF;
+
+  IF (SELECT count(*) FROM public.pump_operations
+      WHERE pump_id = '20000000-0000-4000-8000-000000000002') <> 0 THEN
+    RAISE EXCEPTION 'Operator read operations for an unassigned pump';
+  END IF;
+
+  BEGIN
+    PERFORM public.start_pump_operation(
+      '20000000-0000-4000-8000-000000000002', NULL, 'حالة غير مصرح بها', 5
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Operator started a pump outside their assignment';
+  END IF;
+
+  SELECT * INTO v_operation
+  FROM public.start_pump_operation(
+    '20000000-0000-4000-8000-000000000001',
+    NULL,
+    'حالة طارئة للاختبار',
+    5
+  );
+  IF v_operation.operator_id <> auth.uid() OR v_operation.subscriber_id IS NOT NULL THEN
+    RAISE EXCEPTION 'Assigned operator could not start an emergency operation';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.start_pump_operation(
+      '20000000-0000-4000-8000-000000000001', NULL, 'تعبئة مكررة', 5
+    );
+  EXCEPTION WHEN unique_violation THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'A second active operation was allowed on one pump';
+  END IF;
+
+  v_operation := public.pause_pump_operation(v_operation.id);
+  v_operation := public.resume_pump_operation(v_operation.id);
+  v_operation := public.complete_pump_operation(v_operation.id);
+  IF v_operation.status <> 'completed' OR v_operation.actual_seconds IS NULL THEN
+    RAISE EXCEPTION 'Assigned operator could not complete their operation';
+  END IF;
+END;
+$operator_operation_scope$;
+RESET ROLE;
+
+-- Collectors and supervisors can neither view nor control operation records.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000004', true);
+DO $collector_operation_read$
+BEGIN
+  IF (SELECT count(*) FROM public.pump_operations
+      WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 0 THEN
+    RAISE EXCEPTION 'Collector unexpectedly read operation data for a different role scope';
+  END IF;
+END;
+$collector_operation_read$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
+DO $supervisor_operation_read$
+BEGIN
+  IF (SELECT count(*) FROM public.pump_operations
+      WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 0 THEN
+    RAISE EXCEPTION 'Supervisor unexpectedly read operator-only operation records';
+  END IF;
+END;
+$supervisor_operation_read$;
+RESET ROLE;
+
+-- Operation rows are removed before the test deletes pumps with RESTRICT FKs.
+DELETE FROM public.pump_operations;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
