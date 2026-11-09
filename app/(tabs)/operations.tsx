@@ -96,8 +96,13 @@ function OperationsScreenContent() {
     [pumps, selectedPumpId],
   );
   const activeOperation = useMemo(
-    () => operations.find((operation) => operation.status === "running" || operation.status === "paused") ?? null,
-    [operations],
+    () => dataPumpId === selectedPumpId && selectedPumpId
+      ? operations.find((operation) =>
+          operation.pump_id === selectedPumpId &&
+          (operation.status === "running" || operation.status === "paused"),
+        ) ?? null
+      : null,
+    [dataPumpId, operations, selectedPumpId],
   );
   const completedSubscriberIds = useMemo(
     () => new Set(operations.filter((operation) => operation.status === "completed" && operation.subscriber_id)
@@ -150,6 +155,8 @@ function OperationsScreenContent() {
     }
     const requestId = ++dataRequestSequence.current;
     setDataPumpId(null);
+    setSubscribers([]);
+    setOperations([]);
     setRefreshing(true);
     setError(null);
     try {
