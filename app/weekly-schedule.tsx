@@ -176,7 +176,14 @@ function WeeklyScheduleScreenContent() {
     const memberMap = new Map(members.map((member) => [member.subscriber_id, member]));
     return pumpSubscribers.map((subscriber) => {
       const member = memberMap.get(subscriber.id);
-      if (!member) return emptyDraft(subscriber);
+      if (!member) {
+        return {
+          ...emptyDraft(subscriber),
+          included: false,
+          weeklyQuota: "",
+          allocations: [],
+        };
+      }
       return {
         id: subscriber.id,
         fullName: subscriber.full_name,
