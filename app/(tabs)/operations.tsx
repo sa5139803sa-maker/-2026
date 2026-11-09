@@ -1390,9 +1390,13 @@ function OperationsScreenContent() {
                       <View style={styles.autoAdvanceInfo}>
                         <Text style={styles.autoAdvanceTitle}>الانتقال التلقائي إلى الدور التالي</Text>
                         <Text style={styles.autoAdvanceCountdown}>
-                          {autoAdvanceRemainingSeconds === null || autoAdvanceRemainingSeconds <= 0
-                            ? "جارٍ بدء الدور التالي..."
-                            : `سيبدأ خلال ${autoAdvanceRemainingSeconds} ثوانٍ`}
+                          {autoAdvanceRemainingSeconds === null
+                            ? "بانتظار مزامنة موعد الانتقال..."
+                            : autoAdvanceRemainingSeconds <= 0
+                              ? canControlAutoAdvance
+                                ? "جارٍ بدء الدور التالي..."
+                                : "حان موعد الدور التالي، بانتظار المشغّل المسؤول."
+                              : `سيبدأ خلال ${autoAdvanceRemainingSeconds} ثوانٍ`}
                         </Text>
                       </View>
                       {canControlAutoAdvance && (
