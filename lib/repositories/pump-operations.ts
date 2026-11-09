@@ -47,6 +47,40 @@ export type DailyScheduleEntry = {
   };
 };
 
+export type DailyQueueItem = {
+  id: string;
+  daily_queue_id: string;
+  source_type: "weekly" | "weekly_reassigned" | "additional_registered" | "additional_guest" | "emergency";
+  schedule_entry_id: string | null;
+  subscriber_id: string | null;
+  subscriber_name_snapshot: string;
+  branch_id: string | null;
+  branch_name_snapshot: string | null;
+  planned_minutes: number;
+  sort_order: number;
+  status: "queued" | "running" | "completed" | "delayed" | "cancelled";
+  operation_id: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export type DailyQueue = {
+  id: string;
+  organization_id: string;
+  pump_id: string;
+  weekly_schedule_id: string;
+  queue_date: string;
+  week_starts_on: number;
+  weekly_cycle_start: string;
+  status: "ready" | "running" | "closed";
+  queue_version: number;
+  auto_advance_queue_item_id: string | null;
+  auto_advance_at: string | null;
+  auto_advance_token: string | null;
+  auto_advance_cancelled_at: string | null;
+  items: DailyQueueItem[];
+};
+
 export type DailyWorkReportDetails = {
   id: string;
   work_date: string;
@@ -165,6 +199,78 @@ export const pumpOperationsRepository = {
       .from("pump_power_sources")
       .update({ is_active: false })
       .eq("id", sourceId);
+  },
+
+  async loadOrCreateDailyQueue(organizationId: string, pumpId: string, queueDate: string) {
+    const generated = await supabase.rpc("generate_daily_queue", {
+      p_pump_id: pumpId,
+      p_queue_date: queueDate,
+    });
+    if (generated.error) return { data: null, error: generated.error };
+
+    const queueResult = await supabase
+      .from("daily_queues")
+      .select("id,organization_id,pump_id,weekly_schedule_id,queue_date,week_starts_on,weekly_cycle_start,status,queue_version,auto_advance_queue_item_id,auto_advance_at,auto_advance_token,auto_advance_cancelled_at")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .eq("queue_date", queueDate)
+      .maybeSingle();
+
+    if (queueResult.error || !queueResult.data) {
+      return { data: null, error: queueResult.error };
+    }
+
+    const itemsResult = await supabase
+      .from("queue_items")
+      .select("id,daily_queue_id,source_type,schedule_entry_id,subscriber_id,subscriber_name_snapshot,branch_id,branch_name_snapshot,planned_minutes,sort_order,status,operation_id,started_at,completed_at")
+      .eq("organization_id", organizationId)
+      .eq("daily_queue_id", queueResult.data.id)
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true });
+
+    if (itemsResult.error) return { data: null, error: itemsResult.error };
+
+    return {
+      data: {
+        ...queueResult.data,
+        items: (itemsResult.data ?? []) as DailyQueueItem[],
+      } satisfies DailyQueue,
+      error: null,
+    };
+  },
+
+  reorderDailyQueue(queueId: string, expectedVersion: number, orderedItemIds: string[], overrideReason?: string | null) {
+    return supabase.rpc("reorder_daily_queue", {
+      p_queue_id: queueId,
+      p_expected_version: expectedVersion,
+      p_order: orderedItemIds,
+      p_override_reason: overrideReason ?? null,
+    });
+  },
+
+  startDailyQueueItem(queueId: string, itemId: string, powerSourceId: string) {
+    return supabase.rpc("start_daily_queue_item", {
+      p_queue_id: queueId,
+      p_queue_item_id: itemId,
+      p_power_source_id: powerSourceId,
+    });
+  },
+
+  startNextDailyQueueItem(queueId: string, itemId: string, token: string, powerSourceId: string) {
+    return supabase.rpc("start_next_daily_queue_item", {
+      p_queue_id: queueId,
+      p_queue_item_id: itemId,
+      p_auto_advance_token: token,
+      p_power_source_id: powerSourceId,
+    });
+  },
+
+  cancelDailyQueueAutoAdvance(queueId: string, token: string, reason?: string | null) {
+    return supabase.rpc("cancel_daily_queue_auto_advance", {
+      p_queue_id: queueId,
+      p_auto_advance_token: token,
+      p_reason: reason ?? null,
+    });
   },
 
   listDailyScheduleEntries(organizationId: string, pumpId: string, workDate: string) {
