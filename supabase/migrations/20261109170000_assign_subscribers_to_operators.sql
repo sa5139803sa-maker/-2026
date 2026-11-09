@@ -372,7 +372,6 @@ BEGIN
       USING ERRCODE = '55000';
   END IF;
 
-  PERFORM set_config('water_management.allow_subscriber_operator_change', 'on', true);
   PERFORM set_config('water_management.subscriber_operator_reason', v_reason, true);
 
   UPDATE public.subscribers
