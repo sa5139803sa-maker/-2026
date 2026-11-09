@@ -657,16 +657,6 @@ BEGIN
     RAISE EXCEPTION 'Daily queue not found or not accessible' USING ERRCODE = 'P0002';
   END IF;
 
-  IF v_role = 'operator'::public.app_role AND NOT EXISTS (
-    SELECT 1 FROM public.pump_assignments pa
-    WHERE pa.organization_id = v_organization_id
-      AND pa.pump_id = v_queue.pump_id
-      AND pa.user_id = v_user_id
-      AND pa.assignment_role = 'operator'::public.app_role
-  ) THEN
-    RAISE EXCEPTION 'Operator is not assigned to this pump' USING ERRCODE = '42501';
-  END IF;
-
   IF v_queue.status = 'closed' THEN
     RAISE EXCEPTION 'Closed daily queues cannot be reordered' USING ERRCODE = 'P0002';
   END IF;
