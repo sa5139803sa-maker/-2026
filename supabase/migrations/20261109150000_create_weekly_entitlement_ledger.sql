@@ -715,6 +715,56 @@ ALTER TABLE public.daily_work_report_items
   ADD COLUMN weekly_entitlement_allocation_id uuid;
 
 ALTER TABLE public.daily_work_report_items
+  DROP CONSTRAINT daily_work_report_items_type_check;
+
+ALTER TABLE public.daily_work_report_items
+  ADD CONSTRAINT daily_work_report_items_type_check CHECK (
+    (
+      entry_type = 'weekly'
+      AND schedule_entry_id IS NOT NULL
+      AND subscriber_id IS NOT NULL
+      AND external_beneficiary_name IS NULL
+      AND scheduled_minutes > 0
+    )
+    OR (
+      entry_type = 'weekly_reassigned'
+      AND schedule_entry_id IS NULL
+      AND subscriber_id IS NOT NULL
+      AND external_beneficiary_name IS NULL
+      AND scheduled_minutes > 0
+    )
+    OR (
+      entry_type = 'additional_registered'
+      AND schedule_entry_id IS NULL
+      AND subscriber_id IS NOT NULL
+      AND external_beneficiary_name IS NULL
+      AND scheduled_minutes = 0
+    )
+    OR (
+      entry_type = 'additional_guest'
+      AND schedule_entry_id IS NULL
+      AND subscriber_id IS NULL
+      AND char_length(btrim(COALESCE(external_beneficiary_name, ''))) BETWEEN 2 AND 120
+      AND scheduled_minutes = 0
+      AND app_recorded_minutes = 0
+      AND manual_minutes = 0
+    )
+  );
+
+ALTER TABLE public.daily_work_report_items
+  DROP COLUMN fulfillment_status;
+
+ALTER TABLE public.daily_work_report_items
+  ADD COLUMN fulfillment_status text GENERATED ALWAYS AS (
+    CASE
+      WHEN entry_type NOT IN ('weekly', 'weekly_reassigned') THEN 'additional'
+      WHEN app_recorded_minutes + manual_minutes = 0 THEN 'not_done'
+      WHEN app_recorded_minutes + manual_minutes >= scheduled_minutes THEN 'complete'
+      ELSE 'partial'
+    END
+  ) STORED;
+
+ALTER TABLE public.daily_work_report_items
   ADD CONSTRAINT daily_work_report_items_weekly_entitlement_scope_fkey
   FOREIGN KEY (weekly_entitlement_allocation_id, organization_id, pump_id, subscriber_id)
   REFERENCES public.weekly_entitlement_allocations (id, organization_id, pump_id, subscriber_id)
@@ -736,8 +786,9 @@ DECLARE
   v_schedule public.weekly_schedules%ROWTYPE;
   v_cycle_start date;
   v_allocation public.weekly_entitlement_allocations%ROWTYPE;
+  v_app_minutes integer := 0;
 BEGIN
-  IF NEW.entry_type <> 'weekly' THEN
+  IF NEW.entry_type NOT IN ('weekly', 'weekly_reassigned') THEN
     NEW.weekly_entitlement_allocation_id := NULL;
     RETURN NEW;
   END IF;
@@ -753,26 +804,48 @@ BEGIN
       USING ERRCODE = '23503';
   END IF;
 
-  SELECT e.* INTO v_schedule_entry
-  FROM public.schedule_entries e
-  WHERE e.id = NEW.schedule_entry_id
-    AND e.organization_id = NEW.organization_id
-    AND e.pump_id = NEW.pump_id
-    AND e.subscriber_id = NEW.subscriber_id;
+  IF NEW.entry_type = 'weekly' THEN
+    SELECT e.* INTO v_schedule_entry
+    FROM public.schedule_entries e
+    WHERE e.id = NEW.schedule_entry_id
+      AND e.organization_id = NEW.organization_id
+      AND e.pump_id = NEW.pump_id
+      AND e.subscriber_id = NEW.subscriber_id;
 
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Weekly report item does not match its schedule entry'
-      USING ERRCODE = '23503';
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Weekly report item does not match its schedule entry'
+        USING ERRCODE = '23503';
+    END IF;
+
+    SELECT ws.* INTO v_schedule
+    FROM public.weekly_schedules ws
+    WHERE ws.id = v_schedule_entry.weekly_schedule_id
+      AND ws.organization_id = NEW.organization_id
+      AND ws.pump_id = NEW.pump_id
+      AND ws.status IN ('active', 'archived')
+      AND v_report.work_date >= ws.effective_from
+      AND (ws.effective_to IS NULL OR v_report.work_date <= ws.effective_to);
+  ELSE
+    IF NEW.schedule_entry_id IS NOT NULL OR NEW.subscriber_id IS NULL THEN
+      RAISE EXCEPTION 'A reassigned weekly report row requires a subscriber and no template schedule entry'
+        USING ERRCODE = '23514';
+    END IF;
+
+    SELECT ws.* INTO v_schedule
+    FROM public.weekly_schedules ws
+    JOIN public.weekly_schedule_subscribers m
+      ON m.weekly_schedule_id = ws.id
+     AND m.organization_id = ws.organization_id
+     AND m.pump_id = ws.pump_id
+    WHERE ws.organization_id = NEW.organization_id
+      AND ws.pump_id = NEW.pump_id
+      AND ws.status IN ('active', 'archived')
+      AND m.subscriber_id = NEW.subscriber_id
+      AND v_report.work_date >= ws.effective_from
+      AND (ws.effective_to IS NULL OR v_report.work_date <= ws.effective_to)
+    ORDER BY ws.effective_from DESC, ws.created_at DESC
+    LIMIT 1;
   END IF;
-
-  SELECT ws.* INTO v_schedule
-  FROM public.weekly_schedules ws
-  WHERE ws.id = v_schedule_entry.weekly_schedule_id
-    AND ws.organization_id = NEW.organization_id
-    AND ws.pump_id = NEW.pump_id
-    AND ws.status IN ('active', 'archived')
-    AND v_report.work_date >= ws.effective_from
-    AND (ws.effective_to IS NULL OR v_report.work_date <= ws.effective_to);
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Weekly report schedule is not effective on the report date'
@@ -790,14 +863,22 @@ BEGIN
 
   SELECT a.* INTO v_allocation
   FROM public.weekly_entitlement_allocations a
-  WHERE a.subscriber_id = NEW.subscriber_id
+  JOIN public.weekly_entitlement_cycles c
+    ON c.id = a.weekly_entitlement_cycle_id
+  WHERE c.weekly_schedule_id = v_schedule.id
+    AND c.cycle_start = v_cycle_start
+    AND c.subscriber_id = NEW.subscriber_id
     AND a.organization_id = NEW.organization_id
     AND a.pump_id = NEW.pump_id
     AND a.allocation_date = v_report.work_date
-    AND a.source_schedule_entry_id = NEW.schedule_entry_id;
+    AND (
+      (NEW.entry_type = 'weekly' AND a.source_schedule_entry_id = NEW.schedule_entry_id)
+      OR (NEW.entry_type = 'weekly_reassigned' AND a.source_schedule_entry_id IS NULL)
+    )
+  FOR UPDATE OF a;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'No weekly entitlement allocation exists for this report date'
+    RAISE EXCEPTION 'No weekly entitlement allocation exists for this report date and subscriber'
       USING ERRCODE = '23503';
   END IF;
 
@@ -807,7 +888,7 @@ BEGIN
   -- Only operations attached to this weekly allocation are weekly minutes.
   -- Additional registered fills for the same subscriber remain additional.
   SELECT floor(COALESCE(sum(op.actual_seconds), 0) / 60)::integer
-  INTO NEW.app_recorded_minutes
+  INTO v_app_minutes
   FROM public.queue_items qi
   JOIN public.pump_operations op
     ON op.id = qi.operation_id
@@ -816,7 +897,8 @@ BEGIN
   WHERE qi.weekly_entitlement_allocation_id = v_allocation.id
     AND qi.status = 'completed'
     AND op.status = 'completed';
-  
+
+  NEW.app_recorded_minutes := COALESCE(v_app_minutes, 0);
   RETURN NEW;
 END;
 $prepare_weekly_entitlement_report_item$;
@@ -851,7 +933,7 @@ BEGIN
     WHERE ri.daily_work_report_id = NEW.id
       AND ri.organization_id = NEW.organization_id
       AND ri.pump_id = NEW.pump_id
-      AND ri.entry_type = 'weekly'
+      AND ri.entry_type IN ('weekly', 'weekly_reassigned')
     ORDER BY ri.weekly_entitlement_allocation_id
   LOOP
     SELECT c.* INTO v_cycle
@@ -861,8 +943,8 @@ BEGIN
     WHERE a.id = v_item.weekly_entitlement_allocation_id
     FOR UPDATE OF c;
 
-    IF NOT FOUND OR v_cycle.status <> 'open' THEN
-      RAISE EXCEPTION 'Weekly entitlement cycle is not open for report reconciliation'
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Weekly entitlement cycle not found for report reconciliation'
         USING ERRCODE = '55000';
     END IF;
 
@@ -882,6 +964,10 @@ BEGIN
     END IF;
 
     v_delta := v_target - v_allocation.consumed_minutes;
+    IF v_cycle.status = 'expired' AND v_delta > v_cycle.expired_minutes THEN
+      RAISE EXCEPTION 'Late report exceeds the minutes that expired in this weekly cycle'
+        USING ERRCODE = '23514';
+    END IF;
     IF v_delta > 0 THEN
       UPDATE public.weekly_entitlement_allocations
       SET consumed_minutes = consumed_minutes + v_delta,
@@ -889,7 +975,8 @@ BEGIN
       WHERE id = v_allocation.id;
 
       UPDATE public.weekly_entitlement_cycles
-      SET consumed_minutes = consumed_minutes + v_delta
+      SET consumed_minutes = consumed_minutes + v_delta,
+          expired_minutes = CASE WHEN status = 'expired' THEN expired_minutes - v_delta ELSE expired_minutes END
       WHERE id = v_cycle.id;
 
       PERFORM water_management_private.append_weekly_entitlement_event(
@@ -1473,3 +1560,445 @@ COMMENT ON TABLE public.weekly_entitlement_allocations IS
   'Current daily allocation ledger. Transfers decrease one date and increase another in the same cycle; consumed minutes cannot be moved.';
 COMMENT ON TABLE public.weekly_entitlement_events IS
   'Append-only audit ledger for weekly quota initialization, operation consumption, manual report reconciliation, transfers, and expiry.';
+
+
+-- Reassigned weekly allocations are first-class weekly report rows; they
+-- remain part of the weekly quota rather than being treated as extra fills.
+CREATE OR REPLACE FUNCTION water_management_private.save_daily_work_report_internal(
+  p_pump_id uuid,
+  p_work_started_at timestamptz,
+  p_work_ended_at timestamptz,
+  p_stoppage_minutes integer,
+  p_source_totals jsonb,
+  p_items jsonb,
+  p_submit boolean,
+  p_report_id uuid
+)
+RETURNS public.daily_work_reports
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_org_id uuid := water_management_private.current_user_organization_id();
+  v_role public.app_role := water_management_private.current_user_role();
+  v_work_date date;
+  v_report public.daily_work_reports%ROWTYPE;
+  v_existing boolean := false;
+  v_expected_source_minutes integer;
+  v_source_minutes integer := 0;
+  v_source_count integer := 0;
+  v_item_count integer := 0;
+  v_sort_order integer;
+  v_entry_type text;
+  v_schedule_entry_id uuid;
+  v_subscriber_id uuid;
+  v_external_name text;
+  v_manual_minutes integer;
+  v_extra_minutes integer;
+  v_note text;
+  v_scheduled_minutes integer;
+  v_app_minutes integer;
+  v_subscriber_name text;
+  v_source_id uuid;
+  v_minutes integer;
+  v_source_name text;
+  v_event_type text;
+  v_weekly_schedule public.weekly_schedules%ROWTYPE;
+  v_cycle_start date;
+  v_allocation public.weekly_entitlement_allocations%ROWTYPE;
+BEGIN
+  IF v_user_id IS NULL OR v_org_id IS NULL
+     OR v_role NOT IN ('manager'::public.app_role, 'operator'::public.app_role) THEN
+    RAISE EXCEPTION 'Not authorized to save daily work reports' USING ERRCODE = '42501';
+  END IF;
+  IF v_role = 'operator'::public.app_role AND NOT EXISTS (
+    SELECT 1 FROM public.pump_assignments pa
+    WHERE pa.organization_id = v_org_id
+      AND pa.pump_id = p_pump_id
+      AND pa.user_id = v_user_id
+      AND pa.assignment_role = 'operator'::public.app_role
+  ) THEN
+    RAISE EXCEPTION 'Operator is not assigned to this pump' USING ERRCODE = '42501';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.pumps p
+    WHERE p.id = p_pump_id AND p.organization_id = v_org_id
+  ) THEN
+    RAISE EXCEPTION 'Pump is not accessible' USING ERRCODE = '42501';
+  END IF;
+  IF p_work_started_at IS NULL OR p_work_ended_at IS NULL
+     OR p_work_ended_at <= p_work_started_at
+     OR p_stoppage_minutes IS NULL OR p_stoppage_minutes < 0
+     OR COALESCE(jsonb_typeof(p_source_totals), '') <> 'array'
+     OR COALESCE(jsonb_typeof(p_items), '') <> 'array'
+     OR jsonb_array_length(p_source_totals) > 30
+     OR jsonb_array_length(p_items) > 500 THEN
+    RAISE EXCEPTION 'Invalid daily work report payload' USING ERRCODE = '22023';
+  END IF;
+
+  v_work_date := (p_work_started_at AT TIME ZONE 'Asia/Hebron')::date;
+  IF v_work_date <> (p_work_ended_at AT TIME ZONE 'Asia/Hebron')::date THEN
+    RAISE EXCEPTION 'A daily work report must begin and end on the same local date' USING ERRCODE = '22023';
+  END IF;
+  v_expected_source_minutes :=
+    floor(extract(epoch FROM (p_work_ended_at - p_work_started_at)) / 60)::integer
+    - p_stoppage_minutes;
+  IF v_expected_source_minutes < 0 THEN
+    RAISE EXCEPTION 'Stoppage minutes exceed the total work duration' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT * INTO v_report
+  FROM public.daily_work_reports r
+  WHERE r.organization_id = v_org_id
+    AND r.pump_id = p_pump_id
+    AND r.work_date = v_work_date
+    AND (v_role = 'manager'::public.app_role OR r.operator_id = v_user_id)
+  FOR UPDATE;
+  v_existing := FOUND;
+
+  IF v_existing THEN
+    IF p_report_id IS NOT NULL AND p_report_id <> v_report.id THEN
+      RAISE EXCEPTION 'Daily report identifier does not match pump and work date' USING ERRCODE = '22023';
+    END IF;
+    IF v_report.status <> 'draft' THEN
+      RAISE EXCEPTION 'Submitted daily reports are immutable; use a reviewed correction workflow' USING ERRCODE = '55000';
+    END IF;
+    UPDATE public.daily_work_reports
+    SET work_started_at = p_work_started_at,
+        work_ended_at = p_work_ended_at,
+        stoppage_minutes = p_stoppage_minutes,
+        updated_at = clock_timestamp(),
+        revision = revision + 1
+    WHERE id = v_report.id
+    RETURNING * INTO v_report;
+    DELETE FROM public.daily_work_source_totals WHERE daily_work_report_id = v_report.id;
+    DELETE FROM public.daily_work_report_items WHERE daily_work_report_id = v_report.id;
+    v_event_type := 'draft_updated';
+  ELSE
+    IF p_report_id IS NOT NULL THEN
+      RAISE EXCEPTION 'Daily report was not found' USING ERRCODE = 'P0002';
+    END IF;
+    INSERT INTO public.daily_work_reports (
+      organization_id, pump_id, work_date, operator_id,
+      work_started_at, work_ended_at, stoppage_minutes
+    ) VALUES (
+      v_org_id, p_pump_id, v_work_date, v_user_id,
+      p_work_started_at, p_work_ended_at, p_stoppage_minutes
+    )
+    RETURNING * INTO v_report;
+    v_event_type := 'draft_created';
+  END IF;
+
+  FOR v_source_id, v_minutes IN
+    SELECT (item->>'power_source_id')::uuid, (item->>'minutes')::integer
+    FROM jsonb_array_elements(p_source_totals) AS item
+  LOOP
+    IF v_source_id IS NULL OR v_minutes IS NULL OR v_minutes <= 0 THEN
+      RAISE EXCEPTION 'Each power source must have a positive whole-minute total' USING ERRCODE = '22023';
+    END IF;
+    SELECT s.name INTO v_source_name
+    FROM public.pump_power_sources s
+    WHERE s.id = v_source_id
+      AND s.organization_id = v_org_id
+      AND s.pump_id = p_pump_id;
+    IF v_source_name IS NULL THEN
+      RAISE EXCEPTION 'A selected power source does not belong to this pump' USING ERRCODE = '23503';
+    END IF;
+    INSERT INTO public.daily_work_source_totals (
+      daily_work_report_id, organization_id, pump_id, power_source_id,
+      source_name_snapshot, minutes
+    ) VALUES (
+      v_report.id, v_org_id, p_pump_id, v_source_id, v_source_name, v_minutes
+    );
+    v_source_minutes := v_source_minutes + v_minutes;
+    v_source_count := v_source_count + 1;
+  END LOOP;
+
+  FOR v_entry_type, v_schedule_entry_id, v_subscriber_id, v_external_name,
+      v_sort_order, v_manual_minutes, v_extra_minutes, v_note
+  IN
+    SELECT entry_type, schedule_entry_id, subscriber_id, external_beneficiary_name,
+           sort_order, manual_minutes, extra_minutes, note
+    FROM jsonb_to_recordset(p_items) AS item(
+      entry_type text,
+      schedule_entry_id uuid,
+      subscriber_id uuid,
+      external_beneficiary_name text,
+      sort_order integer,
+      manual_minutes integer,
+      extra_minutes integer,
+      note text
+    )
+  LOOP
+    IF v_sort_order IS NULL OR v_sort_order < 0
+       OR COALESCE(v_manual_minutes, 0) < 0
+       OR COALESCE(v_extra_minutes, 0) < 0 THEN
+      RAISE EXCEPTION 'Invalid daily work item values' USING ERRCODE = '22023';
+    END IF;
+    v_manual_minutes := COALESCE(v_manual_minutes, 0);
+    v_extra_minutes := COALESCE(v_extra_minutes, 0);
+    v_note := NULLIF(btrim(v_note), '');
+
+    IF v_entry_type = 'weekly' THEN
+      SELECT e.planned_minutes, s.id, s.full_name, ws.id, ws.week_starts_on
+      INTO v_scheduled_minutes, v_subscriber_id, v_subscriber_name,
+           v_weekly_schedule.id, v_weekly_schedule.week_starts_on
+      FROM public.schedule_entries e
+      JOIN public.weekly_schedules ws
+        ON ws.id = e.weekly_schedule_id
+       AND ws.organization_id = e.organization_id
+       AND ws.pump_id = e.pump_id
+      JOIN public.subscribers s
+        ON s.id = e.subscriber_id
+       AND s.organization_id = e.organization_id
+       AND s.pump_id = e.pump_id
+      WHERE e.id = v_schedule_entry_id
+        AND e.organization_id = v_org_id
+        AND e.pump_id = p_pump_id
+        AND e.subscriber_id = v_subscriber_id
+        AND e.weekday = extract(isodow FROM v_work_date)::integer
+        AND ws.status IN ('active', 'archived')
+        AND v_work_date >= ws.effective_from
+        AND (ws.effective_to IS NULL OR v_work_date <= ws.effective_to);
+      IF v_scheduled_minutes IS NULL OR v_subscriber_name IS NULL THEN
+        RAISE EXCEPTION 'Weekly report item does not match an active schedule entry for this day and pump' USING ERRCODE = '23503';
+      END IF;
+
+      v_cycle_start := v_work_date - (
+        (extract(isodow FROM v_work_date)::integer - v_weekly_schedule.week_starts_on + 7) % 7
+      );
+      PERFORM water_management_private.ensure_weekly_entitlement_cycle(
+        v_weekly_schedule.id, v_org_id, p_pump_id, v_cycle_start, v_user_id
+      );
+
+      SELECT a.* INTO v_allocation
+      FROM public.weekly_entitlement_allocations a
+      JOIN public.weekly_entitlement_cycles c
+        ON c.id = a.weekly_entitlement_cycle_id
+      WHERE c.weekly_schedule_id = v_weekly_schedule.id
+        AND c.cycle_start = v_cycle_start
+        AND c.subscriber_id = v_subscriber_id
+        AND a.allocation_date = v_work_date
+        AND a.source_schedule_entry_id = v_schedule_entry_id
+      FOR UPDATE OF a;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'Weekly entitlement allocation was not found for the scheduled item' USING ERRCODE = '23503';
+      END IF;
+
+      v_scheduled_minutes := v_allocation.allocated_minutes;
+      SELECT floor(COALESCE(sum(op.actual_seconds), 0) / 60)::integer
+      INTO v_app_minutes
+      FROM public.queue_items qi
+      JOIN public.pump_operations op
+        ON op.id = qi.operation_id
+       AND op.organization_id = qi.organization_id
+       AND op.pump_id = qi.pump_id
+      WHERE qi.weekly_entitlement_allocation_id = v_allocation.id
+        AND qi.status = 'completed'
+        AND op.status = 'completed';
+      IF v_manual_minutes > GREATEST(0, v_scheduled_minutes - v_app_minutes) THEN
+        RAISE EXCEPTION 'Manual weekly minutes cannot exceed the remaining daily entitlement allocation' USING ERRCODE = '22023';
+      END IF;
+    ELSIF v_entry_type = 'weekly_reassigned' THEN
+      IF v_schedule_entry_id IS NOT NULL THEN
+        RAISE EXCEPTION 'A reassigned weekly report item cannot reference a template schedule entry' USING ERRCODE = '22023';
+      END IF;
+
+      SELECT s.full_name INTO v_subscriber_name
+      FROM public.subscribers s
+      WHERE s.id = v_subscriber_id
+        AND s.organization_id = v_org_id
+        AND s.pump_id = p_pump_id
+        AND s.is_active;
+      IF v_subscriber_name IS NULL THEN
+        RAISE EXCEPTION 'Reassigned weekly item must reference an active subscriber on this pump' USING ERRCODE = '23503';
+      END IF;
+
+      SELECT ws.* INTO v_weekly_schedule
+      FROM public.weekly_schedules ws
+      JOIN public.weekly_schedule_subscribers m
+        ON m.weekly_schedule_id = ws.id
+       AND m.organization_id = ws.organization_id
+       AND m.pump_id = ws.pump_id
+      WHERE ws.organization_id = v_org_id
+        AND ws.pump_id = p_pump_id
+        AND ws.status IN ('active', 'archived')
+        AND m.subscriber_id = v_subscriber_id
+        AND v_work_date >= ws.effective_from
+        AND (ws.effective_to IS NULL OR v_work_date <= ws.effective_to)
+      ORDER BY ws.effective_from DESC, ws.created_at DESC
+      LIMIT 1;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'No effective weekly schedule exists for the reassigned weekly subscriber' USING ERRCODE = '23503';
+      END IF;
+
+      v_cycle_start := v_work_date - (
+        (extract(isodow FROM v_work_date)::integer - v_weekly_schedule.week_starts_on + 7) % 7
+      );
+      PERFORM water_management_private.ensure_weekly_entitlement_cycle(
+        v_weekly_schedule.id, v_org_id, p_pump_id, v_cycle_start, v_user_id
+      );
+
+      SELECT a.* INTO v_allocation
+      FROM public.weekly_entitlement_allocations a
+      JOIN public.weekly_entitlement_cycles c
+        ON c.id = a.weekly_entitlement_cycle_id
+      WHERE c.weekly_schedule_id = v_weekly_schedule.id
+        AND c.cycle_start = v_cycle_start
+        AND c.subscriber_id = v_subscriber_id
+        AND a.allocation_date = v_work_date
+        AND a.source_schedule_entry_id IS NULL
+      FOR UPDATE OF a;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'No reassigned weekly allocation exists for this subscriber and day' USING ERRCODE = '23503';
+      END IF;
+
+      v_scheduled_minutes := v_allocation.allocated_minutes;
+      SELECT floor(COALESCE(sum(op.actual_seconds), 0) / 60)::integer
+      INTO v_app_minutes
+      FROM public.queue_items qi
+      JOIN public.pump_operations op
+        ON op.id = qi.operation_id
+       AND op.organization_id = qi.organization_id
+       AND op.pump_id = qi.pump_id
+      WHERE qi.weekly_entitlement_allocation_id = v_allocation.id
+        AND qi.status = 'completed'
+        AND op.status = 'completed';
+      IF v_manual_minutes > GREATEST(0, v_scheduled_minutes - v_app_minutes) THEN
+        RAISE EXCEPTION 'Manual weekly minutes cannot exceed the remaining reassigned daily allocation' USING ERRCODE = '22023';
+      END IF;
+    ELSIF v_entry_type = 'additional_registered' THEN
+      SELECT s.full_name INTO v_subscriber_name
+      FROM public.subscribers s
+      WHERE s.id = v_subscriber_id
+        AND s.organization_id = v_org_id
+        AND s.pump_id = p_pump_id
+        AND s.is_active;
+      IF v_subscriber_name IS NULL OR v_schedule_entry_id IS NOT NULL THEN
+        RAISE EXCEPTION 'Additional registered item must reference an active subscriber on this pump only' USING ERRCODE = '23503';
+      END IF;
+      v_scheduled_minutes := 0;
+      v_app_minutes := 0;
+      v_external_name := NULL;
+    ELSIF v_entry_type = 'additional_guest' THEN
+      IF v_subscriber_id IS NOT NULL OR v_schedule_entry_id IS NOT NULL
+         OR char_length(btrim(COALESCE(v_external_name, ''))) NOT BETWEEN 2 AND 120 THEN
+        RAISE EXCEPTION 'Additional guest item requires a name and no subscriber record' USING ERRCODE = '22023';
+      END IF;
+      v_scheduled_minutes := 0;
+      v_app_minutes := 0;
+      v_subscriber_name := NULL;
+    ELSE
+      RAISE EXCEPTION 'Unknown daily work item type' USING ERRCODE = '22023';
+    END IF;
+
+    INSERT INTO public.daily_work_report_items (
+      daily_work_report_id, organization_id, pump_id, schedule_entry_id,
+      subscriber_id, subscriber_name_snapshot, external_beneficiary_name,
+      entry_type, sort_order, scheduled_minutes, app_recorded_minutes,
+      manual_minutes, extra_minutes, note
+    ) VALUES (
+      v_report.id, v_org_id, p_pump_id, v_schedule_entry_id,
+      v_subscriber_id, v_subscriber_name, NULLIF(btrim(v_external_name), ''),
+      v_entry_type, v_sort_order, v_scheduled_minutes, v_app_minutes,
+      CASE WHEN v_entry_type IN ('weekly', 'weekly_reassigned') THEN v_manual_minutes ELSE 0 END,
+      v_extra_minutes, v_note
+    );
+    v_item_count := v_item_count + 1;
+  END LOOP;
+
+  IF p_submit THEN
+    IF EXISTS (
+      SELECT 1
+      FROM public.weekly_schedules ws
+      JOIN public.schedule_entries se
+        ON se.weekly_schedule_id = ws.id
+       AND se.organization_id = ws.organization_id
+       AND se.pump_id = ws.pump_id
+      WHERE ws.organization_id = v_org_id
+        AND ws.pump_id = p_pump_id
+        AND ws.status = 'active'
+        AND v_work_date >= ws.effective_from
+        AND (ws.effective_to IS NULL OR v_work_date <= ws.effective_to)
+        AND se.weekday = extract(isodow FROM v_work_date)::integer
+        AND NOT EXISTS (
+          SELECT 1 FROM public.daily_work_report_items ri
+          WHERE ri.daily_work_report_id = v_report.id
+            AND ri.schedule_entry_id = se.id
+        )
+    ) THEN
+      RAISE EXCEPTION 'Daily report must include every weekly schedule entry for this pump and date'
+        USING ERRCODE = '23514';
+    END IF;
+
+    IF EXISTS (
+      SELECT 1
+      FROM public.weekly_entitlement_cycles c
+      JOIN public.weekly_entitlement_allocations a
+        ON a.weekly_entitlement_cycle_id = c.id
+      WHERE c.organization_id = v_org_id
+        AND c.pump_id = p_pump_id
+        AND c.status = 'open'
+        AND a.allocation_date = v_work_date
+        AND a.source_schedule_entry_id IS NULL
+        AND a.allocated_minutes > 0
+        AND NOT EXISTS (
+          SELECT 1 FROM public.daily_work_report_items ri
+          WHERE ri.daily_work_report_id = v_report.id
+            AND ri.weekly_entitlement_allocation_id = a.id
+        )
+    ) THEN
+      RAISE EXCEPTION 'Daily report must include every reassigned weekly entitlement allocation for this pump and date'
+        USING ERRCODE = '23514';
+    END IF;
+
+    IF EXISTS (
+      SELECT 1 FROM public.pump_operations op
+      WHERE op.organization_id = v_org_id
+        AND op.pump_id = p_pump_id
+        AND op.operation_date = v_work_date
+        AND op.status IN ('running', 'paused')
+    ) THEN
+      RAISE EXCEPTION 'Complete or pause-resolve active operations before submitting the daily report' USING ERRCODE = '55000';
+    END IF;
+    IF v_source_minutes <> v_expected_source_minutes THEN
+      RAISE EXCEPTION 'Power source totals (%) must equal active work minutes (%)',
+        v_source_minutes, v_expected_source_minutes USING ERRCODE = '23514';
+    END IF;
+    UPDATE public.daily_work_reports
+    SET status = 'submitted',
+        submitted_at = clock_timestamp(),
+        submitted_by = v_user_id,
+        updated_at = clock_timestamp()
+    WHERE id = v_report.id
+    RETURNING * INTO v_report;
+    v_event_type := 'submitted';
+  END IF;
+
+  INSERT INTO public.daily_work_report_events (
+    daily_work_report_id, organization_id, pump_id, actor_id, event_type, metadata
+  ) VALUES (
+    v_report.id, v_org_id, p_pump_id, v_user_id, v_event_type,
+    jsonb_build_object(
+      'revision', v_report.revision,
+      'source_count', v_source_count,
+      'source_minutes', v_source_minutes,
+      'item_count', v_item_count,
+      'submitted', p_submit
+    )
+  );
+
+  RETURN v_report;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION water_management_private.save_daily_work_report_internal(
+  uuid, timestamptz, timestamptz, integer, jsonb, jsonb, boolean, uuid
+) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION water_management_private.save_daily_work_report_internal(
+  uuid, timestamptz, timestamptz, integer, jsonb, jsonb, boolean, uuid
+) TO authenticated;
+
+
