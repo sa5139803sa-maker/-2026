@@ -196,6 +196,52 @@ CREATE INDEX daily_work_report_items_assigned_operator_idx
   ON public.daily_work_report_items (daily_work_report_id, assigned_operator_id)
   WHERE assigned_operator_id IS NOT NULL;
 
+-- Assignment event actor/reason must not come from a client-settable GUC.
+-- New subscriber inserts get a fixed initial-assignment reason; reassignment
+-- events are written explicitly by the manager-only SECURITY DEFINER RPC.
+CREATE OR REPLACE FUNCTION water_management_private.record_subscriber_operator_assignment()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $record_subscriber_operator_assignment_hardened$
+DECLARE
+  v_new_name text;
+  v_actor_id uuid := auth.uid();
+BEGIN
+  IF TG_OP <> 'INSERT' OR NEW.operator_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF v_actor_id IS NULL THEN
+    RAISE EXCEPTION 'An authenticated actor is required to record subscriber assignment'
+      USING ERRCODE = '42501';
+  END IF;
+
+  SELECT p.display_name INTO v_new_name
+  FROM public.profiles p
+  WHERE p.id = NEW.operator_id
+    AND p.organization_id = NEW.organization_id
+    AND p.role = 'operator'::public.app_role;
+
+  INSERT INTO public.subscriber_operator_assignment_events (
+    subscriber_id, organization_id, pump_id,
+    previous_operator_id, previous_operator_name,
+    new_operator_id, new_operator_name, actor_id, reason
+  ) VALUES (
+    NEW.id, NEW.organization_id, NEW.pump_id,
+    NULL, NULL,
+    NEW.operator_id, COALESCE(v_new_name, 'مشغّل غير معروف'),
+    v_actor_id, 'إسناد عند إنشاء المشترك'
+  );
+
+  RETURN NEW;
+END;
+$record_subscriber_operator_assignment_hardened$;
+ALTER FUNCTION water_management_private.record_subscriber_operator_assignment() OWNER TO postgres;
+REVOKE ALL ON FUNCTION water_management_private.record_subscriber_operator_assignment()
+  FROM PUBLIC, anon, authenticated, service_role;
+
 -- The custom GUC used by the original guard is client-settable and is not a
 -- security capability. Only the SECURITY DEFINER assignment RPC, whose owner
 -- is postgres, may change subscribers.operator_id.
