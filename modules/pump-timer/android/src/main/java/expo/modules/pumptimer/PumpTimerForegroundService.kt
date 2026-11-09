@@ -133,7 +133,6 @@ class PumpTimerForegroundService : Service() {
       .setOnlyAlertOnce(true)
       .setShowWhen(true)
       .setContentIntent(openAppPendingIntent())
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) builder.setSilent(true)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
     }
