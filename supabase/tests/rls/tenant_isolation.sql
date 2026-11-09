@@ -70,6 +70,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109150000_create_weekly_entitlement_ledger.sql
 \ir ../../migrations/20261109160000_add_guarded_queue_item_actions.sql
 \ir ../../migrations/20261109170000_assign_subscribers_to_operators.sql
+\ir ../../migrations/20261109181500_scope_operator_data_access.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -2334,6 +2335,201 @@ BEGIN
   END IF;
 END;
 $subscriber_operator_direct_update_denied$;
+RESET ROLE;
+
+-- Subscriber-level read isolation is evaluated against the current assignment.
+-- The old owner (operator A1) must lose subscriber/schedule/entitlement access;
+-- the new owner (operator A2) receives that current working scope.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $operator_a1_subscriber_scope_after_reassignment$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.subscribers
+    WHERE id = '30000000-0000-4000-8000-000000000001'
+  ) OR EXISTS (
+    SELECT 1 FROM public.schedule_entries
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) OR EXISTS (
+    SELECT 1 FROM public.weekly_schedule_subscribers
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) OR EXISTS (
+    SELECT 1 FROM public.weekly_entitlement_cycles
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) OR EXISTS (
+    SELECT 1 FROM public.weekly_entitlement_allocations
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) OR EXISTS (
+    SELECT 1 FROM public.weekly_entitlement_events
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) THEN
+    RAISE EXCEPTION 'Former operator can still read the reassigned subscriber or weekly entitlement data';
+  END IF;
+END;
+$operator_a1_subscriber_scope_after_reassignment$;
+
+-- The global queue still exposes the turn position, but not another operator's
+-- subscriber identity, branch, minutes, operation, or event metadata.
+DO $operator_a1_redacted_queue_view$
+DECLARE
+  v_queue_id uuid := current_setting('test.assignment_future_queue_id')::uuid;
+  v_view jsonb;
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.queue_items
+    WHERE daily_queue_id = v_queue_id
+  ) THEN
+    RAISE EXCEPTION 'Former operator can read another operator queue item rows directly';
+  END IF;
+
+  v_view := public.get_daily_queue_operator_view(v_queue_id);
+  IF jsonb_array_length(COALESCE(v_view->'items', '[]'::jsonb)) < 1
+     OR EXISTS (
+       SELECT 1
+       FROM jsonb_array_elements(COALESCE(v_view->'items', '[]'::jsonb)) AS item
+       WHERE item->>'is_owned' <> 'false'
+          OR item->>'source_type' <> 'other'
+          OR item->>'subscriber_id' IS NOT NULL
+          OR item->>'planned_minutes' <> '0'
+          OR item->>'subscriber_name_snapshot' <> 'دور لمشغّل آخر'
+     )
+     OR jsonb_array_length(COALESCE(v_view->'events', '[]'::jsonb)) <> 0 THEN
+    RAISE EXCEPTION 'Queue view exposed details or events for a different operator';
+  END IF;
+END;
+$operator_a1_redacted_queue_view$;
+
+-- Historical operation/report rows preserve their recorded owner after the
+-- subscriber changes manager. The former owner keeps their own history only.
+DO $operator_a1_historical_operation_report_scope$
+DECLARE
+  v_operations integer;
+  v_events integer;
+  v_segments integer;
+  v_reports integer;
+  v_report_items integer;
+  v_source_totals integer;
+BEGIN
+  SELECT count(*)::integer INTO v_operations
+  FROM public.pump_operations
+  WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+    AND subscriber_operator_id = '10000000-0000-4000-8000-000000000002';
+
+  SELECT count(*)::integer INTO v_events
+  FROM public.pump_operation_events e
+  JOIN public.pump_operations op
+    ON op.id = e.operation_id
+   AND op.organization_id = e.organization_id
+   AND op.pump_id = e.pump_id
+  WHERE op.subscriber_id = '30000000-0000-4000-8000-000000000001';
+
+  SELECT count(*)::integer INTO v_segments
+  FROM public.pump_operation_power_segments seg
+  JOIN public.pump_operations op
+    ON op.id = seg.operation_id
+   AND op.organization_id = seg.organization_id
+   AND op.pump_id = seg.pump_id
+  WHERE op.subscriber_id = '30000000-0000-4000-8000-000000000001';
+
+  SELECT count(*)::integer INTO v_reports
+  FROM public.daily_work_reports
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001';
+
+  SELECT count(*)::integer INTO v_report_items
+  FROM public.daily_work_report_items
+  WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+    AND assigned_operator_id = '10000000-0000-4000-8000-000000000002';
+
+  SELECT count(*)::integer INTO v_source_totals
+  FROM public.daily_work_source_totals t
+  JOIN public.daily_work_reports r ON r.id = t.daily_work_report_id
+  WHERE r.pump_id = '20000000-0000-4000-8000-000000000001';
+
+  IF v_operations < 1 OR v_events < 1 OR v_segments < 1
+     OR v_reports <> 1 OR v_report_items < 1 OR v_source_totals < 1 THEN
+    RAISE EXCEPTION 'Former operator cannot read their immutable historical operations/report rows: ops %, events %, segments %, reports %, items %, sources %',
+      v_operations, v_events, v_segments, v_reports, v_report_items, v_source_totals;
+  END IF;
+END;
+$operator_a1_historical_operation_report_scope$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000003', true);
+DO $operator_a2_current_subscriber_scope$
+DECLARE
+  v_queue_id uuid := current_setting('test.assignment_future_queue_id')::uuid;
+  v_view jsonb;
+  v_items integer;
+  v_cycles integer;
+  v_allocations integer;
+BEGIN
+  IF (SELECT count(*) FROM public.subscribers
+      WHERE id = '30000000-0000-4000-8000-000000000001') <> 1
+     OR (SELECT count(*) FROM public.schedule_entries
+         WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 1
+     OR (SELECT count(*) FROM public.weekly_schedule_subscribers
+         WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 1 THEN
+    RAISE EXCEPTION 'New operator cannot read the reassigned subscriber and active schedule membership';
+  END IF;
+
+  SELECT count(*)::integer INTO v_cycles
+  FROM public.weekly_entitlement_cycles
+  WHERE subscriber_id = '30000000-0000-4000-8000-000000000001';
+  SELECT count(*)::integer INTO v_allocations
+  FROM public.weekly_entitlement_allocations
+  WHERE subscriber_id = '30000000-0000-4000-8000-000000000001';
+  IF v_cycles < 1 OR v_allocations < 1 THEN
+    RAISE EXCEPTION 'New operator cannot read current weekly entitlement balance';
+  END IF;
+
+  SELECT count(*)::integer INTO v_items
+  FROM public.queue_items
+  WHERE daily_queue_id = v_queue_id
+    AND subscriber_id = '30000000-0000-4000-8000-000000000001'
+    AND assigned_operator_id = auth.uid();
+  IF v_items < 1 THEN
+    RAISE EXCEPTION 'New operator cannot read their reassigned waiting queue items';
+  END IF;
+
+  v_view := public.get_daily_queue_operator_view(v_queue_id);
+  IF NOT EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(COALESCE(v_view->'items', '[]'::jsonb)) AS item
+    WHERE item->>'is_owned' = 'true'
+      AND item->>'subscriber_id' = '30000000-0000-4000-8000-000000000001'
+      AND item->>'subscriber_name_snapshot' = 'مشترك أ 1'
+  ) OR NOT EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(COALESCE(v_view->'events', '[]'::jsonb)) AS event
+    WHERE event->>'event_type' = 'item_operator_reassigned'
+  ) THEN
+    RAISE EXCEPTION 'New operator queue view did not return owned item details and reassignment event';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.pump_operations
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+      AND subscriber_operator_id = '10000000-0000-4000-8000-000000000002'
+  ) OR EXISTS (
+    SELECT 1
+    FROM public.pump_operation_events e
+    JOIN public.pump_operations op
+      ON op.id = e.operation_id
+     AND op.organization_id = e.organization_id
+     AND op.pump_id = e.pump_id
+    WHERE op.subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) OR EXISTS (
+    SELECT 1 FROM public.daily_work_reports
+    WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+  ) OR EXISTS (
+    SELECT 1 FROM public.daily_work_report_items
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) THEN
+    RAISE EXCEPTION 'New operator inherited another operator historical operation/report records';
+  END IF;
+END;
+$operator_a2_current_subscriber_scope$;
 RESET ROLE;
 
 -- Assignment history is append-only and visible only to the organization manager.
