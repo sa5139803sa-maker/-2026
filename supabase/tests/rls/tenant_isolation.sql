@@ -2419,6 +2419,10 @@ DECLARE
   v_reports integer;
   v_report_items integer;
   v_source_totals integer;
+  v_power_usage_rows integer;
+  v_transfer_option_rows integer;
+  v_report_date date;
+  v_queue_date date;
 BEGIN
   SELECT count(*)::integer INTO v_operations
   FROM public.pump_operations
@@ -2455,10 +2459,31 @@ BEGIN
   JOIN public.daily_work_reports r ON r.id = t.daily_work_report_id
   WHERE r.pump_id = '20000000-0000-4000-8000-000000000001';
 
+  SELECT work_date INTO v_report_date
+  FROM public.daily_work_reports
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+  LIMIT 1;
+
+  SELECT count(*)::integer INTO v_power_usage_rows
+  FROM public.get_pump_power_usage(
+    v_report_date, v_report_date, 'day', '20000000-0000-4000-8000-000000000001'
+  );
+
+  SELECT queue_date INTO v_queue_date
+  FROM public.daily_queues
+  WHERE id = current_setting('test.daily_queue_id')::uuid;
+
+  SELECT count(*)::integer INTO v_transfer_option_rows
+  FROM public.get_weekly_entitlement_transfer_options(
+    '20000000-0000-4000-8000-000000000001', v_queue_date + 3
+  );
+
   IF v_operations < 1 OR v_events < 1 OR v_segments < 1
-     OR v_reports <> 1 OR v_report_items < 1 OR v_source_totals < 1 THEN
-    RAISE EXCEPTION 'Former operator cannot read their immutable historical operations/report rows: ops %, events %, segments %, reports %, items %, sources %',
-      v_operations, v_events, v_segments, v_reports, v_report_items, v_source_totals;
+     OR v_reports <> 1 OR v_report_items < 1 OR v_source_totals < 1
+     OR v_power_usage_rows < 1 OR v_transfer_option_rows <> 0 THEN
+    RAISE EXCEPTION 'Former operator historical scope mismatch: ops %, events %, segments %, reports %, items %, sources %, power rows %, transfer options %',
+      v_operations, v_events, v_segments, v_reports, v_report_items, v_source_totals,
+      v_power_usage_rows, v_transfer_option_rows;
   END IF;
 END;
 $operator_a1_historical_operation_report_scope$;
@@ -2473,6 +2498,10 @@ DECLARE
   v_items integer;
   v_cycles integer;
   v_allocations integer;
+  v_power_usage_rows integer;
+  v_transfer_option_rows integer;
+  v_report_date date;
+  v_queue_date date;
 BEGIN
   IF (SELECT count(*) FROM public.subscribers
       WHERE id = '30000000-0000-4000-8000-000000000001') <> 1
@@ -2515,6 +2544,30 @@ BEGIN
     WHERE event->>'event_type' = 'item_operator_reassigned'
   ) THEN
     RAISE EXCEPTION 'New operator queue view did not return owned item details and reassignment event';
+  END IF;
+
+  SELECT work_date INTO v_report_date
+  FROM public.daily_work_reports
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+  LIMIT 1;
+
+  SELECT count(*)::integer INTO v_power_usage_rows
+  FROM public.get_pump_power_usage(
+    v_report_date, v_report_date, 'day', '20000000-0000-4000-8000-000000000001'
+  );
+
+  SELECT queue_date INTO v_queue_date
+  FROM public.daily_queues
+  WHERE id = current_setting('test.daily_queue_id')::uuid;
+
+  SELECT count(*)::integer INTO v_transfer_option_rows
+  FROM public.get_weekly_entitlement_transfer_options(
+    '20000000-0000-4000-8000-000000000001', v_queue_date + 3
+  );
+
+  IF v_power_usage_rows <> 0 OR v_transfer_option_rows < 1 THEN
+    RAISE EXCEPTION 'New operator power usage or weekly transfer options escaped subscriber ownership: power rows %, transfer options %',
+      v_power_usage_rows, v_transfer_option_rows;
   END IF;
 
   IF EXISTS (
