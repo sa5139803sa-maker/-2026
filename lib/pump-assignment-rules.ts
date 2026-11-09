@@ -13,9 +13,9 @@ export type ExistingPumpAssignment = {
 };
 
 /**
- * Enforces the assignment-slot rules already represented by the database:
- * one operator and one collector per pump, with multiple supervisors allowed.
- * Tenant membership and role/profile matching remain enforced by RLS and FKs.
+ * Operators have one slot per pump. Collectors and supervisors can be assigned
+ * in multiples; the same person cannot be assigned twice to the same pump/role.
+ * Tenant membership and role matching remain enforced by database RLS/FKs.
  */
 export function getAssignableEmployees(
   role: AssignmentRole,
@@ -23,7 +23,7 @@ export function getAssignableEmployees(
   employees: readonly AssignmentEmployee[],
   assignments: readonly ExistingPumpAssignment[],
 ): AssignmentEmployee[] {
-  const slotOccupied = role !== "supervisor" && assignments.some(
+  const slotOccupied = role === "operator" && assignments.some(
     (assignment) =>
       assignment.pump_id === pumpId &&
       assignment.assignment_role === role,
@@ -41,7 +41,6 @@ export function getAssignableEmployees(
       .map((assignment) => assignment.user_id),
   );
 
-  // Keep the server-provided alphabetical ordering; never mutate the input.
   return employees.filter(
     (employee) =>
       employee.role === role && !assignedUserIds.has(employee.id),
