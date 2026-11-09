@@ -1832,3 +1832,135 @@ REVOKE ALL ON FUNCTION public.get_daily_report_operators(uuid, date, boolean)
   FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_daily_report_operators(uuid, date, boolean)
   TO authenticated;
+
+
+-- Resolve audit actor names only when the caller can read the specific daily
+-- workload report. Actor IDs must be present in that report's own audit trail
+-- or its shared pump-energy audit trail for the same date.
+CREATE OR REPLACE FUNCTION water_management_private.get_daily_work_report_actors_internal(
+  p_daily_work_report_id uuid,
+  p_actor_ids uuid[]
+)
+RETURNS TABLE (
+  id uuid,
+  display_name text
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $get_daily_work_report_actors_internal$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_org_id uuid := water_management_private.current_user_organization_id();
+  v_role public.app_role := water_management_private.current_user_role();
+  v_report public.daily_work_reports%ROWTYPE;
+BEGIN
+  IF v_user_id IS NULL OR v_org_id IS NULL
+     OR v_role NOT IN (
+       'manager'::public.app_role,
+       'operator'::public.app_role,
+       'supervisor'::public.app_role
+     ) THEN
+    RAISE EXCEPTION 'Not authorized to resolve daily report actors'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF p_daily_work_report_id IS NULL OR p_actor_ids IS NULL THEN
+    RAISE EXCEPTION 'Daily report and actor IDs are required'
+      USING ERRCODE = '22023';
+  END IF;
+
+  SELECT report.* INTO v_report
+  FROM public.daily_work_reports report
+  WHERE report.id = p_daily_work_report_id
+    AND report.organization_id = v_org_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Daily work report is not accessible'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF v_role = 'operator'::public.app_role
+     AND v_report.operator_id <> v_user_id THEN
+    RAISE EXCEPTION 'Operator may resolve actors only for their own report'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF v_role = 'supervisor'::public.app_role
+     AND NOT water_management_private.can_read_supervisor_pump_scope(
+       v_report.organization_id, v_report.pump_id
+     ) THEN
+    RAISE EXCEPTION 'Supervisor is not assigned to this report pump'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  WITH allowed_actor_ids AS (
+    SELECT event.actor_id
+    FROM public.daily_work_report_events event
+    WHERE event.daily_work_report_id = v_report.id
+      AND event.organization_id = v_report.organization_id
+      AND event.pump_id = v_report.pump_id
+
+    UNION
+
+    SELECT event.actor_id
+    FROM public.daily_pump_energy_report_events event
+    JOIN public.daily_pump_energy_reports energy
+      ON energy.id = event.daily_pump_energy_report_id
+     AND energy.organization_id = event.organization_id
+     AND energy.pump_id = event.pump_id
+    WHERE event.organization_id = v_report.organization_id
+      AND event.pump_id = v_report.pump_id
+      AND energy.work_date = v_report.work_date
+
+    UNION
+
+    SELECT v_report.created_by
+
+    UNION
+
+    SELECT v_report.submitted_by
+    WHERE v_report.submitted_by IS NOT NULL
+  )
+  SELECT profile.id, profile.display_name
+  FROM public.profiles profile
+  JOIN allowed_actor_ids allowed
+    ON allowed.actor_id = profile.id
+  WHERE profile.organization_id = v_org_id
+    AND profile.id = ANY(p_actor_ids)
+  ORDER BY profile.display_name, profile.id;
+END;
+$get_daily_work_report_actors_internal$;
+
+ALTER FUNCTION water_management_private.get_daily_work_report_actors_internal(uuid, uuid[])
+  OWNER TO postgres;
+REVOKE ALL ON FUNCTION water_management_private.get_daily_work_report_actors_internal(uuid, uuid[])
+  FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION water_management_private.get_daily_work_report_actors_internal(uuid, uuid[])
+  TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.get_daily_work_report_actors(
+  p_daily_work_report_id uuid,
+  p_actor_ids uuid[]
+)
+RETURNS TABLE (
+  id uuid,
+  display_name text
+)
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = ''
+AS $get_daily_work_report_actors$
+  SELECT *
+  FROM water_management_private.get_daily_work_report_actors_internal(
+    p_daily_work_report_id, p_actor_ids
+  )
+$get_daily_work_report_actors$;
+
+REVOKE ALL ON FUNCTION public.get_daily_work_report_actors(uuid, uuid[])
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_daily_work_report_actors(uuid, uuid[])
+  TO authenticated;
