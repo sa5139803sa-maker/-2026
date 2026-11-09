@@ -967,7 +967,26 @@ function OperationsScreenContent() {
                   </>
                 )}
               </View>
-              <View style={styles.queueHeader}>
+            </Card>
+          )}
+
+          <Card style={styles.card}>
+            {activeOperation ? (
+              <View style={styles.sourceSelector}>
+                <Text style={styles.fieldLabel}>مصدر الكهرباء للدور التالي</Text>
+                <View style={styles.sourceChoices}>
+                  {powerSources.map((source) => (
+                    <Pressable key={source.id} onPress={() => setSelectedPowerSourceId(source.id)}
+                      style={[styles.sourceChoice, selectedPowerSourceId === source.id && styles.sourceChoiceSelected]}>
+                      <Text style={[styles.sourceChoiceText, selectedPowerSourceId === source.id && styles.sourceChoiceTextSelected]}>
+                        {source.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+            <View style={styles.queueHeader}>
                 <View style={styles.queueHeaderTitle}>
                   <SectionTitle title="طابور اليوم المعتمد" />
                   <Text style={styles.count}>{queuedItems.length} منتظر</Text>
@@ -1126,7 +1145,6 @@ function OperationsScreenContent() {
                 </>
               }
             </Card>
-          )}
 
           <Card style={styles.card}>
             <Pressable onPress={() => {
