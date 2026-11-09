@@ -3051,14 +3051,26 @@ BEGIN
      AND op.organization_id = e.organization_id
      AND op.pump_id = e.pump_id
     WHERE op.subscriber_id = '30000000-0000-4000-8000-000000000001'
-  ) OR EXISTS (
+  ) OR (
+    SELECT count(*) FROM public.daily_work_reports
+    WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+      AND work_date = DATE '2026-01-20'
+  ) <> 1 OR NOT EXISTS (
     SELECT 1 FROM public.daily_work_reports
     WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+      AND work_date = DATE '2026-01-20'
+      AND operator_id = auth.uid()
   ) OR EXISTS (
-    SELECT 1 FROM public.daily_work_report_items
-    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+    SELECT 1
+    FROM public.daily_work_report_items ri
+    JOIN public.daily_work_reports r
+      ON r.id = ri.daily_work_report_id
+     AND r.organization_id = ri.organization_id
+     AND r.pump_id = ri.pump_id
+    WHERE ri.subscriber_id = '30000000-0000-4000-8000-000000000001'
+      AND r.operator_id <> auth.uid()
   ) THEN
-    RAISE EXCEPTION 'New operator inherited another operator historical operation/report records';
+    RAISE EXCEPTION 'New operator must see only their own report and must not inherit another operator report items';
   END IF;
 END;
 $operator_a2_current_subscriber_scope$;
