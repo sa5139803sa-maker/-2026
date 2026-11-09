@@ -472,7 +472,7 @@ function OperationsScreenContent() {
     : 0;
 
   useEffect(() => {
-    if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings) return;
+    if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings || error) return;
     void syncPumpTimerNotifications(selectedPumpId, operations, alertSettings).catch((syncError) => {
       console.warn("Android pump timer notification sync failed.", syncError);
       setError("تعذرت جدولة تنبيهات المؤقت. تحقق من إذن الإشعارات والمنبّهات الدقيقة في Android.");
@@ -485,10 +485,11 @@ function OperationsScreenContent() {
     alertSettings?.minuteWarning.vibrate,
     alertSettings?.handover.enabled,
     alertSettings?.handover.vibrate,
+    error,
   ]);
 
   useEffect(() => {
-    if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings) return;
+    if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings || error || dailyQueueError) return;
     void syncQueueHandoverNotification(selectedPumpId, dailyQueue, alertSettings).catch((syncError) => {
       console.warn("Android queue handover notification sync failed.", syncError);
       setError("تعذرت جدولة تنبيه الانتقال المحفوظ في الطابور.");
@@ -501,6 +502,8 @@ function OperationsScreenContent() {
     dailyQueue?.auto_advance_at,
     alertSettings?.handover.enabled,
     alertSettings?.handover.vibrate,
+    error,
+    dailyQueueError,
   ]);
 
   const addPowerSource = async () => {
