@@ -414,6 +414,13 @@ WHERE id = '30000000-0000-4000-8000-000000000002';
 UPDATE public.subscribers SET branch_id = '40000000-0000-4000-8000-000000000003'
 WHERE id = '30000000-0000-4000-8000-000000000004';
 
+UPDATE public.subscribers SET weekly_quota_minutes=45, default_weekday=1
+WHERE id='30000000-0000-4000-8000-000000000001';
+UPDATE public.subscribers SET weekly_quota_minutes=60, default_weekday=3
+WHERE id='30000000-0000-4000-8000-000000000002';
+UPDATE public.subscribers SET weekly_quota_minutes=90, default_weekday=5
+WHERE id='30000000-0000-4000-8000-000000000004';
+
 INSERT INTO public.weekly_schedules (
   id, organization_id, pump_id, name, effective_from, effective_to, week_starts_on, status, created_by
 ) VALUES
@@ -424,7 +431,7 @@ INSERT INTO public.weekly_schedules (
    '20000000-0000-4000-8000-000000000002', 'جدول أ 2', '2026-01-05', NULL, 1, 'draft',
    '10000000-0000-4000-8000-000000000001'),
   ('50000000-0000-4000-8000-000000000003', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-   '20000000-0000-4000-8000-000000000003', 'جدول ب 1', '2026-01-05', NULL, 1, 'active',
+   '20000000-0000-4000-8000-000000000003', 'جدول ب 1', '2026-01-05', NULL, 1, 'draft',
    '10000000-0000-4000-8000-000000000006');
 
 INSERT INTO public.schedule_entries (
@@ -440,18 +447,31 @@ INSERT INTO public.schedule_entries (
    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003',
    '30000000-0000-4000-8000-000000000004', 5, 10, 90);
 
+UPDATE public.weekly_schedules SET status='active'
+WHERE id='50000000-0000-4000-8000-000000000003';
+
 DO $weekly_active_unique$
-DECLARE v_rejected boolean := false;
+DECLARE v_rejected boolean := false; v_duplicate_schedule_id uuid;
 BEGIN
   BEGIN
     INSERT INTO public.weekly_schedules (
-      organization_id, pump_id, name, effective_from, status, created_by
+      organization_id, pump_id, name, effective_from, week_starts_on, status, created_by
     ) VALUES (
       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       '20000000-0000-4000-8000-000000000003',
-      'جدول نشط مكرر', '2026-01-01', 'active',
+      'جدول نشط مكرر', '2026-01-05', 1, 'draft',
       '10000000-0000-4000-8000-000000000006'
+    ) RETURNING id INTO v_duplicate_schedule_id;
+
+    INSERT INTO public.schedule_entries (
+      weekly_schedule_id, organization_id, pump_id, subscriber_id, weekday, sort_order, planned_minutes
+    ) VALUES (
+      v_duplicate_schedule_id, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      '20000000-0000-4000-8000-000000000003',
+      '30000000-0000-4000-8000-000000000004', 5, 10, 90
     );
+    UPDATE public.weekly_schedules SET status='active'
+    WHERE id=v_duplicate_schedule_id;
   EXCEPTION WHEN unique_violation THEN v_rejected := true;
   END;
   IF NOT v_rejected THEN
