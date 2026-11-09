@@ -1002,7 +1002,7 @@ function OperationsScreenContent() {
     const reason = weeklyTransferReason.trim();
     const targetDate = weeklyTransferTargetDate.trim();
     const today = localOperationDate();
-    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(targetDate) || targetDate < today || targetDate > item.cycle_end) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || targetDate < today || targetDate > item.cycle_end) {
       setError(`اختر تاريخًا من ${today} إلى ${item.cycle_end} داخل الدورة الأسبوعية الحالية.`);
       return;
     }
@@ -1414,7 +1414,7 @@ function OperationsScreenContent() {
                           {weeklyTransferLoading ? (
                             <ActivityIndicator color={colors.brand.teal} />
                           ) : weeklyTransferOptions.length === 0 ? (
-                            <Text style={styles.empty}>لا توجد دقائق أسبوعية متبقية قابلة للنقل إلى اليوم.</Text>
+                            <Text style={styles.empty}>لا توجد دقائق أسبوعية متبقية قابلة للنقل إلى التاريخ المحدد.</Text>
                           ) : (
                             weeklyTransferOptions.map((item) => {
                               const entered = Number(weeklyTransferMinutes[item.allocation_id] ?? "");
