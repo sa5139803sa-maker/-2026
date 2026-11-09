@@ -1407,16 +1407,18 @@ function OperationsScreenContent() {
                           </Text>
                         </View>
                         <View style={styles.queueReorderControls}>
-                          <Pressable accessibilityLabel="تحريك الدور إلى أعلى" disabled={busy || index === 0}
-                            onPress={() => void moveQueueItem(item.id, -1)}
-                            style={[styles.reorderButton, (busy || index === 0) && styles.disabled]}>
-                            <Text style={styles.reorderText}>↑</Text>
-                          </Pressable>
-                          <Pressable accessibilityLabel="تحريك الدور إلى أسفل" disabled={busy || index === queuedItems.length - 1}
-                            onPress={() => void moveQueueItem(item.id, 1)}
-                            style={[styles.reorderButton, (busy || index === queuedItems.length - 1) && styles.disabled]}>
-                            <Text style={styles.reorderText}>↓</Text>
-                          </Pressable>
+                          {profile?.role === "manager" && <>
+                            <Pressable accessibilityLabel="تحريك الدور إلى أعلى" disabled={busy || index === 0}
+                              onPress={() => void moveQueueItem(item.id, -1)}
+                              style={[styles.reorderButton, (busy || index === 0) && styles.disabled]}>
+                              <Text style={styles.reorderText}>↑</Text>
+                            </Pressable>
+                            <Pressable accessibilityLabel="تحريك الدور إلى أسفل" disabled={busy || index === queuedItems.length - 1}
+                              onPress={() => void moveQueueItem(item.id, 1)}
+                              style={[styles.reorderButton, (busy || index === queuedItems.length - 1) && styles.disabled]}>
+                              <Text style={styles.reorderText}>↓</Text>
+                            </Pressable>
+                          </>}
                           <Pressable accessibilityLabel="تأجيل الدور إلى نهاية الطابور"
                             disabled={busy || queuedItems.length < 2 || queueItemActionReason.trim().length < 2}
                             onPress={() => void manageQueueItem(item, "defer")}
