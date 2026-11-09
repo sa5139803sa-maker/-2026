@@ -500,14 +500,14 @@ BEGIN
     AND s.organization_id = NEW.organization_id
     AND s.pump_id = NEW.pump_id;
 
-  IF NOT FOUND OR v_subscriber_operator_id IS NULL THEN
-    RAISE EXCEPTION 'Daily report item must reference an assigned subscriber on this pump'
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Daily report item must reference a subscriber on the same pump'
       USING ERRCODE = '23503';
   END IF;
 
   IF v_role = 'operator'::public.app_role
-     AND v_subscriber_operator_id <> auth.uid() THEN
-    RAISE EXCEPTION 'Daily report item belongs to another operator'
+     AND v_subscriber_operator_id IS DISTINCT FROM auth.uid() THEN
+    RAISE EXCEPTION 'Daily report item belongs to another operator or has no assigned operator'
       USING ERRCODE = '42501';
   END IF;
 
