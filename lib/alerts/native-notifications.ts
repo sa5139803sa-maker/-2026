@@ -12,8 +12,8 @@ import type { DailyQueue, PumpOperation } from "@/lib/repositories/pump-operatio
 type NativeAlertKind = "minute" | "handover";
 const CHANNEL_VERSION = "v1";
 const CHANNELS: Record<NativeAlertKind, { name: string; sound: string }> = {
-  minute: { name: "تنبيه بقاء دقيقة", sound: "minute-warning.wav" },
-  handover: { name: "تنبيه نهاية التعبئة والانتقال", sound: "handover-warning.wav" },
+  minute: { name: "تنبيه بقاء دقيقة", sound: "minute_warning.wav" },
+  handover: { name: "تنبيه نهاية التعبئة والانتقال", sound: "handover_warning.wav" },
 };
 const syncQueues = new Map<string, Promise<void>>();
 

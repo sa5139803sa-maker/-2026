@@ -35,8 +35,8 @@
         {
           "defaultChannel": "water-operation-alerts",
           "sounds": [
-            "./assets/alerts/minute-warning.wav",
-            "./assets/alerts/handover-warning.wav"
+            "./assets/alerts/minute_warning.wav",
+            "./assets/alerts/handover_warning.wav"
           ]
         }
       ]
