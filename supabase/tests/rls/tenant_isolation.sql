@@ -2247,6 +2247,7 @@ DECLARE
   v_result jsonb;
   v_expected integer;
   v_completed_count integer;
+  v_transfer_source_id uuid;
 BEGIN
   SELECT count(*)::integer INTO v_expected
   FROM public.queue_items
@@ -2257,6 +2258,18 @@ BEGIN
   IF v_expected < 1 THEN
     RAISE EXCEPTION 'Future queue fixture must contain a waiting item for reassignment';
   END IF;
+
+  SELECT a.id INTO v_transfer_source_id
+  FROM public.weekly_entitlement_allocations a
+  WHERE a.subscriber_id = '30000000-0000-4000-8000-000000000001'
+    AND a.available_minutes > 0
+  ORDER BY a.allocation_date DESC, a.id
+  LIMIT 1;
+
+  IF v_transfer_source_id IS NULL THEN
+    RAISE EXCEPTION 'Reassignment test requires one unconsumed weekly entitlement allocation';
+  END IF;
+  PERFORM set_config('test.assignment_source_allocation_id', v_transfer_source_id::text, true);
 
   SELECT count(*)::integer INTO v_completed_count
   FROM public.queue_items
@@ -2377,6 +2390,32 @@ BEGIN
   END IF;
 END;
 $operator_a1_subscriber_scope_after_reassignment$;
+
+DO $operator_a1_transfer_forbidden$
+DECLARE
+  v_queue_date date;
+  v_rejected boolean := false;
+BEGIN
+  SELECT queue_date INTO v_queue_date
+  FROM public.daily_queues
+  WHERE id = current_setting('test.daily_queue_id')::uuid;
+
+  BEGIN
+    PERFORM public.transfer_weekly_entitlement_minutes(
+      current_setting('test.assignment_source_allocation_id')::uuid,
+      v_queue_date + 3,
+      1,
+      'محاولة نقل دقائق تخص مشترك مشغّل آخر'
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Former operator transferred another operator weekly entitlement minutes';
+  END IF;
+END;
+$operator_a1_transfer_forbidden$;
 
 -- The global queue still exposes the turn position, but not another operator's
 -- subscriber identity, branch, minutes, operation, or event metadata.
