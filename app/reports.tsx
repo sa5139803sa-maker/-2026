@@ -423,7 +423,7 @@ export default function ReportsScreen() {
                 <View style={styles.eventBody}>
                   <Text style={styles.dataLabel}>{eventLabel(event.event_type)}</Text>
                   <Text style={styles.smallNote}>
-                    بواسطة: {actorNames[event.actor_id] ?? (event.actor_id === profile?.id ? profile.display_name : "مستخدم مخوّل")}
+                    بواسطة: {actorNames[event.actor_id] ?? (event.actor_id === profile?.id ? (profile?.display_name ?? "المستخدم الحالي") : "مستخدم مخوّل")}
                   </Text>
                   <Text style={styles.smallNote}>{formatDateTime(event.occurred_at)}</Text>
                 </View>
