@@ -96,6 +96,7 @@ DECLARE
   v_operation public.pump_operations%ROWTYPE;
   v_next_item_id uuid;
   v_token uuid;
+  v_previous_token uuid;
   v_rejected boolean := false;
   v_count bigint;
 BEGIN
@@ -179,6 +180,53 @@ BEGIN
          AND auto_advance_at <= clock_timestamp() + interval '3 seconds'
      ) THEN
     RAISE EXCEPTION 'Completion did not persist a three-second auto-advance deadline';
+  END IF;
+
+  v_previous_token := v_token;
+  SELECT queue_version INTO v_version
+  FROM public.daily_queues
+  WHERE id = v_queue_id;
+
+  v_result := public.reorder_daily_queue(
+    v_queue_id,
+    v_version,
+    ARRAY[v_additional_item_id, v_guest_item_id]::uuid[],
+    NULL
+  );
+  SELECT auto_advance_queue_item_id, auto_advance_token
+  INTO v_next_item_id, v_token
+  FROM public.daily_queues
+  WHERE id = v_queue_id;
+
+  IF v_result->>'branch_conflict_count' <> '0'
+     OR v_next_item_id IS DISTINCT FROM v_additional_item_id
+     OR v_token IS NULL
+     OR v_token = v_previous_token
+     OR NOT EXISTS (
+       SELECT 1 FROM public.queue_items
+       WHERE id = v_weekly_item_id AND sort_order = 0 AND status = 'completed'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM public.queue_items
+       WHERE id = v_additional_item_id AND sort_order = 1 AND status = 'queued'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM public.queue_items
+       WHERE id = v_guest_item_id AND sort_order = 2 AND status = 'queued'
+     ) THEN
+    RAISE EXCEPTION 'Reordering the waiting tail changed completed history or failed to retarget the auto-advance token';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.start_next_daily_queue_item(
+      v_queue_id, v_additional_item_id, v_previous_token, v_source_id
+    );
+  EXCEPTION WHEN no_data_found THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'The superseded auto-advance token was accepted after reordering';
   END IF;
 
   PERFORM public.cancel_daily_queue_auto_advance(
