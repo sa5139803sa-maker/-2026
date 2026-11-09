@@ -1589,11 +1589,10 @@ BEGIN
   FROM public.pumps p
   WHERE p.id = p_pump_id
     AND p.organization_id = v_org_id
-    AND p.status = 'active'
   FOR UPDATE;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'Pump is not active or not accessible'
+    RAISE EXCEPTION 'Pump is not accessible'
       USING ERRCODE = '42501';
   END IF;
 
