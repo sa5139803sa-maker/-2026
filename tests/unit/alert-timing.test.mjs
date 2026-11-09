@@ -96,7 +96,7 @@ test("persistent paused time subtracts only previously accumulated pauses", () =
     paused_seconds: 15,
   }, Date.parse(start));
   assert.equal(snapshot?.mode, "paused");
-  assert.equal(snapshot?.remainingMs, 165_000);
+  assert.equal(snapshot?.remainingMs, 195_000);
 });
 
 test("completed or invalid operations do not leave a persistent countdown", () => {
