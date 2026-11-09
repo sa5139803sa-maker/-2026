@@ -865,8 +865,8 @@ BEGIN
     v_subscriber_name := NULL;
 
     IF v_entry_type = 'weekly' THEN
-      IF v_schedule_entry_id IS NULL OR v_allocation_id IS NULL OR v_subscriber_id IS NULL THEN
-        RAISE EXCEPTION 'Weekly items require schedule entry, subscriber, and allocation identifiers'
+      IF v_schedule_entry_id IS NULL OR v_subscriber_id IS NULL THEN
+        RAISE EXCEPTION 'Weekly items require a schedule entry and subscriber'
           USING ERRCODE = '22023';
       END IF;
 
@@ -892,6 +892,18 @@ BEGIN
       IF v_subscriber_name IS NULL THEN
         RAISE EXCEPTION 'Weekly report item does not match an effective schedule entry for this day and pump'
           USING ERRCODE = '23503';
+      END IF;
+
+      IF v_allocation_id IS NULL THEN
+        SELECT a.id INTO v_allocation_id
+        FROM public.weekly_entitlement_allocations a
+        WHERE a.organization_id = v_org_id
+          AND a.pump_id = p_pump_id
+          AND a.subscriber_id = v_subscriber_id
+          AND a.allocation_date = v_work_date
+          AND a.source_schedule_entry_id = v_schedule_entry_id
+        ORDER BY a.created_at DESC, a.id
+        LIMIT 1;
       END IF;
 
       SELECT a.allocated_minutes INTO v_scheduled_minutes
@@ -929,9 +941,37 @@ BEGIN
         AND op.status = 'completed';
 
     ELSIF v_entry_type = 'weekly_reassigned' THEN
-      IF v_schedule_entry_id IS NOT NULL OR v_allocation_id IS NULL OR v_subscriber_id IS NULL THEN
-        RAISE EXCEPTION 'Reassigned weekly items require an allocation and subscriber, but no schedule entry'
+      IF v_schedule_entry_id IS NOT NULL OR v_subscriber_id IS NULL THEN
+        RAISE EXCEPTION 'Reassigned weekly items require a subscriber and no template schedule entry'
           USING ERRCODE = '22023';
+      END IF;
+
+      IF v_allocation_id IS NULL THEN
+        SELECT a.id INTO v_allocation_id
+        FROM public.weekly_entitlement_allocations a
+        JOIN public.weekly_entitlement_cycles c
+          ON c.id = a.weekly_entitlement_cycle_id
+         AND c.organization_id = a.organization_id
+         AND c.pump_id = a.pump_id
+        JOIN public.weekly_schedules ws
+          ON ws.id = c.weekly_schedule_id
+         AND ws.organization_id = c.organization_id
+         AND ws.pump_id = c.pump_id
+        JOIN public.weekly_schedule_subscribers membership
+          ON membership.weekly_schedule_id = ws.id
+         AND membership.organization_id = ws.organization_id
+         AND membership.pump_id = ws.pump_id
+         AND membership.subscriber_id = a.subscriber_id
+        WHERE a.organization_id = v_org_id
+          AND a.pump_id = p_pump_id
+          AND a.subscriber_id = v_subscriber_id
+          AND a.allocation_date = v_work_date
+          AND a.source_schedule_entry_id IS NULL
+          AND ws.status IN ('active', 'archived')
+          AND v_work_date >= ws.effective_from
+          AND (ws.effective_to IS NULL OR v_work_date <= ws.effective_to)
+        ORDER BY ws.effective_from DESC, ws.created_at DESC, a.created_at DESC
+        LIMIT 1;
       END IF;
 
       SELECT a.allocated_minutes, s.full_name
