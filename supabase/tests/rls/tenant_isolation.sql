@@ -67,6 +67,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109120000_create_daily_queue_backend.sql
 \ir ../../migrations/20261109130000_version_weekly_entitlements_and_guarded_schedule_rpcs.sql
 \ir ../../migrations/20261109140000_add_pump_operation_time_extension.sql
+\ir ../../migrations/20261109150000_create_weekly_entitlement_ledger.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
