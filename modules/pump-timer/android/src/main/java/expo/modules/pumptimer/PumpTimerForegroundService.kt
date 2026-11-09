@@ -8,6 +8,8 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.IBinder
 import java.util.Locale
 
@@ -29,6 +31,9 @@ class PumpTimerForegroundService : Service() {
     private const val MODE_PAUSED = "paused"
   }
 
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private var expiryRunnable: Runnable? = null
+
   override fun onCreate() {
     super.onCreate()
     createNotificationChannel()
@@ -37,6 +42,7 @@ class PumpTimerForegroundService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onDestroy() {
+    cancelExpiryCheck()
     stopForeground(STOP_FOREGROUND_REMOVE)
     super.onDestroy()
   }
@@ -57,6 +63,7 @@ class PumpTimerForegroundService : Service() {
           .remove(KEY_REMAINING_MS)
           .apply()
         startAsForeground(buildRunningNotification(endAt))
+        scheduleExpiryCheck(endAt)
       }
       ACTION_PAUSE -> {
         val operationId = intent.getStringExtra(EXTRA_OPERATION_ID).orEmpty()
@@ -65,6 +72,7 @@ class PumpTimerForegroundService : Service() {
           stopServiceAndClearState(startId)
           return START_NOT_STICKY
         }
+        cancelExpiryCheck()
         preferences().edit()
           .putString(KEY_MODE, MODE_PAUSED)
           .putString(EXTRA_OPERATION_ID, operationId)
@@ -74,6 +82,7 @@ class PumpTimerForegroundService : Service() {
         startAsForeground(buildPausedNotification(remaining))
       }
       ACTION_STOP -> {
+        cancelExpiryCheck()
         stopServiceAndClearState(startId)
         return START_NOT_STICKY
       }
@@ -84,13 +93,45 @@ class PumpTimerForegroundService : Service() {
 
   private fun preferences() = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
 
+  /**
+   * The OS chronometer reaches zero. This native deadline check then removes
+   * the foreground notification, avoiding a stale 00:00 service. It does not
+   * complete the Supabase operation or advance the queue.
+   */
+  private fun scheduleExpiryCheck(endAtEpochMs: Long) {
+    cancelExpiryCheck()
+    val check = object : Runnable {
+      override fun run() {
+        val remainingMs = endAtEpochMs - System.currentTimeMillis()
+        if (remainingMs <= 0L) {
+          preferences().edit().clear().apply()
+          stopForeground(STOP_FOREGROUND_REMOVE)
+          stopSelf()
+        } else {
+          mainHandler.postDelayed(this, minOf(remainingMs, 10_000L))
+        }
+      }
+    }
+    expiryRunnable = check
+    mainHandler.postDelayed(check, minOf((endAtEpochMs - System.currentTimeMillis()).coerceAtLeast(0L), 10_000L))
+  }
+
+  private fun cancelExpiryCheck() {
+    expiryRunnable?.let(mainHandler::removeCallbacks)
+    expiryRunnable = null
+  }
+
   private fun restorePersistedNotification(startId: Int) {
     val prefs = preferences()
     when (prefs.getString(KEY_MODE, null)) {
       MODE_RUNNING -> {
         val endAt = prefs.getLong(KEY_END_AT, 0L)
-        if (endAt > 0L) startAsForeground(buildRunningNotification(endAt))
-        else stopServiceAndClearState(startId)
+        if (endAt > System.currentTimeMillis()) {
+          startAsForeground(buildRunningNotification(endAt))
+          scheduleExpiryCheck(endAt)
+        } else {
+          stopServiceAndClearState(startId)
+        }
       }
       MODE_PAUSED -> {
         val remaining = prefs.getLong(KEY_REMAINING_MS, 0L).coerceAtLeast(0L)
@@ -151,7 +192,7 @@ class PumpTimerForegroundService : Service() {
   private fun buildPausedNotification(remainingMs: Long): Notification =
     baseBuilder()
       .setContentTitle("عداد التعبئة متوقف مؤقتًا")
-      .setContentText("الوقت المتبقي: \${formatDuration(remainingMs)}")
+      .setContentText("الوقت المتبقي: ${formatDuration(remainingMs)}")
       .setShowWhen(false)
       .setUsesChronometer(false)
       .build()
