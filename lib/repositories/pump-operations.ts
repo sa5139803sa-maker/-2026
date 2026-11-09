@@ -61,6 +61,8 @@ export type WeeklyEntitlementAllocationForDay = {
   allocated_minutes: number;
   consumed_minutes: number;
   available_minutes: number;
+  weekday: number;
+  sort_order: number;
   subscribers: {
     id: string;
     full_name: string;
@@ -455,15 +457,57 @@ export const pumpOperationsRepository = {
       .order("sort_order", { ascending: true });
   },
 
-  listWeeklyEntitlementAllocationsForDay(organizationId: string, pumpId: string, workDate: string) {
-    return supabase
-      .from("weekly_entitlement_allocations")
-      .select("id,subscriber_id,allocation_date,source_schedule_entry_id,original_minutes,allocated_minutes,consumed_minutes,available_minutes,subscribers!inner(id,full_name,subscriber_number,branch_id,operator_id)")
-      .eq("organization_id", organizationId)
-      .eq("pump_id", pumpId)
-      .eq("allocation_date", workDate)
-      .gt("allocated_minutes", 0)
-      .order("subscriber_id", { ascending: true });
+  async listWeeklyEntitlementAllocationsForDay(
+    _organizationId: string,
+    pumpId: string,
+    workDate: string,
+  ) {
+    const result = await supabase.rpc("get_daily_work_report_allocations", {
+      p_pump_id: pumpId,
+      p_work_date: workDate,
+    });
+
+    if (result.error) return { data: null, error: result.error };
+
+    const rows = (result.data ?? []) as {
+      id: string;
+      subscriber_id: string;
+      allocation_date: string;
+      source_schedule_entry_id: string | null;
+      original_minutes: number;
+      allocated_minutes: number;
+      consumed_minutes: number;
+      available_minutes: number;
+      weekday: number;
+      sort_order: number;
+      full_name: string;
+      subscriber_number: number;
+      branch_id: string | null;
+      operator_id: string | null;
+    }[];
+
+    return {
+      data: rows.map((row) => ({
+        id: row.id,
+        subscriber_id: row.subscriber_id,
+        allocation_date: row.allocation_date,
+        source_schedule_entry_id: row.source_schedule_entry_id,
+        original_minutes: row.original_minutes,
+        allocated_minutes: row.allocated_minutes,
+        consumed_minutes: row.consumed_minutes,
+        available_minutes: row.available_minutes,
+        weekday: row.weekday,
+        sort_order: row.sort_order,
+        subscribers: {
+          id: row.subscriber_id,
+          full_name: row.full_name,
+          subscriber_number: row.subscriber_number,
+          branch_id: row.branch_id,
+          operator_id: row.operator_id,
+        },
+      })) satisfies WeeklyEntitlementAllocationForDay[],
+      error: null,
+    };
   },
 
   listWeeklyQueueItemsForReport(organizationId: string, pumpId: string, workDate: string) {
