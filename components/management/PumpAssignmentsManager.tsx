@@ -37,7 +37,7 @@ const roleOrder: AssignmentRole[] = ["operator", "collector", "supervisor"];
 
 function friendlyError(error: { code?: string }): string {
   if (error.code === "23505") {
-    return "هذا الموظف مسند بالفعل، أو أن خانة هذا الدور مشغولة على الغطاس.";
+    return "هذا الموظف مسند بالفعل إلى الغطاس.";
   }
   if (error.code === "23503" || error.code === "23514") {
     return "تعذر الإسناد لأن دور الموظف أو المؤسسة لا يطابق بيانات الغطاس.";
@@ -216,7 +216,7 @@ export function PumpAssignmentsManager({ organizationId, pumps }: Props) {
           <View style={styles.headingText}>
             <Text style={styles.title}>توزيع الموظفين على الغواطس</Text>
             <Text style={styles.subtitle}>
-              عيّن مشغّلًا ومحصّلًا، ويمكن إسناد أكثر من مشرف إلى الغطاس.
+              عيّن مشغّلًا واحدًا، وعدة محصّلين ومشرفين عند الحاجة.
             </Text>
           </View>
           <View style={styles.headingIcon}>
@@ -256,7 +256,7 @@ export function PumpAssignmentsManager({ organizationId, pumps }: Props) {
                     const roleAssignments = pumpAssignments.filter(
                       (assignment) => assignment.assignment_role === role,
                     );
-                    const isSingleSlot = role !== "supervisor";
+                    const isSingleSlot = role === "operator";
                     const hasAssignedEmployee = isSingleSlot && roleAssignments.length > 0;
                     const available = getAssignableEmployees(role, pump.id, employees, assignments);
                     const canAdd = !hasAssignedEmployee && available.length > 0;
@@ -266,7 +266,7 @@ export function PumpAssignmentsManager({ organizationId, pumps }: Props) {
                       <View key={role} style={styles.roleBlock}>
                         <View style={styles.roleHeading}>
                           <Text style={styles.roleLabel}>{roleLabels[role]}</Text>
-                          {role === "supervisor" ? <Text style={styles.roleHint}>متعدد</Text> : null}
+                          {role !== "operator" ? <Text style={styles.roleHint}>متعدد</Text> : null}
                         </View>
 
                         {roleAssignments.length > 0 ? (
@@ -311,8 +311,8 @@ export function PumpAssignmentsManager({ organizationId, pumps }: Props) {
                           >
                             <Plus size={16} color={colors.brand.primary} />
                             <Text style={styles.addText}>
-                              {role === "supervisor" && roleAssignments.length > 0
-                                ? "إضافة مشرف آخر"
+                              {role !== "operator" && roleAssignments.length > 0
+                                ? role === "collector" ? "إضافة محصّل آخر" : "إضافة مشرف آخر"
                                 : "إسناد موظف"}
                             </Text>
                           </Pressable>
