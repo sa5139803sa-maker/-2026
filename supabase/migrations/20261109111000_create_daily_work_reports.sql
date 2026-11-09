@@ -412,7 +412,7 @@ BEGIN
         AND e.pump_id = p_pump_id
         AND e.subscriber_id = v_subscriber_id
         AND e.weekday = extract(isodow FROM v_work_date)::integer
-        AND ws.status = 'active'
+        AND ws.status IN ('active', 'archived')
         AND v_work_date >= ws.effective_from
         AND (ws.effective_to IS NULL OR v_work_date <= ws.effective_to);
       IF v_scheduled_minutes IS NULL OR v_subscriber_name IS NULL THEN
@@ -692,7 +692,7 @@ BEGIN
       FROM public.weekly_schedules ws
       WHERE ws.organization_id = v_org_id
         AND ws.pump_id = d.pump_id
-        AND ws.status = 'active'
+        AND ws.status IN ('active', 'archived')
         AND d.work_day >= ws.effective_from
         AND (ws.effective_to IS NULL OR d.work_day <= ws.effective_to)
       ORDER BY ws.effective_from DESC
