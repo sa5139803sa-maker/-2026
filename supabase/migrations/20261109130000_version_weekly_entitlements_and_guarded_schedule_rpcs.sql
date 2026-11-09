@@ -22,11 +22,34 @@ CREATE TABLE public.weekly_schedule_subscribers (
 CREATE INDEX weekly_schedule_subscribers_subscriber_idx
   ON public.weekly_schedule_subscribers (organization_id, pump_id, subscriber_id, weekly_schedule_id);
 
+-- Upgrade path: preserve schedules created after the initial weekly schema
+-- migration by capturing their current quota/day before enforcing the new FK.
+INSERT INTO public.weekly_schedule_subscribers (
+  weekly_schedule_id, organization_id, pump_id, subscriber_id,
+  weekly_quota_minutes, default_weekday
+)
+SELECT
+  e.weekly_schedule_id,
+  e.organization_id,
+  e.pump_id,
+  e.subscriber_id,
+  s.weekly_quota_minutes,
+  s.default_weekday
+FROM public.schedule_entries e
+JOIN public.subscribers s
+  ON s.id = e.subscriber_id
+ AND s.organization_id = e.organization_id
+ AND s.pump_id = e.pump_id
+GROUP BY e.weekly_schedule_id, e.organization_id, e.pump_id,
+         e.subscriber_id, s.weekly_quota_minutes, s.default_weekday
+ON CONFLICT (weekly_schedule_id, subscriber_id) DO NOTHING;
+
 ALTER TABLE public.schedule_entries
   ADD CONSTRAINT schedule_entries_weekly_member_fkey
   FOREIGN KEY (weekly_schedule_id, subscriber_id)
   REFERENCES public.weekly_schedule_subscribers (weekly_schedule_id, subscriber_id)
   ON DELETE CASCADE;
+
 
 COMMENT ON TABLE public.weekly_schedule_subscribers IS
   'Versioned weekly quota and preferred weekday snapshots. Updating a future schedule cannot rewrite the entitlement history of a previously active week.';
@@ -332,6 +355,7 @@ BEGIN
   IF p_pump_id IS NULL OR p_name IS NULL
      OR char_length(btrim(p_name)) NOT BETWEEN 2 AND 100
      OR p_effective_from IS NULL
+     OR p_week_starts_on IS NULL
      OR p_week_starts_on NOT BETWEEN 1 AND 7
      OR extract(isodow FROM p_effective_from)::integer <> p_week_starts_on
      OR (p_effective_to IS NOT NULL AND p_effective_to < p_effective_from)
