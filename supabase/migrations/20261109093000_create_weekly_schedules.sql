@@ -98,6 +98,30 @@ CREATE INDEX schedule_entries_subscriber_scope_idx
 CREATE INDEX schedule_entries_weekday_order_idx
   ON public.schedule_entries (weekly_schedule_id, weekday, sort_order, id);
 
+-- Organization deletion cascades through pumps and subscribers. Remove the
+-- schedule versions first so the subscriber RESTRICT foreign key continues
+-- protecting ordinary subscriber deletion without blocking tenant teardown.
+CREATE FUNCTION water_management_private.delete_organization_weekly_schedules()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $delete_organization_weekly_schedules$
+BEGIN
+  DELETE FROM public.weekly_schedules
+  WHERE organization_id = OLD.id;
+  RETURN OLD;
+END;
+$delete_organization_weekly_schedules$;
+
+REVOKE ALL ON FUNCTION water_management_private.delete_organization_weekly_schedules()
+  FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER delete_organization_weekly_schedules
+  BEFORE DELETE ON public.organizations
+  FOR EACH ROW
+  EXECUTE FUNCTION water_management_private.delete_organization_weekly_schedules();
+
 -- The client supplies only the schedule and subscriber IDs. Tenant and pump
 -- scope are derived from the visible draft schedule and cannot be forged.
 CREATE FUNCTION water_management_private.prepare_schedule_entry_scope()
