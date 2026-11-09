@@ -27,6 +27,7 @@ type Operation = {
   status: "running" | "paused" | "completed";
   started_at: string;
   paused_at: string | null;
+  pause_reason: string | null;
   paused_seconds: number;
   ended_at: string | null;
   actual_seconds: number | null;
@@ -82,6 +83,7 @@ function OperationsScreenContent() {
   const [operations, setOperations] = useState<Operation[]>([]);
   const [minutes, setMinutes] = useState("30");
   const [emergencyName, setEmergencyName] = useState("");
+  const [pauseReason, setPauseReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -169,7 +171,7 @@ function OperationsScreenContent() {
           .eq("is_active", true)
           .order("subscriber_number", { ascending: true }),
         supabase.from("pump_operations")
-          .select("id,pump_id,subscriber_id,subscriber_name,planned_minutes,status,started_at,paused_at,paused_seconds,ended_at,actual_seconds,operation_date")
+          .select("id,pump_id,subscriber_id,subscriber_name,planned_minutes,status,started_at,paused_at,pause_reason,paused_seconds,ended_at,actual_seconds,operation_date")
           .eq("organization_id", organizationId)
           .eq("pump_id", selectedPumpId)
           .or(`operation_date.eq.${day},status.in.(running,paused)`)
@@ -269,7 +271,12 @@ function OperationsScreenContent() {
     setBusy(true);
     setError(null);
     setNotice(null);
-    const { error: actionError } = await supabase.rpc(action, { p_operation_id: activeOperation.id });
+    const { error: actionError } = action === "pause_pump_operation"
+      ? await supabase.rpc(action, {
+          p_operation_id: activeOperation.id,
+          p_reason: pauseReason.trim(),
+        })
+      : await supabase.rpc(action, { p_operation_id: activeOperation.id });
     if (actionError) {
       console.error("pump operation state change failed", action, actionError);
       setError(friendlyError(actionError));
@@ -280,6 +287,7 @@ function OperationsScreenContent() {
         complete_pump_operation: "انتهت مدة التعبئة، وتم حفظ زمنها الفعلي.",
       };
       setNotice(messages[action]);
+      if (action === "pause_pump_operation") setPauseReason("");
       await loadPumpData();
     }
     setBusy(false);
@@ -367,12 +375,29 @@ function OperationsScreenContent() {
               <View style={styles.activeDetails}>
                 <Text style={styles.detailText}>بدأت: {formatTime(activeOperation.started_at)}</Text>
                 <Text style={styles.detailText}>المدة المحددة: {activeOperation.planned_minutes} دقيقة</Text>
+                {activeOperation.pause_reason ? <Text style={styles.detailText}>سبب التوقف: {activeOperation.pause_reason}</Text> : null}
               </View>
               <View style={styles.actionRow}>
                 {activeOperation.status === "running" ? (
-                  <Pressable disabled={busy} onPress={() => void runAction("pause_pump_operation")} style={[styles.actionButton, styles.pauseButton, busy && styles.disabled]}>
-                    <Pause size={18} color="#fff" /><Text style={styles.actionText}>إيقاف مؤقت</Text>
-                  </Pressable>
+                  <View style={styles.pauseControl}>
+                    <Text style={styles.fieldLabel}>سبب الإيقاف المؤقت</Text>
+                    <TextInput
+                      value={pauseReason}
+                      onChangeText={setPauseReason}
+                      placeholder="مثال: انقطاع الكهرباء أو انتظار إصلاح"
+                      maxLength={240}
+                      textAlign="right"
+                      style={styles.pauseReasonInput}
+                      accessibilityLabel="سبب الإيقاف المؤقت"
+                    />
+                    <Pressable
+                      disabled={busy || pauseReason.trim().length < 2}
+                      onPress={() => void runAction("pause_pump_operation")}
+                      style={[styles.actionButton, styles.pauseButton, (busy || pauseReason.trim().length < 2) && styles.disabled]}
+                    >
+                      <Pause size={18} color="#fff" /><Text style={styles.actionText}>إيقاف مؤقت مع حفظ السبب</Text>
+                    </Pressable>
+                  </View>
                 ) : (
                   <Pressable disabled={busy} onPress={() => void runAction("resume_pump_operation")} style={[styles.actionButton, styles.resumeButton, busy && styles.disabled]}>
                     <Play size={18} color="#fff" /><Text style={styles.actionText}>استئناف</Text>
@@ -484,8 +509,10 @@ const styles = StyleSheet.create({
   activeDetails: { flexDirection: "row-reverse", flexWrap: "wrap", justifyContent: "space-between", gap: spacing.sm },
   detailText: { color: "#C3D4DC", fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular },
   actionRow: { flexDirection: "row-reverse", gap: spacing.sm },
-  actionButton: { flex: 1, minHeight: 50, borderRadius: radius.md, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: spacing.xs },
+  actionButton: { flex: 1, minHeight: 56, borderRadius: radius.md, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: spacing.xs },
   pauseButton: { backgroundColor: "#C17A24" },
+  pauseControl: { flex: 1, gap: spacing.xs },
+  pauseReasonInput: { minHeight: 46, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, color: colors.text.primary, backgroundColor: colors.background.surface },
   resumeButton: { backgroundColor: colors.brand.teal },
   completeButton: { backgroundColor: "#27815D" },
   actionText: { color: "#fff", fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.bold },
@@ -499,7 +526,7 @@ const styles = StyleSheet.create({
   queueInfo: { flex: 1, alignItems: "flex-end", gap: 3 },
   queueName: { color: colors.text.primary, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.bold },
   queueMeta: { color: colors.text.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular },
-  startButton: { minWidth: 72, minHeight: 40, borderRadius: radius.sm, backgroundColor: colors.brand.primary, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: 4 },
+  startButton: { minWidth: 72, minHeight: 48, borderRadius: radius.sm, backgroundColor: colors.brand.primary, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: 4 },
   startText: { color: "#fff", fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.bold },
   emergencyBlock: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md, gap: spacing.sm },
   emergencyInput: { minHeight: 46, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, color: colors.text.primary, backgroundColor: colors.background.surface },
