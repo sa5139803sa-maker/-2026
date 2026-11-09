@@ -1711,7 +1711,7 @@ BEGIN
   END IF;
 
   v_index := to_regclass('public.subscribers_branch_tenant_idx');
-  IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(branch_id, organization_id, pump_id)' THEN
+  IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(branch_id, organization_id, pump_id)%' THEN
     RAISE EXCEPTION 'Missing covering index for subscribers branch tenant foreign key';
   END IF;
 
