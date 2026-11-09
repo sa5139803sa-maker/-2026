@@ -57,6 +57,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109072000_move_pump_operation_definers_to_private_schema.sql
 \ir ../../migrations/20261109073000_add_rls_scoped_operations_dashboard_aggregate.sql
 \ir ../../migrations/20261109074000_add_append_only_pump_operation_event_ledger.sql
+\ir ../../migrations/20261109075000_add_monotonic_event_sequence_to_pump_operation_ledger.sql
 \ir ../../migrations/20261109072000_move_pump_operation_definers_to_private_schema.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
@@ -837,7 +838,7 @@ BEGIN
     RAISE EXCEPTION 'Authenticated manager directly modified an operation outside the RPC';
   END IF;
 
-  SELECT array_agg(event_type ORDER BY occurred_at, id)
+  SELECT array_agg(event_type ORDER BY event_sequence)
   INTO v_event_types
   FROM public.pump_operation_events
   WHERE operation_id = v_operation.id;
