@@ -103,6 +103,21 @@ export const pumpOperationsRepository = {
       .order("name", { ascending: true });
   },
 
+  createPowerSource(pumpId: string, name: string, sourceType: PumpPowerSource["source_type"]) {
+    return supabase
+      .from("pump_power_sources")
+      .insert({ pump_id: pumpId, name: name.trim(), source_type: sourceType })
+      .select("id,pump_id,name,source_type,is_active")
+      .single();
+  },
+
+  archivePowerSource(sourceId: string) {
+    return supabase
+      .from("pump_power_sources")
+      .update({ is_active: false })
+      .eq("id", sourceId);
+  },
+
   listDailyScheduleEntries(organizationId: string, pumpId: string, workDate: string) {
     const weekday = new Date(`${workDate}T12:00:00Z`).getUTCDay() || 7;
     return supabase
@@ -111,7 +126,7 @@ export const pumpOperationsRepository = {
       .eq("organization_id", organizationId)
       .eq("pump_id", pumpId)
       .eq("weekday", weekday)
-      .eq("weekly_schedules.status", "active")
+      .in("weekly_schedules.status", ["active", "archived"])
       .lte("weekly_schedules.effective_from", workDate)
       .or(`effective_to.is.null,effective_to.gte.${workDate}`, { referencedTable: "weekly_schedules" })
       .order("sort_order", { ascending: true });
