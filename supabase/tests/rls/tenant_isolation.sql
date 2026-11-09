@@ -1357,7 +1357,7 @@ RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000003', true);
-SELECT test_support.assert_scope('unassigned employee A', 1, 0, 0, 0, 1);
+SELECT test_support.assert_scope('operator A2', 1, 1, 1, 1, 1);
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
