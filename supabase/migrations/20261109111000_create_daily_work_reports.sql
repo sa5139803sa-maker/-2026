@@ -147,6 +147,31 @@ CREATE INDEX daily_work_report_events_report_time_idx
 CREATE INDEX daily_work_report_events_pump_time_idx
   ON public.daily_work_report_events (organization_id, pump_id, occurred_at DESC);
 
+-- A pump deletion cascades to its sources and reports. Remove report children
+-- before the source cascade so the RESTRICT source FK preserves normal history
+-- but does not block an authorized pump teardown.
+CREATE OR REPLACE FUNCTION water_management_private.delete_pump_daily_work_reports()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $
+BEGIN
+  DELETE FROM public.daily_work_reports
+  WHERE organization_id = OLD.organization_id
+    AND pump_id = OLD.id;
+  RETURN OLD;
+END;
+$;
+ALTER FUNCTION water_management_private.delete_pump_daily_work_reports() OWNER TO postgres;
+REVOKE ALL ON FUNCTION water_management_private.delete_pump_daily_work_reports()
+  FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER delete_pump_daily_work_reports
+  BEFORE DELETE ON public.pumps
+  FOR EACH ROW
+  EXECUTE FUNCTION water_management_private.delete_pump_daily_work_reports();
+
 ALTER TABLE public.daily_work_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.daily_work_source_totals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.daily_work_report_items ENABLE ROW LEVEL SECURITY;
