@@ -115,19 +115,22 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  -- Lock the subscriber before capturing its responsible operator. This
+  -- serializes manager-started operations with the reassignment RPC as well
+  -- as operator-started operations.
   SELECT s.operator_id INTO NEW.subscriber_operator_id
   FROM public.subscribers s
   WHERE s.id = NEW.subscriber_id
     AND s.organization_id = NEW.organization_id
-    AND s.pump_id = NEW.pump_id;
+    AND s.pump_id = NEW.pump_id
+  FOR KEY SHARE;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Operation subscriber does not belong to the same organization and pump'
       USING ERRCODE = '23503';
   END IF;
 
-  IF NEW.subscriber_operator_id IS NULL
-     AND water_management_private.current_user_role() = 'operator'::public.app_role THEN
+  IF NEW.subscriber_operator_id IS NULL THEN
     RAISE EXCEPTION 'Registered operation requires an assigned subscriber operator'
       USING ERRCODE = '23503';
   END IF;
@@ -192,6 +195,28 @@ WHERE s.id = ri.subscriber_id
 CREATE INDEX daily_work_report_items_assigned_operator_idx
   ON public.daily_work_report_items (daily_work_report_id, assigned_operator_id)
   WHERE assigned_operator_id IS NOT NULL;
+
+-- The custom GUC used by the original guard is client-settable and is not a
+-- security capability. Only the SECURITY DEFINER assignment RPC, whose owner
+-- is postgres, may change subscribers.operator_id.
+CREATE OR REPLACE FUNCTION water_management_private.guard_subscriber_operator_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $guard_subscriber_operator_change_hardened$
+BEGIN
+  IF NEW.operator_id IS DISTINCT FROM OLD.operator_id
+     AND current_user <> 'postgres' THEN
+    RAISE EXCEPTION 'Use assign_subscriber_operator to change subscriber responsibility'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$guard_subscriber_operator_change_hardened$;
+
+ALTER FUNCTION water_management_private.assign_subscriber_operator_internal(uuid, uuid, text)
+  OWNER TO postgres;
 
 -- Subscriber master rows: an operator sees only their own assigned subscribers.
 DROP POLICY IF EXISTS "members_select_subscribers" ON public.subscribers;
@@ -782,7 +807,13 @@ BEGIN
           'started_at', qi.started_at,
           'completed_at', qi.completed_at,
           'weekly_entitlement_allocation_id', qi.weekly_entitlement_allocation_id,
-          'is_owned', true
+          'is_owned', (
+            v_role = 'manager'::public.app_role
+            OR (
+              v_role = 'operator'::public.app_role
+              AND qi.assigned_operator_id = v_user_id
+            )
+          )
         )
         ELSE jsonb_build_object(
           'id', qi.id,
