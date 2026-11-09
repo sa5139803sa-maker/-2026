@@ -903,7 +903,7 @@ BEGIN
       'جدول غير متوازن',
       v_cycle_start,
       NULL,
-      1,
+    1::smallint,
       jsonb_build_array(jsonb_build_object(
         'subscriber_id','30000000-0000-4000-8000-000000000002',
         'weekly_quota_minutes',55,
@@ -926,7 +926,7 @@ BEGIN
     'جدول مشترك ب 2 الحالي',
     v_cycle_start,
     NULL,
-    1,
+    1::smallint,
     jsonb_build_array(jsonb_build_object(
       'subscriber_id','30000000-0000-4000-8000-000000000002',
       'weekly_quota_minutes',55,
@@ -962,7 +962,7 @@ BEGIN
     'جدول مشترك ب 2 القادم',
     v_next_cycle_start,
     NULL,
-    1,
+    1::smallint,
     jsonb_build_array(jsonb_build_object(
       'subscriber_id','30000000-0000-4000-8000-000000000002',
       'weekly_quota_minutes',70,
