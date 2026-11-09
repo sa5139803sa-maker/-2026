@@ -42,4 +42,6 @@ jobs:
       - name: Run migration and RLS integration suite
         run: |
           psql --version
-          psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file supabase/tests/rls/tenant_isolation.sql
+          psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --set PERSIST_CONCURRENCY_FIXTURES=1 --file supabase/tests/rls/tenant_isolation.sql
+      - name: Run genuine two-session daily report concurrency test
+        run: bash supabase/tests/concurrency/run.sh
