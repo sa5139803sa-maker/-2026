@@ -1424,7 +1424,9 @@ function OperationsScreenContent() {
                                   <View style={styles.weeklyTransferInfo}>
                                     <Text style={styles.queueName}>{item.subscriber_name}</Text>
                                     <Text style={styles.queueMeta}>
-                                      من تاريخ {item.source_date} · متاح {item.available_minutes} د · استهلك {item.weekly_consumed_minutes} من {item.weekly_quota_minutes} د
+                                      من تاريخ {item.source_date} · المتاح في هذا اليوم {item.available_minutes} د
+                                      {" · استهلك أسبوعيًا "}{item.weekly_consumed_minutes} من {item.weekly_quota_minutes} د
+                                      {" · المتبقي من الحصة الأسبوعية "}{item.weekly_remaining_minutes} د
                                     </Text>
                                   </View>
                                   <View style={styles.weeklyTransferAction}>
@@ -1776,6 +1778,8 @@ function OperationsScreenContent() {
                         {item.subscriber_name_snapshot ?? item.external_beneficiary_name ?? "مستفيد إضافي"}
                       </Text>
                       <Text style={styles.historyMeta}>
+                        {item.entry_type === "weekly_reassigned" ? "حصة أسبوعية منقولة · " :
+                          item.entry_type === "weekly" ? "حصة أسبوعية · " : "حصة إضافية · "}
                         {item.fulfillment_status === "complete" ? "مكتملة" :
                           item.fulfillment_status === "partial" ? "جزئية" :
                             item.fulfillment_status === "not_done" ? "لم تتم" : "إضافية"}
