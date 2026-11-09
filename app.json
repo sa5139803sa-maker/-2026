@@ -29,10 +29,21 @@
           "enableBackgroundPlayback": true,
           "enableBackgroundRecording": false
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "water-operation-alerts"
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "android": {
+      "permissions": [
+        "SCHEDULE_EXACT_ALARM"
+      ]
     }
   }
 }
