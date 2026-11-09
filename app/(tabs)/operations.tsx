@@ -927,6 +927,14 @@ function OperationsScreenContent() {
         return;
       }
 
+      if (profile?.role === "manager" || profile?.role === "operator") {
+        const preparationResult = await pumpOperationsRepository.prepareDailyWorkReport(
+          selectedPumpId,
+          date,
+        );
+        if (preparationResult.error) throw preparationResult.error;
+      }
+
       const [
         operationsResult,
         usageResult,
