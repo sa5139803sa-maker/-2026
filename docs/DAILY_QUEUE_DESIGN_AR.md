@@ -135,8 +135,13 @@
 6. ربط Repository وشاشة Android ولوحة الويب، ثم اختبار دورة اليوم كاملة.
 7. بعد قبول التشغيل المتصل، نبدأ تصميم SQLite/Outbox والمزامنة؛ لا نسمي هذه المرحلة Offline First قبل اختبارها دون اتصال.
 
-## 9. حالة هذا الإصدار
+## 9. حالة التنفيذ والتحقق (2026-11-09)
 
-- مكتمل في هذا التغيير: التصميم المقترح وخوارزمية ترتيب مستقلة واختبارات وحدتها.
-- غير مكتمل: أي جدول أو migration أو RPC أو شاشة لإدارة التفرعات والجداول والطابور.
-- لم تتغير قاعدة Supabase في هذا التغيير، ولم تُنشأ بيانات اختبار أو بيانات تشغيل.
+- طُبقت migration `20261109081000_create_pump_branches.sql` على مشروع Supabase `kxdncnswbwktbiphptbr`، وسُجلت كنسخة `20261109090703` باسم `create_pump_branches`.
+- جدول `public.branches` مفعّل عليه RLS، ويتضمن سياسات قراءة scoped حسب المؤسسة وتكليف الغطاس، وسياسات كتابة للمدير فقط. `anon` لا يملك صلاحيات جدولية، كما أن `authenticated` لا يستطيع إدخال `organization_id` أو تعديل `pump_id`.
+- أضيف `subscribers.branch_id` اختياريًا مع FK مركب `(branch_id, organization_id, pump_id)` وقيد يمنع وجود فرع لمشترك بلا غطاس.
+- trigger حذف الغطاس يعمل بصلاحية `SECURITY INVOKER` و`search_path` فارغ، ولا يملك `anon/authenticated` صلاحية استدعاء دالته. يفرغ `branch_id` قبل أن يفرغ FK الغطاس `pump_id`.
+- اختبارات manager الحية لإنشاء/قراءة/حذف التفرع، ورفض تمرير المؤسسة أو تغيير الغطاس، وحذف التفرع والغطاس، نجحت داخل معاملات `ROLLBACK`؛ لا توجد سجلات اختبار متبقية.
+- اختبارات CI الأربعة على `d3fe69005707f5c25e91bd722a958a3bd0f8b7ba` نجحت: Quality #388، Web Console #226، PostgreSQL RLS #695، Secret History #213.
+- يوجد helper مستقل `lib/daily-queue-rules.ts` واختباراته، لكنه غير مربوط بعد ببيانات جدول أسبوعي أو طابور يومي.
+- لا تزال `weekly_schedules`, `schedule_entries`, `schedule_exceptions`, `daily_queues`, `queue_items`, وأحداث الطابور وواجهات إدارتها غير منفذة. لم تُنشأ بيانات تشغيل أو اختبار دائمة.
