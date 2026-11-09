@@ -653,6 +653,16 @@ BEGIN
      OR pg_catalog.has_function_privilege('anon','water_management_private.prepare_schedule_entry_scope()','EXECUTE') THEN
     RAISE EXCEPTION 'Clients can execute the private schedule entry trigger function';
   END IF;
+  IF pg_catalog.has_function_privilege('authenticated','water_management_private.delete_organization_weekly_schedules()','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','water_management_private.delete_organization_weekly_schedules()','EXECUTE')
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_trigger
+       WHERE tgname='delete_organization_weekly_schedules'
+         AND tgrelid='public.organizations'::regclass
+         AND NOT tgisinternal
+     ) THEN
+    RAISE EXCEPTION 'Organization teardown must remove weekly schedules through its private trigger only';
+  END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_proc p
     JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
