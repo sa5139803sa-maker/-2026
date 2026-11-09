@@ -21,7 +21,7 @@ class PumpTimerForegroundService : Service() {
     const val EXTRA_REMAINING_MS = "remaining_ms"
     private const val CHANNEL_ID = "water-pump-timer-ongoing-v1"
     private const val NOTIFICATION_ID = 57031
-    private const val PREFERENCES = "water_pump_timer_foreground_state"
+    const val PREFERENCES = "water_pump_timer_foreground_state"
     private const val KEY_MODE = "mode"
     private const val KEY_END_AT = "end_at_epoch_ms"
     private const val KEY_REMAINING_MS = "remaining_ms"
@@ -35,6 +35,11 @@ class PumpTimerForegroundService : Service() {
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
+
+  override fun onDestroy() {
+    stopForeground(STOP_FOREGROUND_REMOVE)
+    super.onDestroy()
+  }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     when (intent?.action) {
