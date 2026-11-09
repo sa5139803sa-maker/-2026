@@ -55,6 +55,9 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109070000_restrict_pump_operation_lifecycle_to_guarded_rpcs.sql
 \ir ../../migrations/20261109071000_revoke_direct_pump_operation_state_column_updates.sql
 \ir ../../migrations/20261109072000_move_pump_operation_definers_to_private_schema.sql
+\ir ../../migrations/20261109073000_add_rls_scoped_operations_dashboard_aggregate.sql
+\ir ../../migrations/20261109074000_add_append_only_pump_operation_event_ledger.sql
+\ir ../../migrations/20261109072000_move_pump_operation_definers_to_private_schema.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -701,6 +704,18 @@ BEGIN
      OR pg_catalog.has_table_privilege('anon', 'public.pump_operations', 'SELECT') THEN
     RAISE EXCEPTION 'Pump operation table privileges are not least-privilege';
   END IF;
+  IF NOT pg_catalog.has_table_privilege('authenticated', 'public.pump_operation_events', 'SELECT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.pump_operation_events', 'INSERT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.pump_operation_events', 'UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.pump_operation_events', 'DELETE')
+     OR pg_catalog.has_table_privilege('anon', 'public.pump_operation_events', 'SELECT')
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_class c
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'pump_operation_events' AND c.relrowsecurity
+     ) THEN
+    RAISE EXCEPTION 'Operation event ledger access or RLS is not least-privilege';
+  END IF;
   IF pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'started_at', 'INSERT')
      OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'operator_id', 'UPDATE')
      OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'started_at', 'UPDATE')
@@ -709,13 +724,15 @@ BEGIN
     RAISE EXCEPTION 'Clients can directly forge operation identity or timestamps';
   END IF;
   IF NOT pg_catalog.has_function_privilege('authenticated', 'public.start_pump_operation(uuid,uuid,text,integer)', 'EXECUTE')
-     OR NOT pg_catalog.has_function_privilege('authenticated', 'public.pause_pump_operation(uuid)', 'EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated', 'public.pause_pump_operation(uuid,text)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.resume_pump_operation(uuid)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.complete_pump_operation(uuid)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.start_pump_operation(uuid,uuid,text,integer)', 'EXECUTE')
-     OR pg_catalog.has_function_privilege('anon', 'public.pause_pump_operation(uuid)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'public.pause_pump_operation(uuid,text)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.resume_pump_operation(uuid)', 'EXECUTE')
-     OR pg_catalog.has_function_privilege('anon', 'public.complete_pump_operation(uuid)', 'EXECUTE') THEN
+     OR pg_catalog.has_function_privilege('anon', 'public.complete_pump_operation(uuid)', 'EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated', 'public.get_pump_operations_dashboard(date,date)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'public.get_pump_operations_dashboard(date,date)', 'EXECUTE') THEN
     RAISE EXCEPTION 'Pump operation RPC grants are incorrect';
   END IF;
   IF EXISTS (
@@ -742,7 +759,7 @@ BEGIN
     RAISE EXCEPTION 'Private operation lifecycle implementations are not hardened SECURITY DEFINER functions';
   END IF;
   IF NOT pg_catalog.has_function_privilege(
-       'authenticated', 'water_management_private.pause_pump_operation_internal(uuid)', 'EXECUTE'
+       'authenticated', 'water_management_private.pause_pump_operation_internal(uuid,text)', 'EXECUTE'
      )
      OR NOT pg_catalog.has_function_privilege(
        'authenticated', 'water_management_private.resume_pump_operation_internal(uuid)', 'EXECUTE'
@@ -751,7 +768,7 @@ BEGIN
        'authenticated', 'water_management_private.complete_pump_operation_internal(uuid)', 'EXECUTE'
      )
      OR pg_catalog.has_function_privilege(
-       'anon', 'water_management_private.pause_pump_operation_internal(uuid)', 'EXECUTE'
+       'anon', 'water_management_private.pause_pump_operation_internal(uuid,text)', 'EXECUTE'
      ) THEN
     RAISE EXCEPTION 'Private operation lifecycle RPC execution grants are incorrect';
   END IF;
@@ -763,6 +780,8 @@ SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001
 DO $manager_operation_lifecycle$
 DECLARE
   v_operation public.pump_operations%ROWTYPE;
+  v_event_types text[];
+  v_dashboard jsonb;
   v_rejected boolean := false;
 BEGIN
   SELECT * INTO v_operation
@@ -790,7 +809,7 @@ BEGIN
     RAISE EXCEPTION 'A second active operation was allowed on one pump';
   END IF;
 
-  v_operation := public.pause_pump_operation(v_operation.id);
+  v_operation := public.pause_pump_operation(v_operation.id, 'انقطاع كهرباء تجريبي');
   IF v_operation.status <> 'paused' OR v_operation.paused_at IS NULL THEN
     RAISE EXCEPTION 'Manager pause transition did not persist';
   END IF;
@@ -817,6 +836,35 @@ BEGIN
   IF NOT v_rejected THEN
     RAISE EXCEPTION 'Authenticated manager directly modified an operation outside the RPC';
   END IF;
+
+  SELECT array_agg(event_type ORDER BY occurred_at, id)
+  INTO v_event_types
+  FROM public.pump_operation_events
+  WHERE operation_id = v_operation.id;
+  IF v_event_types IS DISTINCT FROM ARRAY['started','paused','resumed','completed']::text[] THEN
+    RAISE EXCEPTION 'Operation event timeline is incomplete or out of order: %', v_event_types;
+  END IF;
+  IF (SELECT reason FROM public.pump_operation_events
+      WHERE operation_id = v_operation.id AND event_type = 'paused')
+     <> 'انقطاع كهرباء تجريبي' THEN
+    RAISE EXCEPTION 'Pause reason was not preserved in the immutable event ledger';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.pump_operation_events
+             WHERE operation_id = v_operation.id AND actor_id <> auth.uid()) THEN
+    RAISE EXCEPTION 'Operation event actor identity does not match the authenticated user';
+  END IF;
+
+  v_dashboard := public.get_pump_operations_dashboard(
+    v_operation.operation_date,
+    v_operation.operation_date
+  );
+  IF (v_dashboard->>'today_operations')::integer <> 1
+     OR (v_dashboard->>'active_operations')::integer <> 0
+     OR jsonb_array_length(v_dashboard->'daily') <> 1
+     OR jsonb_array_length(v_dashboard->'recent') <> 1
+     OR v_dashboard->'recent'->0->>'pump_name' <> 'غطاس أ 1' THEN
+    RAISE EXCEPTION 'Manager dashboard aggregate returned unexpected scoped totals';
+  END IF;
 END;
 $manager_operation_lifecycle$;
 RESET ROLE;
@@ -826,6 +874,8 @@ SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002
 DO $operator_operation_scope$
 DECLARE
   v_operation public.pump_operations%ROWTYPE;
+  v_event_types text[];
+  v_dashboard jsonb;
   v_rejected boolean := false;
 BEGIN
   IF (SELECT count(*) FROM public.pump_operations
@@ -872,11 +922,29 @@ BEGIN
     RAISE EXCEPTION 'A second active operation was allowed on one pump';
   END IF;
 
-  v_operation := public.pause_pump_operation(v_operation.id);
+  v_operation := public.pause_pump_operation(v_operation.id, 'تغيير فلتر تجريبي');
   v_operation := public.resume_pump_operation(v_operation.id);
   v_operation := public.complete_pump_operation(v_operation.id);
   IF v_operation.status <> 'completed' OR v_operation.actual_seconds IS NULL THEN
     RAISE EXCEPTION 'Assigned operator could not complete their operation';
+  END IF;
+
+  SELECT array_agg(event_type ORDER BY occurred_at, id)
+  INTO v_event_types
+  FROM public.pump_operation_events
+  WHERE operation_id = v_operation.id;
+  IF v_event_types IS DISTINCT FROM ARRAY['started','paused','resumed','completed']::text[] THEN
+    RAISE EXCEPTION 'Operator event timeline was not recorded completely';
+  END IF;
+
+  v_dashboard := public.get_pump_operations_dashboard(
+    v_operation.operation_date,
+    v_operation.operation_date
+  );
+  IF (v_dashboard->>'today_operations')::integer <> 2
+     OR (v_dashboard->>'active_operations')::integer <> 0
+     OR jsonb_array_length(v_dashboard->'recent') <> 2 THEN
+    RAISE EXCEPTION 'Operator dashboard aggregate did not respect assigned-pump scope';
   END IF;
 END;
 $operator_operation_scope$;
@@ -891,6 +959,10 @@ BEGIN
       WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 0 THEN
     RAISE EXCEPTION 'Collector unexpectedly read operation data for a different role scope';
   END IF;
+  IF (SELECT count(*) FROM public.pump_operation_events
+      WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 0 THEN
+    RAISE EXCEPTION 'Collector unexpectedly read the operation event ledger';
+  END IF;
 END;
 $collector_operation_read$;
 RESET ROLE;
@@ -902,6 +974,10 @@ BEGIN
   IF (SELECT count(*) FROM public.pump_operations
       WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 0 THEN
     RAISE EXCEPTION 'Supervisor unexpectedly read operator-only operation records';
+  END IF;
+  IF (SELECT count(*) FROM public.pump_operation_events
+      WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 0 THEN
+    RAISE EXCEPTION 'Supervisor unexpectedly read the operator event ledger';
   END IF;
 END;
 $supervisor_operation_read$;
@@ -932,8 +1008,12 @@ BEGIN
   IF (SELECT count(*) FROM public.pump_operations
       WHERE pump_id = '20000000-0000-4000-8000-000000000003') <> 1
      OR (SELECT count(*) FROM public.pump_operations
+         WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 0
+     OR (SELECT count(*) FROM public.pump_operation_events
+         WHERE pump_id = '20000000-0000-4000-8000-000000000003') <> 2
+     OR (SELECT count(*) FROM public.pump_operation_events
          WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 0 THEN
-    RAISE EXCEPTION 'Tenant B operator operation visibility crossed organization boundaries';
+    RAISE EXCEPTION 'Tenant B operator operation/event visibility crossed organization boundaries';
   END IF;
 END;
 $tenant_b_operation$;
@@ -944,14 +1024,17 @@ SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001
 DO $tenant_a_cannot_see_tenant_b_operation$
 BEGIN
   IF (SELECT count(*) FROM public.pump_operations
-      WHERE pump_id = '20000000-0000-4000-8000-000000000003') <> 0 THEN
-    RAISE EXCEPTION 'Tenant A manager read an operation from tenant B';
+      WHERE pump_id = '20000000-0000-4000-8000-000000000003') <> 0
+     OR (SELECT count(*) FROM public.pump_operation_events
+         WHERE pump_id = '20000000-0000-4000-8000-000000000003') <> 0 THEN
+    RAISE EXCEPTION 'Tenant A manager read an operation/event from tenant B';
   END IF;
 END;
 $tenant_a_cannot_see_tenant_b_operation$;
 RESET ROLE;
 
--- Operation rows are removed before the test deletes pumps with RESTRICT FKs.
+-- Operation event and session rows are removed before the test deletes pumps with RESTRICT FKs.
+DELETE FROM public.pump_operation_events;
 DELETE FROM public.pump_operations;
 
 SET LOCAL ROLE authenticated;
