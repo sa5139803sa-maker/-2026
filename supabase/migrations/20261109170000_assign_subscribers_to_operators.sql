@@ -63,7 +63,13 @@ SET search_path = ''
 AS $assign_queue_item_operator$
 BEGIN
   IF NEW.subscriber_id IS NULL THEN
-    NEW.assigned_operator_id := NULL;
+    -- Unregistered emergency/guest items created by an operator belong to
+    -- the operator who added them. Manager-created guest items remain unowned.
+    NEW.assigned_operator_id := CASE
+      WHEN water_management_private.current_user_role() = 'operator'::public.app_role
+        THEN auth.uid()
+      ELSE NULL
+    END;
     RETURN NEW;
   END IF;
 
@@ -273,6 +279,37 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- Read the pump scope first, then lock affected queues in a stable order
+  -- before locking the subscriber row. Queue start takes queue -> subscriber;
+  -- using the same order here avoids a reassignment/start deadlock.
+  SELECT s.* INTO v_subscriber
+  FROM public.subscribers s
+  WHERE s.id = p_subscriber_id
+    AND s.organization_id = v_organization_id;
+  IF NOT FOUND OR v_subscriber.pump_id IS NULL THEN
+    RAISE EXCEPTION 'Subscriber is not linked to a pump in the current organization'
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  FOR v_queue_id IN
+    SELECT q.id
+    FROM public.daily_queues q
+    WHERE q.organization_id = v_organization_id
+      AND q.pump_id = v_subscriber.pump_id
+      AND EXISTS (
+        SELECT 1 FROM public.queue_items qi
+        WHERE qi.daily_queue_id = q.id
+          AND qi.subscriber_id = p_subscriber_id
+          AND qi.status = 'queued'
+      )
+    ORDER BY q.id
+  LOOP
+    PERFORM 1
+    FROM public.daily_queues q
+    WHERE q.id = v_queue_id
+    FOR UPDATE;
+  END LOOP;
+
   SELECT s.* INTO v_subscriber
   FROM public.subscribers s
   WHERE s.id = p_subscriber_id
@@ -420,11 +457,14 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  -- Serialize a new operation against manager reassignment of this subscriber.
+  -- The assignment RPC locks queue rows first, then the subscriber row.
   SELECT s.operator_id INTO v_subscriber_operator_id
   FROM public.subscribers s
   WHERE s.id = NEW.subscriber_id
     AND s.organization_id = NEW.organization_id
-    AND s.pump_id = NEW.pump_id;
+    AND s.pump_id = NEW.pump_id
+  FOR KEY SHARE;
 
   IF v_subscriber_operator_id IS NULL OR v_subscriber_operator_id IS DISTINCT FROM NEW.operator_id THEN
     RAISE EXCEPTION 'This subscriber is assigned to another operator'
