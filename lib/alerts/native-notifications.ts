@@ -1,5 +1,5 @@
 import { Platform } from "react-native";
-import Constants from "expo-constants";
+import * as Application from "expo-application";
 import * as IntentLauncher from "expo-intent-launcher";
 import * as Notifications from "expo-notifications";
 import type { AlertSettings } from "@/lib/alerts/settings";
@@ -87,7 +87,7 @@ export async function openAndroidExactAlarmSettings() {
     throw new Error("إعداد المنبّهات الدقيقة متاح على Android فقط.");
   }
   if (Number(Platform.Version) < 31) return;
-  const packageName = Constants.applicationId;
+  const packageName = Application.applicationId;
   if (!packageName) {
     throw new Error("تعذر تحديد معرّف حزمة التطبيق لفتح إعداد المنبّهات الدقيقة.");
   }
