@@ -1621,6 +1621,19 @@ BEGIN
     RAISE EXCEPTION 'Manager could not start a pump operation as the authenticated actor';
   END IF;
 
+  -- A different, correctly assigned operator still cannot extend a manager-owned session.
+  PERFORM set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+  v_rejected := false;
+  BEGIN
+    PERFORM public.extend_pump_operation_time(v_operation.id, 1);
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+  PERFORM set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'An operator extended a session started by a different user';
+  END IF;
+
   v_rejected := false;
   BEGIN
     INSERT INTO public.pump_operations (
@@ -1889,6 +1902,11 @@ BEGIN
     RAISE EXCEPTION 'Assigned operator could not start an emergency operation';
   END IF;
 
+  v_operation := public.extend_pump_operation_time(v_operation.id, 2);
+  IF v_operation.planned_minutes <> 7 OR v_operation.status <> 'running' THEN
+    RAISE EXCEPTION 'Assigned operator could not extend their own active session';
+  END IF;
+
   v_rejected := false;
   BEGIN
     PERFORM public.start_pump_operation(
@@ -1912,7 +1930,9 @@ BEGIN
   INTO v_event_types
   FROM public.pump_operation_events
   WHERE operation_id = v_operation.id;
-  IF v_event_types IS DISTINCT FROM ARRAY['started','paused','resumed','completed']::text[] THEN
+  IF v_event_types IS DISTINCT FROM ARRAY[
+       'started','time_extended','paused','resumed','completed'
+     ]::text[] THEN
     RAISE EXCEPTION 'Operator event timeline was not recorded completely';
   END IF;
 
