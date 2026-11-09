@@ -4199,4 +4199,9 @@ END;
 $tenant_fk_indexes$;
 
 SET CONSTRAINTS ALL IMMEDIATE;
-ROLLBACK;
+\if :{?PERSIST_CONCURRENCY_FIXTURES}
+  \ir ../concurrency/setup.sql
+  COMMIT;
+\else
+  ROLLBACK;
+\endif
