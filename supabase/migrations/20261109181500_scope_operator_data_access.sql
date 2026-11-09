@@ -362,15 +362,18 @@ CREATE POLICY queue_item_events_select_assigned
       OR (SELECT water_management_private.can_read_supervisor_pump_scope(
         organization_id, pump_id
       ))
-      OR EXISTS (
-        SELECT 1
-        FROM public.queue_items qi
-        WHERE qi.id = queue_item_events.queue_item_id
-          AND qi.daily_queue_id = queue_item_events.daily_queue_id
-          AND qi.organization_id = queue_item_events.organization_id
-          AND qi.pump_id = queue_item_events.pump_id
-          AND qi.assigned_operator_id = (SELECT auth.uid())
-          AND (SELECT water_management_private.current_user_role()) = 'operator'::public.app_role
+      OR (
+        (SELECT water_management_private.current_user_role()) = 'operator'::public.app_role
+        AND actor_id = (SELECT auth.uid())
+        AND EXISTS (
+          SELECT 1
+          FROM public.queue_items qi
+          WHERE qi.id = queue_item_events.queue_item_id
+            AND qi.daily_queue_id = queue_item_events.daily_queue_id
+            AND qi.organization_id = queue_item_events.organization_id
+            AND qi.pump_id = queue_item_events.pump_id
+            AND qi.assigned_operator_id = (SELECT auth.uid())
+        )
       )
     )
   );
@@ -807,10 +810,18 @@ BEGIN
       jsonb_build_object(
         'id', e.id,
         'event_type', e.event_type,
-        'actor_id', e.actor_id,
+        'actor_id', CASE
+          WHEN v_role IN ('manager'::public.app_role, 'supervisor'::public.app_role)
+            OR e.actor_id = v_user_id
+          THEN e.actor_id ELSE NULL END,
         'occurred_at', e.occurred_at,
-        'reason', e.reason,
-        'metadata', e.metadata
+        'reason', CASE
+          WHEN v_role IN ('manager'::public.app_role, 'supervisor'::public.app_role)
+            OR e.actor_id = v_user_id
+          THEN e.reason ELSE NULL END,
+        'metadata', CASE
+          WHEN v_role IN ('manager'::public.app_role, 'supervisor'::public.app_role)
+          THEN e.metadata ELSE '{}'::jsonb END
       ) AS event_payload
     FROM public.queue_item_events e
     WHERE e.daily_queue_id = p_queue_id
@@ -818,11 +829,18 @@ BEGIN
       AND e.pump_id = v_queue.pump_id
       AND (
         v_role IN ('manager'::public.app_role, 'supervisor'::public.app_role)
-        OR EXISTS (
-          SELECT 1 FROM public.queue_items qi
-          WHERE qi.id = e.queue_item_id
-            AND qi.daily_queue_id = e.daily_queue_id
-            AND qi.assigned_operator_id = v_user_id
+        OR (
+          v_role = 'operator'::public.app_role
+          AND EXISTS (
+            SELECT 1 FROM public.queue_items qi
+            WHERE qi.id = e.queue_item_id
+              AND qi.daily_queue_id = e.daily_queue_id
+              AND qi.assigned_operator_id = v_user_id
+          )
+          AND (
+            e.actor_id = v_user_id
+            OR e.event_type = 'item_operator_reassigned'
+          )
         )
       )
     ORDER BY e.event_sequence DESC
