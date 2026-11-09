@@ -768,11 +768,29 @@ END;
 $manager_a_write$;
 
 DO $manager_weekly_schedule_write$
-DECLARE v_schedule_id uuid; v_entry_id uuid; v_rows bigint;
+DECLARE
+  v_schedule_id uuid;
+  v_rows bigint;
+  v_entry_count bigint;
+  v_total_minutes integer;
 BEGIN
-  INSERT INTO public.weekly_schedules (pump_id, name, effective_from, effective_to, week_starts_on)
-  VALUES ('20000000-0000-4000-8000-000000000001', 'مسودة اختبار مدير', '2026-11-02', '2026-12-31', 1)
-  RETURNING id INTO v_schedule_id;
+  v_schedule_id := public.save_weekly_schedule_draft(
+    NULL,
+    '20000000-0000-4000-8000-000000000001',
+    'مسودة اختبار مدير',
+    DATE '2026-11-02',
+    DATE '2026-12-31',
+    1,
+    jsonb_build_array(jsonb_build_object(
+      'subscriber_id', '30000000-0000-4000-8000-000000000001',
+      'weekly_quota_minutes', 35,
+      'default_weekday', 2,
+      'allocations', jsonb_build_array(
+        jsonb_build_object('weekday', 2, 'planned_minutes', 20),
+        jsonb_build_object('weekday', 4, 'planned_minutes', 15)
+      )
+    ))
+  );
 
   IF NOT EXISTS (
     SELECT 1 FROM public.weekly_schedules
@@ -783,30 +801,51 @@ BEGIN
       AND status='draft'
   ) THEN RAISE EXCEPTION 'Weekly schedule tenant, creator, or draft status was not derived safely'; END IF;
 
-  INSERT INTO public.schedule_entries (weekly_schedule_id, subscriber_id, weekday, sort_order, planned_minutes)
-  VALUES (v_schedule_id, '30000000-0000-4000-8000-000000000001', 2, 5, 35)
-  RETURNING id INTO v_entry_id;
+  SELECT count(*), sum(e.planned_minutes)::integer
+  INTO v_entry_count, v_total_minutes
+  FROM public.schedule_entries e
+  WHERE e.weekly_schedule_id=v_schedule_id
+    AND e.subscriber_id='30000000-0000-4000-8000-000000000001';
+  IF v_entry_count <> 2 OR v_total_minutes <> 35 THEN
+    RAISE EXCEPTION 'Weekly draft RPC did not preserve the multi-day split exactly';
+  END IF;
+
+  IF (SELECT weekly_quota_minutes FROM public.subscribers
+      WHERE id='30000000-0000-4000-8000-000000000001') <> 45 THEN
+    RAISE EXCEPTION 'Saving a draft must not change the current active subscriber quota';
+  END IF;
+
+  PERFORM public.save_weekly_schedule_draft(
+    v_schedule_id,
+    '20000000-0000-4000-8000-000000000001',
+    'مسودة اختبار مدير معدلة',
+    DATE '2026-11-02',
+    DATE '2027-01-31',
+    1,
+    jsonb_build_array(jsonb_build_object(
+      'subscriber_id', '30000000-0000-4000-8000-000000000001',
+      'weekly_quota_minutes', 35,
+      'default_weekday', 2,
+      'allocations', jsonb_build_array(
+        jsonb_build_object('weekday', 3, 'planned_minutes', 35)
+      )
+    ))
+  );
 
   IF NOT EXISTS (
+    SELECT 1 FROM public.weekly_schedules
+    WHERE id=v_schedule_id AND name='مسودة اختبار مدير معدلة' AND effective_to=DATE '2027-01-31'
+  ) OR EXISTS (
     SELECT 1 FROM public.schedule_entries
-    WHERE id=v_entry_id
-      AND organization_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
-      AND pump_id='20000000-0000-4000-8000-000000000001'
-      AND weekly_schedule_id=v_schedule_id
-  ) THEN RAISE EXCEPTION 'Schedule entry tenant scope was not derived from its parent schedule'; END IF;
-
-  UPDATE public.schedule_entries SET planned_minutes=40 WHERE id=v_entry_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  IF v_rows<>1 THEN RAISE EXCEPTION 'Manager could not update an entry in a draft schedule'; END IF;
-
-  UPDATE public.weekly_schedules SET name='مسودة اختبار مدير معدلة', effective_to='2027-01-31'
-  WHERE id=v_schedule_id;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  IF v_rows<>1 THEN RAISE EXCEPTION 'Manager could not update a draft schedule'; END IF;
+    WHERE weekly_schedule_id=v_schedule_id AND weekday=2
+  ) THEN
+    RAISE EXCEPTION 'Saving an existing draft did not replace its allocation snapshot atomically';
+  END IF;
 
   DELETE FROM public.weekly_schedules WHERE id=v_schedule_id;
-  IF EXISTS (SELECT 1 FROM public.schedule_entries WHERE id=v_entry_id) THEN
-    RAISE EXCEPTION 'Deleting a draft schedule did not cascade its draft entries';
+  IF EXISTS (SELECT 1 FROM public.weekly_schedule_subscribers WHERE weekly_schedule_id=v_schedule_id)
+     OR EXISTS (SELECT 1 FROM public.schedule_entries WHERE weekly_schedule_id=v_schedule_id) THEN
+    RAISE EXCEPTION 'Deleting a draft schedule did not cascade its entitlement snapshots and entries';
   END IF;
 END;
 $manager_weekly_schedule_write$;
