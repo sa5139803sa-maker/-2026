@@ -394,9 +394,7 @@ END;
 $append_queue_item_event$;
 
 REVOKE ALL ON FUNCTION water_management_private.append_queue_item_event(uuid, uuid, uuid, uuid, text, uuid, text, jsonb)
-  FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION water_management_private.append_queue_item_event(uuid, uuid, uuid, uuid, text, uuid, text, jsonb)
-  TO authenticated;
+  FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION water_management_private.generate_daily_queue_internal(
   p_pump_id uuid,
