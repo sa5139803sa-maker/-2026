@@ -1416,6 +1416,8 @@ function OperationsScreenContent() {
                     </Text>
                   ) : queuedItems.map((item, index) => {
                     const isFirst = index === 0;
+                    const canManageItem = profile?.role === "manager"
+                      || (profile?.role === "operator" && item.is_owned === true);
                     const sourceLabel = item.source_type === "other" ? "دور لمشغّل آخر"
                       : item.source_type === "weekly" ? "حصة أسبوعية"
                         : item.source_type === "weekly_reassigned" ? "حصة أسبوعية منقولة"
@@ -1446,7 +1448,7 @@ function OperationsScreenContent() {
                               <Text style={styles.reorderText}>↓</Text>
                             </Pressable>
                           </>}
-                          {item.is_owned !== false && <>
+                          {canManageItem && <>
                             <Pressable accessibilityLabel="تأجيل الدور إلى نهاية الطابور"
                               disabled={busy || queuedItems.length < 2 || queueItemActionReason.trim().length < 2}
                               onPress={() => void manageQueueItem(item, "defer")}
@@ -1461,11 +1463,17 @@ function OperationsScreenContent() {
                             </Pressable>
                           </>}
                         </View>
-                        <Pressable disabled={busy || Boolean(activeOperation) || hasForeignRunningQueueItem || item.is_owned === false || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId}
-                          onPress={() => void startQueueItem(item)}
-                          style={[styles.startButton, (busy || Boolean(activeOperation) || hasForeignRunningQueueItem || item.is_owned === false || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId) && styles.disabled]}>
-                          <Play size={14} color="#fff" /><Text style={styles.startText}>{isFirst ? "بدء" : "انتظار"}</Text>
-                        </Pressable>
+                        {canManageItem ? (
+                          <Pressable disabled={busy || Boolean(activeOperation) || hasForeignRunningQueueItem || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId}
+                            onPress={() => void startQueueItem(item)}
+                            style={[styles.startButton, (busy || Boolean(activeOperation) || hasForeignRunningQueueItem || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId) && styles.disabled]}>
+                            <Play size={14} color="#fff" /><Text style={styles.startText}>{isFirst ? "بدء" : "انتظار"}</Text>
+                          </Pressable>
+                        ) : (
+                          <Text style={styles.queueMeta}>
+                            {item.source_type === "other" ? "بانتظار المشغّل المسؤول" : "عرض للقراءة فقط"}
+                          </Text>
+                        )}
                       </View>
                     );
                   })}
