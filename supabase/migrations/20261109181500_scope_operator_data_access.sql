@@ -759,91 +759,85 @@ REVOKE ALL ON FUNCTION public.get_daily_queue_operator_view(uuid)
 GRANT EXECUTE ON FUNCTION public.get_daily_queue_operator_view(uuid)
   TO authenticated;
 
--- Transfer actions and options must be limited to the specific subscriber owner.
-CREATE OR REPLACE FUNCTION water_management_private.guard_transfer_weekly_entitlement_operator(
-  p_organization_id uuid,
-  p_pump_id uuid,
-  p_subscriber_id uuid
+
+-- Replace the invoker wrapper so the selected allocation must be visible to
+-- this operator under RLS and match the subscriber owner before the definer
+-- implementation can perform any transfer.
+CREATE OR REPLACE FUNCTION public.transfer_weekly_entitlement_minutes(
+  p_source_allocation_id uuid,
+  p_target_date date,
+  p_minutes integer,
+  p_reason text
 )
-RETURNS boolean
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
 SET search_path = ''
-AS $guard_transfer_weekly_entitlement_operator$
-  SELECT
-    (SELECT auth.uid()) IS NOT NULL
-    AND p_organization_id = water_management_private.current_user_organization_id()
-    AND (
-      water_management_private.current_user_role() = 'manager'::public.app_role
-      OR (
-        water_management_private.current_user_role() = 'operator'::public.app_role
-        AND EXISTS (
-          SELECT 1
-          FROM public.subscribers s
-          WHERE s.id = p_subscriber_id
-            AND s.organization_id = p_organization_id
-            AND s.pump_id = p_pump_id
-            AND s.operator_id = (SELECT auth.uid())
-        )
-      )
-    )
-$guard_transfer_weekly_entitlement_operator$;
-ALTER FUNCTION water_management_private.guard_transfer_weekly_entitlement_operator(uuid, uuid, uuid) OWNER TO postgres;
-REVOKE ALL ON FUNCTION water_management_private.guard_transfer_weekly_entitlement_operator(uuid, uuid, uuid)
-  FROM PUBLIC, anon, service_role;
-GRANT EXECUTE ON FUNCTION water_management_private.guard_transfer_weekly_entitlement_operator(uuid, uuid, uuid)
+AS $transfer_weekly_entitlement_minutes_scoped$
+DECLARE
+  v_source public.weekly_entitlement_allocations%ROWTYPE;
+BEGIN
+  SELECT a.* INTO v_source
+  FROM public.weekly_entitlement_allocations a
+  WHERE a.id = p_source_allocation_id
+    AND a.organization_id = water_management_private.current_user_organization_id();
+
+  IF NOT FOUND OR NOT (SELECT water_management_private.can_read_subscriber_scope(
+    v_source.organization_id, v_source.pump_id, v_source.subscriber_id
+  )) THEN
+    RAISE EXCEPTION 'Source weekly allocation is not assigned to the current operator'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN water_management_private.transfer_weekly_entitlement_minutes_internal(
+    p_source_allocation_id, p_target_date, p_minutes, p_reason
+  );
+END;
+$transfer_weekly_entitlement_minutes_scoped$;
+
+REVOKE ALL ON FUNCTION public.transfer_weekly_entitlement_minutes(uuid, date, integer, text)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.transfer_weekly_entitlement_minutes(uuid, date, integer, text)
   TO authenticated;
 
--- Override the report owner's subscriber scope at write time. The existing
--- report table still permits one report per pump/day, so the owning operator is
--- the only operator who can see/edit that row; multiple-operator report creation
--- is tracked as a separate design issue.
-CREATE OR REPLACE FUNCTION water_management_private.assert_daily_report_item_owner(
-  p_report_id uuid,
-  p_organization_id uuid,
+-- The internal definer can see every allocation, so filter its result set again
+-- in the invoker wrapper before it is returned over the Data API.
+CREATE OR REPLACE FUNCTION public.get_weekly_entitlement_transfer_options(
   p_pump_id uuid,
-  p_subscriber_id uuid
+  p_target_date date
 )
-RETURNS boolean
+RETURNS TABLE (
+  allocation_id uuid,
+  subscriber_id uuid,
+  subscriber_name text,
+  source_date date,
+  original_minutes integer,
+  allocated_minutes integer,
+  consumed_minutes integer,
+  available_minutes integer,
+  target_allocated_minutes integer,
+  weekly_quota_minutes integer,
+  weekly_consumed_minutes integer,
+  weekly_remaining_minutes integer,
+  cycle_start date,
+  cycle_end date
+)
 LANGUAGE sql
-STABLE
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = ''
-AS $assert_daily_report_item_owner$
-  SELECT
-    (SELECT auth.uid()) IS NOT NULL
-    AND p_organization_id = water_management_private.current_user_organization_id()
-    AND (
-      water_management_private.current_user_role() <> 'operator'::public.app_role
-      OR (
-        EXISTS (
-          SELECT 1
-          FROM public.daily_work_reports r
-          WHERE r.id = p_report_id
-            AND r.organization_id = p_organization_id
-            AND r.pump_id = p_pump_id
-            AND r.operator_id = (SELECT auth.uid())
-        )
-        AND (
-          p_subscriber_id IS NULL
-          OR EXISTS (
-            SELECT 1
-            FROM public.subscribers s
-            WHERE s.id = p_subscriber_id
-              AND s.organization_id = p_organization_id
-              AND s.pump_id = p_pump_id
-              AND s.operator_id = (SELECT auth.uid())
-          )
-        )
-      )
-    )
-$assert_daily_report_item_owner$;
-ALTER FUNCTION water_management_private.assert_daily_report_item_owner(uuid, uuid, uuid, uuid) OWNER TO postgres;
-REVOKE ALL ON FUNCTION water_management_private.assert_daily_report_item_owner(uuid, uuid, uuid, uuid)
-  FROM PUBLIC, anon, service_role;
-GRANT EXECUTE ON FUNCTION water_management_private.assert_daily_report_item_owner(uuid, uuid, uuid, uuid)
-  TO authenticated;
+AS $get_weekly_entitlement_transfer_options_scoped$
+  SELECT options.*
+  FROM water_management_private.get_weekly_entitlement_transfer_options_internal(
+    p_pump_id, p_target_date
+  ) AS options
+  WHERE (SELECT water_management_private.can_read_subscriber_scope(
+    water_management_private.current_user_organization_id(),
+    p_pump_id,
+    options.subscriber_id
+  ))
+$get_weekly_entitlement_transfer_options_scoped$;
 
--- Ensure the SECURITY DEFINER transfer function checks ownership even though it
--- bypasses table RLS.
+REVOKE ALL ON FUNCTION public.get_weekly_entitlement_transfer_options(uuid, date)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_weekly_entitlement_transfer_options(uuid, date)
+  TO authenticated;
