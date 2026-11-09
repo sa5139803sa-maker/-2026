@@ -2634,9 +2634,9 @@ BEGIN
     RAISE EXCEPTION 'New operator queue view did not return owned item details and reassignment event';
   END IF;
 
-  SELECT event INTO v_reassignment_event
-  FROM jsonb_array_elements(COALESCE(v_view->'events', '[]'::jsonb)) AS event
-  WHERE event->>'event_type' = 'item_operator_reassigned'
+  SELECT event_row.value INTO v_reassignment_event
+  FROM jsonb_array_elements(COALESCE(v_view->'events', '[]'::jsonb)) AS event_row(value)
+  WHERE event_row.value->>'event_type' = 'item_operator_reassigned'
   LIMIT 1;
 
   IF v_reassignment_event IS NULL
