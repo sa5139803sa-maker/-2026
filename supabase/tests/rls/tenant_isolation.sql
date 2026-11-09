@@ -65,6 +65,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109110000_add_pump_power_sources.sql
 \ir ../../migrations/20261109111000_create_daily_work_reports.sql
 \ir ../../migrations/20261109120000_create_daily_queue_backend.sql
+\ir ../../migrations/20261109130000_version_weekly_entitlements_and_guarded_schedule_rpcs.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -437,6 +438,14 @@ INSERT INTO public.weekly_schedules (
    '20000000-0000-4000-8000-000000000003', 'جدول ب 1', '2026-01-05', NULL, 1, 'draft',
    '10000000-0000-4000-8000-000000000006');
 
+INSERT INTO public.weekly_schedule_subscribers (
+  weekly_schedule_id, organization_id, pump_id, subscriber_id,
+  weekly_quota_minutes, default_weekday
+) VALUES
+  ('50000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000001', 45, 1),
+  ('50000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000002', '30000000-0000-4000-8000-000000000002', 60, 3),
+  ('50000000-0000-4000-8000-000000000003', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003', '30000000-0000-4000-8000-000000000004', 90, 5);
+
 INSERT INTO public.schedule_entries (
   id, weekly_schedule_id, organization_id, pump_id, subscriber_id, weekday, sort_order, planned_minutes
 ) VALUES
@@ -465,6 +474,12 @@ BEGIN
       'جدول نشط مكرر', '2026-01-05', 1, 'draft',
       '10000000-0000-4000-8000-000000000006'
     ) RETURNING id INTO v_duplicate_schedule_id;
+
+    INSERT INTO public.weekly_schedule_subscribers (
+      weekly_schedule_id, subscriber_id, weekly_quota_minutes, default_weekday
+    ) VALUES (
+      v_duplicate_schedule_id, '30000000-0000-4000-8000-000000000004', 90, 5
+    );
 
     INSERT INTO public.schedule_entries (
       weekly_schedule_id, organization_id, pump_id, subscriber_id, weekday, sort_order, planned_minutes
