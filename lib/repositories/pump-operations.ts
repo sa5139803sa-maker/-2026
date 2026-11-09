@@ -47,6 +47,45 @@ export type DailyScheduleEntry = {
   };
 };
 
+export type DailyWorkReportDetails = {
+  id: string;
+  work_date: string;
+  operator_id: string;
+  work_started_at: string;
+  work_ended_at: string;
+  stoppage_minutes: number;
+  status: "draft" | "submitted";
+  submitted_at: string | null;
+  updated_at: string;
+  sourceTotals: {
+    id: string;
+    power_source_id: string;
+    source_name_snapshot: string;
+    minutes: number;
+  }[];
+  items: {
+    id: string;
+    entry_type: "weekly" | "additional_registered" | "additional_guest";
+    sort_order: number;
+    subscriber_name_snapshot: string | null;
+    external_beneficiary_name: string | null;
+    scheduled_minutes: number;
+    app_recorded_minutes: number;
+    manual_minutes: number;
+    extra_minutes: number;
+    weekly_minutes_consumed: number;
+    app_over_quota_minutes: number;
+    fulfillment_status: "complete" | "partial" | "not_done" | "additional";
+  }[];
+  events: {
+    id: string;
+    actor_id: string;
+    event_type: "draft_created" | "draft_updated" | "submitted";
+    occurred_at: string;
+    metadata: Record<string, unknown>;
+  }[];
+};
+
 export type PumpOperation = {
   id: string;
   pump_id: string;
@@ -149,6 +188,55 @@ export const pumpOperationsRepository = {
       p_period: period,
       p_pump_id: pumpId,
     });
+  },
+
+  async getDailyWorkReport(organizationId: string, pumpId: string, workDate: string) {
+    const reportResult = await supabase
+      .from("daily_work_reports")
+      .select("id,work_date,operator_id,work_started_at,work_ended_at,stoppage_minutes,status,submitted_at,updated_at")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .eq("work_date", workDate)
+      .maybeSingle();
+
+    if (reportResult.error || !reportResult.data) {
+      return { data: null, error: reportResult.error };
+    }
+
+    const reportId = reportResult.data.id;
+    const [sourcesResult, itemsResult, eventsResult] = await Promise.all([
+      supabase
+        .from("daily_work_source_totals")
+        .select("id,power_source_id,source_name_snapshot,minutes")
+        .eq("organization_id", organizationId)
+        .eq("daily_work_report_id", reportId)
+        .order("source_name_snapshot", { ascending: true }),
+      supabase
+        .from("daily_work_report_items")
+        .select("id,entry_type,sort_order,subscriber_name_snapshot,external_beneficiary_name,scheduled_minutes,app_recorded_minutes,manual_minutes,extra_minutes,weekly_minutes_consumed,app_over_quota_minutes,fulfillment_status")
+        .eq("organization_id", organizationId)
+        .eq("daily_work_report_id", reportId)
+        .order("sort_order", { ascending: true }),
+      supabase
+        .from("daily_work_report_events")
+        .select("id,actor_id,event_type,occurred_at,metadata")
+        .eq("organization_id", organizationId)
+        .eq("daily_work_report_id", reportId)
+        .order("occurred_at", { ascending: true }),
+    ]);
+
+    const detailError = sourcesResult.error ?? itemsResult.error ?? eventsResult.error;
+    if (detailError) return { data: null, error: detailError };
+
+    return {
+      data: {
+        ...reportResult.data,
+        sourceTotals: (sourcesResult.data ?? []) as DailyWorkReportDetails["sourceTotals"],
+        items: (itemsResult.data ?? []) as DailyWorkReportDetails["items"],
+        events: (eventsResult.data ?? []) as DailyWorkReportDetails["events"],
+      } satisfies DailyWorkReportDetails,
+      error: null,
+    };
   },
 
   saveDailyWorkReport(args: {
