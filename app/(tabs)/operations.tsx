@@ -24,6 +24,8 @@ import {
   type PowerUsageRow,
   type DailyScheduleEntry,
   type DailyWorkReportDetails,
+  type DailyQueue,
+  type DailyQueueItem,
 } from "@/lib/repositories/pump-operations";
 
 function localOperationDate() {
@@ -131,6 +133,14 @@ function OperationsScreenContent() {
   const [selectedPumpId, setSelectedPumpId] = useState("");
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [operations, setOperations] = useState<Operation[]>([]);
+  const [dailyQueue, setDailyQueue] = useState<DailyQueue | null>(null);
+  const [dailyQueueError, setDailyQueueError] = useState<string | null>(null);
+  const [queueAdditionOpen, setQueueAdditionOpen] = useState(false);
+  const [queueAdditionType, setQueueAdditionType] = useState<"additional_registered" | "additional_guest" | "emergency">("emergency");
+  const [queueAdditionSubscriberId, setQueueAdditionSubscriberId] = useState("");
+  const [queueAdditionName, setQueueAdditionName] = useState("");
+  const [queueAdditionMinutes, setQueueAdditionMinutes] = useState("30");
+  const [queueOverrideReason, setQueueOverrideReason] = useState("");
   const [powerSources, setPowerSources] = useState<PumpPowerSource[]>([]);
   const [surveyPowerSources, setSurveyPowerSources] = useState<PumpPowerSource[]>([]);
   const [selectedPowerSourceId, setSelectedPowerSourceId] = useState("");
@@ -160,6 +170,7 @@ function OperationsScreenContent() {
   const [surveyExtraMinutes, setSurveyExtraMinutes] = useState<Record<string, string>>({});
   const [minutes, setMinutes] = useState("30");
   const [emergencyName, setEmergencyName] = useState("");
+  const autoAdvanceInFlight = useRef<string | null>(null);
   const [pauseReason, setPauseReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -204,15 +215,20 @@ function OperationsScreenContent() {
       : null,
     [dataPumpId, operations, selectedPumpId],
   );
-  const completedSubscriberIds = useMemo(
-    () => new Set(operations.filter((operation) => operation.status === "completed" && operation.subscriber_id)
-      .map((operation) => operation.subscriber_id as string)),
-    [operations],
+  const queuedItems = useMemo(
+    () => (dailyQueue?.items ?? [])
+      .filter((item) => item.status === "queued")
+      .sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id)),
+    [dailyQueue],
   );
-  const queue = useMemo(
-    () => subscribers.filter((subscriber) => !completedSubscriberIds.has(subscriber.id)),
-    [subscribers, completedSubscriberIds],
+  const completedQueueItems = useMemo(
+    () => (dailyQueue?.items ?? []).filter((item) => item.status === "completed")
+      .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? "")),
+    [dailyQueue],
   );
+  const autoAdvanceRemainingSeconds = dailyQueue?.auto_advance_at
+    ? Math.max(0, Math.ceil((new Date(dailyQueue.auto_advance_at).getTime() - now) / 1000))
+    : null;
   const completedOperations = useMemo(
     () => operations.filter((operation) => operation.status === "completed"),
     [operations],
@@ -245,6 +261,8 @@ function OperationsScreenContent() {
       dataRequestSequence.current += 1;
       setSubscribers([]);
       setOperations([]);
+      setDailyQueue(null);
+      setDailyQueueError(null);
       setDataPumpId(null);
       setRefreshing(false);
       return;
@@ -268,6 +286,8 @@ function OperationsScreenContent() {
         setSubscribers([]);
         setOperations([]);
         setPowerSources([]);
+        setDailyQueue(null);
+        setDailyQueueError("تعذر تحميل طابور اليوم.");
         setSelectedPowerSourceId("");
         setDataPumpId(selectedPumpId);
         setError("تعذر تحميل بيانات التشغيل أو مصادر الكهرباء. تحقق من تحديث قاعدة البيانات ثم حدّث الشاشة.");
@@ -284,6 +304,22 @@ function OperationsScreenContent() {
           operation.pump_id === selectedPumpId && operation.status === "paused",
         );
         setResumePowerSourceId(paused?.last_power_source_id ?? loadedSources[0]?.id ?? "");
+        const queueResult = await pumpOperationsRepository.loadOrCreateDailyQueue(
+          organizationId,
+          selectedPumpId,
+          day,
+        );
+        if (requestId !== dataRequestSequence.current) return;
+        if (queueResult.error) {
+          console.error("daily queue load failed", queueResult.error);
+          setDailyQueue(null);
+          setDailyQueueError(queueResult.error.code === "P0002"
+            ? "لا يوجد جدول أسبوعي نشط لهذا الغطاس في تاريخ اليوم. يلزم اعتماد الجدول أولًا."
+            : "تعذر تحميل طابور اليوم. تحقق من صلاحيات الجدول أو حدّث قاعدة البيانات.");
+        } else {
+          setDailyQueue((queueResult.data ?? null) as DailyQueue | null);
+          setDailyQueueError(queueResult.data ? null : "لا يوجد طابور يومي محفوظ لهذا التاريخ.");
+        }
         setDataPumpId(selectedPumpId);
       }
     } catch (loadError) {
@@ -291,6 +327,8 @@ function OperationsScreenContent() {
       if (requestId === dataRequestSequence.current) {
         setSubscribers([]);
         setOperations([]);
+        setDailyQueue(null);
+        setDailyQueueError("تعذر الاتصال بطابور اليوم.");
         setDataPumpId(selectedPumpId);
         setError("انقطع الاتصال أثناء تحميل بيانات التشغيل. حاول التحديث.");
       }
@@ -354,10 +392,10 @@ function OperationsScreenContent() {
     return () => subscription.remove();
   }, [loadPumpData]);
   useEffect(() => {
-    if (!activeOperation) return;
+    if (!activeOperation && !dailyQueue?.auto_advance_at) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [activeOperation?.id, activeOperation?.status, activeOperation?.started_at]);
+  }, [activeOperation?.id, activeOperation?.status, activeOperation?.started_at, dailyQueue?.auto_advance_at]);
 
   const elapsedSeconds = activeOperation
     ? Math.max(0, Math.floor(
