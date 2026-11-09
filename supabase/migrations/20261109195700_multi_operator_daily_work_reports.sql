@@ -1542,3 +1542,107 @@ REVOKE ALL ON FUNCTION public.get_daily_work_report_allocations(uuid, date)
 GRANT EXECUTE ON FUNCTION public.get_daily_work_report_allocations(uuid, date)
   TO authenticated;
 
+
+
+-- Prepare the weekly entitlement snapshot for a report date without generating
+-- a daily queue. Reporting an idle/rest day must not create runnable queue rows.
+CREATE OR REPLACE FUNCTION water_management_private.prepare_daily_work_report_internal(
+  p_pump_id uuid,
+  p_work_date date
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $prepare_daily_work_report_internal$
+DECLARE
+  v_actor_id uuid := auth.uid();
+  v_org_id uuid := water_management_private.current_user_organization_id();
+  v_role public.app_role := water_management_private.current_user_role();
+  v_schedule record;
+  v_cycle_start date;
+  v_prepared_count integer := 0;
+BEGIN
+  IF v_actor_id IS NULL OR v_org_id IS NULL
+     OR v_role NOT IN ('manager'::public.app_role, 'operator'::public.app_role) THEN
+    RAISE EXCEPTION 'Not authorized to prepare a daily work report'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF p_pump_id IS NULL OR p_work_date IS NULL THEN
+    RAISE EXCEPTION 'Pump and work date are required'
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF v_role = 'operator'::public.app_role AND NOT EXISTS (
+    SELECT 1 FROM public.pump_assignments pa
+    WHERE pa.organization_id = v_org_id
+      AND pa.pump_id = p_pump_id
+      AND pa.user_id = v_actor_id
+      AND pa.assignment_role = 'operator'::public.app_role
+  ) THEN
+    RAISE EXCEPTION 'Operator is not assigned to this pump'
+      USING ERRCODE = '42501';
+  END IF;
+
+  PERFORM 1
+  FROM public.pumps p
+  WHERE p.id = p_pump_id
+    AND p.organization_id = v_org_id
+    AND p.status = 'active'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Pump is not active or not accessible'
+      USING ERRCODE = '42501';
+  END IF;
+
+  FOR v_schedule IN
+    SELECT ws.id, ws.week_starts_on
+    FROM public.weekly_schedules ws
+    WHERE ws.organization_id = v_org_id
+      AND ws.pump_id = p_pump_id
+      AND ws.status IN ('active', 'archived')
+      AND p_work_date >= ws.effective_from
+      AND (ws.effective_to IS NULL OR p_work_date <= ws.effective_to)
+    ORDER BY ws.effective_from DESC, ws.id
+  LOOP
+    v_cycle_start := p_work_date - (
+      (extract(isodow FROM p_work_date)::integer - v_schedule.week_starts_on + 7) % 7
+    );
+
+    PERFORM water_management_private.ensure_weekly_entitlement_cycle(
+      v_schedule.id, v_org_id, p_pump_id, v_cycle_start, v_actor_id
+    );
+    v_prepared_count := v_prepared_count + 1;
+  END LOOP;
+
+  RETURN v_prepared_count;
+END;
+$prepare_daily_work_report_internal$;
+
+ALTER FUNCTION water_management_private.prepare_daily_work_report_internal(uuid, date)
+  OWNER TO postgres;
+REVOKE ALL ON FUNCTION water_management_private.prepare_daily_work_report_internal(uuid, date)
+  FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION water_management_private.prepare_daily_work_report_internal(uuid, date)
+  TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.prepare_daily_work_report(
+  p_pump_id uuid,
+  p_work_date date
+)
+RETURNS integer
+LANGUAGE sql
+SECURITY INVOKER
+SET search_path = ''
+AS $prepare_daily_work_report$
+  SELECT water_management_private.prepare_daily_work_report_internal(
+    p_pump_id, p_work_date
+  )
+$prepare_daily_work_report$;
+
+REVOKE ALL ON FUNCTION public.prepare_daily_work_report(uuid, date)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.prepare_daily_work_report(uuid, date)
+  TO authenticated;
