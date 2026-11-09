@@ -14,6 +14,8 @@ import {
 import { CheckCircle2, Clock3, Droplets, Pause, Play, Plus, RefreshCw, Waves } from "lucide-react-native";
 import { loadAlertSettings, type AlertSettings } from "@/lib/alerts/settings";
 import {
+  pausePersistentPumpTimerNotification,
+  resumePersistentPumpTimerNotification,
   startPersistentPumpTimerNotification,
   stopPersistentPumpTimerNotification,
   syncPersistentPumpTimerNotification,
@@ -607,6 +609,14 @@ function OperationsScreenContent() {
       } catch (cancelError) {
         console.warn("Android operation notification cancellation after extension failed.", cancelError);
       }
+      try {
+        await syncPersistentPumpTimerNotification(selectedPumpId, [{
+          ...activeOperation,
+          planned_minutes: activeOperation.planned_minutes + addedMinutes,
+        }]);
+      } catch (nativeTimerError) {
+        console.warn("Could not update the persistent Android timer after extension.", nativeTimerError);
+      }
       await loadPumpData();
     }
     setBusy(false);
@@ -915,6 +925,18 @@ function OperationsScreenContent() {
       console.error("pump operation state change failed", action, actionError);
       setError(friendlyError(actionError));
     } else {
+      try {
+        if (action === "pause_pump_operation") {
+          await pausePersistentPumpTimerNotification(activeOperation);
+        } else if (action === "resume_pump_operation") {
+          await resumePersistentPumpTimerNotification(activeOperation);
+        } else {
+          await stopPersistentPumpTimerNotification();
+        }
+      } catch (nativeTimerError) {
+        console.warn("Could not update the persistent Android timer notification immediately.", nativeTimerError);
+      }
+
       if (action !== "resume_pump_operation") {
         try {
           await cancelOperationTimerNotifications(activeOperation.id);
