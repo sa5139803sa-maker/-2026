@@ -72,6 +72,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109170000_assign_subscribers_to_operators.sql
 \ir ../../migrations/20261109181500_scope_operator_data_access.sql
 \ir ../../migrations/20261109190000_clear_subscriber_operator_on_pump_delete.sql
+\ir ../../migrations/20261109195700_multi_operator_daily_work_reports.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -1512,6 +1513,8 @@ BEGIN
   END IF;
   IF NOT pg_catalog.has_function_privilege('authenticated','public.get_pump_power_usage(date,date,text,uuid)','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','public.get_pump_power_usage(date,date,text,uuid)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','public.save_daily_work_report(uuid,uuid,timestamptz,timestamptz,integer,jsonb,jsonb,boolean,uuid)','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','public.save_daily_work_report(uuid,uuid,timestamptz,timestamptz,integer,jsonb,jsonb,boolean,uuid)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','public.save_daily_work_report(uuid,timestamptz,timestamptz,integer,jsonb,jsonb,boolean,uuid)','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','public.save_daily_work_report(uuid,timestamptz,timestamptz,integer,jsonb,jsonb,boolean,uuid)','EXECUTE') THEN
     RAISE EXCEPTION 'Power usage and daily report RPC grants are incorrect';
@@ -2154,6 +2157,7 @@ SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006
 DO $daily_work_report_manager_b$
 DECLARE
   v_source_id uuid;
+  v_allocation_id uuid;
   v_report public.daily_work_reports%ROWTYPE;
   v_total_minutes numeric;
   v_rejected boolean := false;
@@ -2163,8 +2167,24 @@ BEGIN
   WHERE pump_id='20000000-0000-4000-8000-000000000003'
     AND name='طاقة شمسية – مزود 2';
 
+  PERFORM public.generate_daily_queue(
+    '20000000-0000-4000-8000-000000000003',
+    DATE '2026-01-09'
+  );
+  SELECT a.id INTO v_allocation_id
+  FROM public.weekly_entitlement_allocations a
+  WHERE a.organization_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    AND a.pump_id = '20000000-0000-4000-8000-000000000003'
+    AND a.subscriber_id = '30000000-0000-4000-8000-000000000004'
+    AND a.source_schedule_entry_id = '60000000-0000-4000-8000-000000000003'
+    AND a.allocation_date = DATE '2026-01-09';
+  IF v_allocation_id IS NULL THEN
+    RAISE EXCEPTION 'Tenant B daily weekly entitlement allocation fixture is missing';
+  END IF;
+
   v_report := public.save_daily_work_report(
     '20000000-0000-4000-8000-000000000003',
+    '10000000-0000-4000-8000-000000000007',
     '2026-01-09 07:00:00+02'::timestamptz,
     '2026-01-09 09:00:00+02'::timestamptz,
     20,
@@ -2172,6 +2192,7 @@ BEGIN
     jsonb_build_array(jsonb_build_object(
       'entry_type','weekly',
       'schedule_entry_id','60000000-0000-4000-8000-000000000003',
+      'weekly_entitlement_allocation_id',v_allocation_id,
       'subscriber_id','30000000-0000-4000-8000-000000000004',
       'sort_order',0,
       'manual_minutes',25,
@@ -2184,8 +2205,11 @@ BEGIN
 
   IF v_report.status <> 'submitted'
      OR v_report.work_date <> DATE '2026-01-09'
-     OR v_report.stoppage_minutes <> 20 THEN
-    RAISE EXCEPTION 'Daily work survey did not preserve its date, stoppages, or submitted state';
+     OR v_report.stoppage_minutes <> 20
+     OR v_report.operator_id <> '10000000-0000-4000-8000-000000000007'::uuid
+     OR v_report.created_by <> '10000000-0000-4000-8000-000000000006'::uuid
+     OR v_report.submitted_by <> '10000000-0000-4000-8000-000000000006'::uuid THEN
+    RAISE EXCEPTION 'Daily report did not preserve target operator, actual actor, date, stoppages, or submitted state';
   END IF;
 
   SELECT sum(total_minutes) INTO v_total_minutes
@@ -2218,6 +2242,7 @@ BEGIN
   BEGIN
     PERFORM public.save_daily_work_report(
       '20000000-0000-4000-8000-000000000003',
+      '10000000-0000-4000-8000-000000000007',
       '2026-01-16 07:00:00+02'::timestamptz,
       '2026-01-16 09:00:00+02'::timestamptz,
       20,
@@ -2270,6 +2295,142 @@ BEGIN
   END IF;
 END;
 $subscriber_operator_initial_assignment$;
+RESET ROLE;
+
+-- Managers can create one independent workload report per assigned operator,
+-- while pump energy is represented once per pump/date and shared read-only.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DO $multi_operator_daily_reports_manager$
+DECLARE
+  v_source_id uuid;
+  v_first public.daily_work_reports%ROWTYPE;
+  v_second public.daily_work_reports%ROWTYPE;
+BEGIN
+  SELECT id INTO v_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+    AND name = 'طاقة شمسية – مزود 1';
+
+  v_first := public.save_daily_work_report(
+    '20000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000002',
+    '2026-01-20 07:00:00+02'::timestamptz,
+    '2026-01-20 08:00:00+02'::timestamptz,
+    0,
+    jsonb_build_array(jsonb_build_object('power_source_id', v_source_id, 'minutes', 60)),
+    '[]'::jsonb,
+    false,
+    NULL
+  );
+
+  v_second := public.save_daily_work_report(
+    '20000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000003',
+    '2026-01-20 07:00:00+02'::timestamptz,
+    '2026-01-20 08:00:00+02'::timestamptz,
+    0,
+    jsonb_build_array(jsonb_build_object('power_source_id', v_source_id, 'minutes', 60)),
+    '[]'::jsonb,
+    false,
+    NULL
+  );
+
+  IF v_first.id = v_second.id
+     OR v_first.operator_id <> '10000000-0000-4000-8000-000000000002'::uuid
+     OR v_second.operator_id <> '10000000-0000-4000-8000-000000000003'::uuid
+     OR v_first.created_by <> auth.uid()
+     OR v_second.created_by <> auth.uid() THEN
+    RAISE EXCEPTION 'Manager did not create distinct operator reports with manager audit identity';
+  END IF;
+
+  IF (SELECT count(*) FROM public.daily_work_reports
+      WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        AND pump_id = '20000000-0000-4000-8000-000000000001'
+        AND work_date = DATE '2026-01-20') <> 2 THEN
+    RAISE EXCEPTION 'Two operators could not hold independent reports for the same pump/day';
+  END IF;
+
+  IF (SELECT count(*) FROM public.daily_pump_energy_reports
+      WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        AND pump_id = '20000000-0000-4000-8000-000000000001'
+        AND work_date = DATE '2026-01-20') <> 1
+     OR (SELECT count(*) FROM public.daily_pump_energy_source_totals totals
+         JOIN public.daily_pump_energy_reports energy
+           ON energy.id = totals.daily_pump_energy_report_id
+         WHERE energy.organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+           AND energy.pump_id = '20000000-0000-4000-8000-000000000001'
+           AND energy.work_date = DATE '2026-01-20') <> 1 THEN
+    RAISE EXCEPTION 'Pump energy totals were duplicated across independent operator reports';
+  END IF;
+END;
+$multi_operator_daily_reports_manager$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $multi_operator_daily_reports_operator_one$
+BEGIN
+  IF (SELECT count(*) FROM public.daily_work_reports
+      WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+        AND work_date = DATE '2026-01-20') <> 1
+     OR NOT EXISTS (
+       SELECT 1 FROM public.daily_work_reports
+       WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+         AND work_date = DATE '2026-01-20'
+         AND operator_id = auth.uid()
+     ) THEN
+    RAISE EXCEPTION 'Operator one can see another operator daily report';
+  END IF;
+
+  IF (SELECT count(*) FROM public.daily_pump_energy_reports
+      WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+        AND work_date = DATE '2026-01-20') <> 1
+     OR (SELECT count(*) FROM public.daily_pump_energy_source_totals totals
+         JOIN public.daily_pump_energy_reports energy
+           ON energy.id = totals.daily_pump_energy_report_id
+         WHERE energy.pump_id = '20000000-0000-4000-8000-000000000001'
+           AND energy.work_date = DATE '2026-01-20') <> 1 THEN
+    RAISE EXCEPTION 'Assigned operators must share the single pump energy report';
+  END IF;
+
+  BEGIN
+    PERFORM public.save_daily_work_report(
+      '20000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000003',
+      '2026-01-20 07:00:00+02'::timestamptz,
+      '2026-01-20 08:00:00+02'::timestamptz,
+      0,
+      '[]'::jsonb,
+      '[]'::jsonb,
+      false,
+      NULL
+    );
+    RAISE EXCEPTION 'Operator one created a report for operator two';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+END;
+$multi_operator_daily_reports_operator_one$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000003', true);
+DO $multi_operator_daily_reports_operator_two$
+BEGIN
+  IF (SELECT count(*) FROM public.daily_work_reports
+      WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+        AND work_date = DATE '2026-01-20') <> 1
+     OR NOT EXISTS (
+       SELECT 1 FROM public.daily_work_reports
+       WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+         AND work_date = DATE '2026-01-20'
+         AND operator_id = auth.uid()
+     ) THEN
+    RAISE EXCEPTION 'Operator two cannot see only their own daily report';
+  END IF;
+END;
+$multi_operator_daily_reports_operator_two$;
 RESET ROLE;
 
 \ir daily_queue.sql
