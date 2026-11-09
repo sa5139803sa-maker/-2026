@@ -33,7 +33,11 @@
       [
         "expo-notifications",
         {
-          "defaultChannel": "water-operation-alerts"
+          "defaultChannel": "water-operation-alerts",
+          "sounds": [
+            "./assets/alerts/minute-warning.wav",
+            "./assets/alerts/handover-warning.wav"
+          ]
         }
       ]
     ],

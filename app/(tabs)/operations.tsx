@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,10 +12,14 @@ import {
   View,
 } from "react-native";
 import { CheckCircle2, Clock3, Droplets, Pause, Play, Plus, RefreshCw, Waves } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
 import { loadAlertSettings, type AlertSettings } from "@/lib/alerts/settings";
-import { playAlertSound, stopAlertSound } from "@/lib/alerts/audio";
-import { getHandoverAlertWindow, shouldTriggerMinuteWarning } from "@/lib/alerts/timing-rules";
+import {
+  cancelHandoverNotification,
+  cancelOperationTimerNotifications,
+  requestAndroidNotificationPermission,
+  syncPumpTimerNotifications,
+  syncQueueHandoverNotification,
+} from "@/lib/alerts/native-notifications";
 import { SectionTitle, StatusBadge } from "@/components/UI";
 import { Card, RoleGate } from "@/components/ui";
 import { colors, radius, spacing, typography } from "@/constants/theme";
@@ -198,8 +203,6 @@ function OperationsScreenContent() {
   const [weeklyTransferReason, setWeeklyTransferReason] = useState("");
   const [weeklyTransferTargetDate, setWeeklyTransferTargetDate] = useState(localOperationDate());
   const autoAdvanceInFlight = useRef<string | null>(null);
-  const handoverStartTimer = useRef<{ key: string; timer: ReturnType<typeof setTimeout> } | null>(null);
-  const minuteAlertPlayedForOperation = useRef<string | null>(null);
   const [alertSettings, setAlertSettings] = useState<AlertSettings | null>(null);
   const [pauseReason, setPauseReason] = useState("");
   const [extensionMinutes, setExtensionMinutes] = useState("5");
@@ -431,7 +434,6 @@ function OperationsScreenContent() {
       .catch((settingsError) => console.warn("Could not load local alert settings.", settingsError));
     return () => {
       mounted = false;
-      stopAlertSound();
     };
   }, []);
 
@@ -470,66 +472,34 @@ function OperationsScreenContent() {
     : 0;
 
   useEffect(() => {
-    if (!activeOperation || activeOperation.status !== "running" || !alertSettings) {
-      if (activeOperation?.status === "paused") {
-        stopAlertSound(`minute:${activeOperation.id}`);
-      }
-      return;
-    }
-
-    const operationId = activeOperation.id;
-    if (!shouldTriggerMinuteWarning(
-      remainingSeconds,
-      minuteAlertPlayedForOperation.current === operationId,
-    )) {
-      return;
-    }
-
-    minuteAlertPlayedForOperation.current = operationId;
-    const preference = alertSettings.minuteWarning;
-    if (!preference.enabled) return;
-
-    const alertKey = `minute:${operationId}`;
-    void playAlertSound(preference.soundUri, 5000, alertKey);
-    if (preference.vibrate) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
-    }
-  }, [activeOperation?.id, activeOperation?.status, alertSettings, remainingSeconds]);
+    if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings) return;
+    void syncPumpTimerNotifications(selectedPumpId, operations, alertSettings).catch((syncError) => {
+      console.warn("Android pump timer notification sync failed.", syncError);
+      setError("تعذرت جدولة تنبيهات المؤقت. تحقق من إذن الإشعارات والمنبّهات الدقيقة في Android.");
+    });
+  }, [
+    selectedPumpId,
+    dataPumpId,
+    operations,
+    alertSettings?.minuteWarning.enabled,
+    alertSettings?.minuteWarning.vibrate,
+    alertSettings?.handover.enabled,
+    alertSettings?.handover.vibrate,
+  ]);
 
   useEffect(() => {
-    const token = dailyQueue?.auto_advance_token;
-    const deadline = dailyQueue?.auto_advance_at;
-    const preference = alertSettings?.handover;
-    if (!token || !deadline || !preference?.enabled) return;
-
-    const window = getHandoverAlertWindow(
-      new Date(deadline).getTime(),
-      Date.now(),
-    );
-    if (!window) return;
-
-    const alertKey = `handover:${token}`;
-    const startTimer = setTimeout(() => {
-      if (handoverStartTimer.current?.key === alertKey) handoverStartTimer.current = null;
-      void playAlertSound(preference.soundUri, window.durationMs, alertKey);
-      if (preference.vibrate) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
-      }
-    }, window.delayMs);
-    handoverStartTimer.current = { key: alertKey, timer: startTimer };
-
-    return () => {
-      if (handoverStartTimer.current?.key === alertKey) {
-        clearTimeout(handoverStartTimer.current.timer);
-        handoverStartTimer.current = null;
-      }
-      stopAlertSound(alertKey);
-    };
+    if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings) return;
+    void syncQueueHandoverNotification(selectedPumpId, dailyQueue, alertSettings).catch((syncError) => {
+      console.warn("Android queue handover notification sync failed.", syncError);
+      setError("تعذرت جدولة تنبيه الانتقال المحفوظ في الطابور.");
+    });
   }, [
+    selectedPumpId,
+    dataPumpId,
+    dailyQueue?.id,
     dailyQueue?.auto_advance_token,
     dailyQueue?.auto_advance_at,
     alertSettings?.handover.enabled,
-    alertSettings?.handover.soundUri,
     alertSettings?.handover.vibrate,
   ]);
 
@@ -605,12 +575,7 @@ function OperationsScreenContent() {
 
   const stopHandoverAlert = (token: string | null | undefined) => {
     if (!token) return;
-    const key = `handover:${token}`;
-    if (handoverStartTimer.current?.key === key) {
-      clearTimeout(handoverStartTimer.current.timer);
-      handoverStartTimer.current = null;
-    }
-    stopAlertSound(key);
+    void cancelHandoverNotification(token);
   };
 
   const startQueueItem = async (item: DailyQueueItem) => {
@@ -631,6 +596,15 @@ function OperationsScreenContent() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    let notificationsGranted = true;
+    if (Platform.OS === "android") {
+      try {
+        notificationsGranted = await requestAndroidNotificationPermission();
+      } catch (permissionError) {
+        notificationsGranted = false;
+        console.warn("Android notification permission request failed.", permissionError);
+      }
+    }
     const { error: startError } = await pumpOperationsRepository.startDailyQueueItem(
       dailyQueue.id,
       item.id,
@@ -641,7 +615,9 @@ function OperationsScreenContent() {
       setError(friendlyError(startError));
     } else {
       stopHandoverAlert(dailyQueue.auto_advance_token);
-      setNotice(`بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي.`);
+      setNotice(notificationsGranted
+        ? `بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي.`
+        : "بدأت التعبئة، لكن إذن إشعارات Android غير مفعّل؛ لن تصل تنبيهات شاشة القفل حتى تفعيله.");
       await loadPumpData();
     }
     setBusy(false);
@@ -881,7 +857,7 @@ function OperationsScreenContent() {
       setError(friendlyError(actionError));
     } else {
       if (action !== "resume_pump_operation") {
-        stopAlertSound(`minute:${activeOperation.id}`);
+        await cancelOperationTimerNotifications(activeOperation.id);
       }
       const messages = {
         pause_pump_operation: "تم إيقاف المؤقت مؤقتًا.",

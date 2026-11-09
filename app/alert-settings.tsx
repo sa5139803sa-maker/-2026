@@ -9,7 +9,7 @@ import {
   View,
 } from "react-native";
 import { router } from "expo-router";
-import { ArrowRight, BellRing, CheckCircle2, Music2, RotateCcw, Vibrate } from "lucide-react-native";
+import { AlarmClock, ArrowRight, BellRing, CheckCircle2, Music2, RotateCcw, Vibrate } from "lucide-react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
 import { Platform } from "react-native";
@@ -23,6 +23,7 @@ import {
   type AlertSettings,
 } from "@/lib/alerts/settings";
 import { playAlertSound, stopAlertSound } from "@/lib/alerts/audio";
+import { openAndroidExactAlarmSettings, requestAndroidNotificationPermission } from "@/lib/alerts/native-notifications";
 
 const ALERTS: { kind: AlertKind; title: string; detail: string; durationMs: number; timing: string }[] = [
   {
@@ -45,6 +46,7 @@ export default function AlertSettingsScreen() {
   const [settings, setSettings] = useState<AlertSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyKind, setBusyKind] = useState<AlertKind | null>(null);
+  const [nativeBusy, setNativeBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -143,6 +145,39 @@ export default function AlertSettingsScreen() {
     }
   };
 
+  const enableAndroidNotifications = async () => {
+    if (Platform.OS !== "android" || nativeBusy) return;
+    setNativeBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const granted = await requestAndroidNotificationPermission();
+      if (!granted) setError("لم يُمنح إذن الإشعارات. فعّله من إعدادات Android.");
+      else setNotice("تم تفعيل إذن الإشعارات. اضبط المنبّهات الدقيقة من الزر التالي.");
+    } catch (permissionError) {
+      console.error("Android notification permission setup failed", permissionError);
+      setError("تعذر طلب إذن الإشعارات من Android.");
+    } finally {
+      setNativeBusy(false);
+    }
+  };
+
+  const openExactAlarmSettings = async () => {
+    if (Platform.OS !== "android" || nativeBusy) return;
+    setNativeBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await openAndroidExactAlarmSettings();
+      setNotice("تحقق يدويًا من تفعيل «المنبّهات والتذكيرات» لهذا التطبيق في إعدادات Android.");
+    } catch (permissionError) {
+      console.error("Android exact alarm settings could not be opened", permissionError);
+      setError(permissionError instanceof Error ? permissionError.message : "تعذر فتح إعداد المنبّهات الدقيقة.");
+    } finally {
+      setNativeBusy(false);
+    }
+  };
+
   const preview = async (kind: AlertKind, durationMs: number) => {
     if (!settings || busyKind) return;
     setError(null);
@@ -176,6 +211,33 @@ export default function AlertSettingsScreen() {
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+
+      {Platform.OS === "android" ? (
+        <View style={styles.nativeCard}>
+          <View style={styles.nativeHeading}>
+            <AlarmClock size={19} color={colors.brand.primary} />
+            <Text style={styles.nativeTitle}>تنبيهات Android وشاشة القفل</Text>
+          </View>
+          <Text style={styles.nativeDescription}>
+            تُجدول التنبيهات في نظام Android لتصل بعد قفل الشاشة أو إغلاق واجهة التطبيق. فعّل إذن الإشعارات أولًا، ثم اسمح بالمنبّهات الدقيقة.
+          </Text>
+          <View style={styles.nativeActions}>
+            <Pressable disabled={nativeBusy} onPress={() => void enableAndroidNotifications()}
+              style={[styles.nativeButton, nativeBusy && styles.disabled]}>
+              <BellRing size={15} color="#fff" />
+              <Text style={styles.nativeButtonText}>تفعيل إشعارات Android</Text>
+            </Pressable>
+            <Pressable disabled={nativeBusy} onPress={() => void openExactAlarmSettings()}
+              style={[styles.nativeSecondaryButton, nativeBusy && styles.disabled]}>
+              <AlarmClock size={15} color={colors.brand.primary} />
+              <Text style={styles.nativeSecondaryButtonText}>فتح إعداد المنبّهات الدقيقة</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.nativeFootnote}>
+            يعتمد ظهور Heads-up وشاشة القفل على إعدادات Android. لا يفرض التطبيق فتح نافذة كاملة فوق القفل أو تجاوز عدم الإزعاج.
+          </Text>
+        </View>
+      ) : null}
 
       {loading || !settings ? (
         <View style={styles.loading}><ActivityIndicator color={colors.brand.teal} /></View>
@@ -251,7 +313,7 @@ export default function AlertSettingsScreen() {
             </Text>
           </View>
           <Text style={styles.note}>
-            يعمل صوت الملف المختار أثناء تشغيل التطبيق، وتُفعّل تهيئة تشغيل الصوت بالخلفية. قد تفرض إعدادات توفير الطاقة أو قيود نظام Android تأخيرًا؛ يلزم اختبار السلوك النهائي على الهاتف الفعلي.
+            نغمات Android مضمنة في نسخة التطبيق: تنبيه الدقيقة خمس ثوانٍ وتنبيه الانتقال ثانيتان. الملف المختار من الهاتف للمعاينة داخل التطبيق فقط؛ تغيير صوت قناة Android يتطلب تضمين الملف في بناء جديد. يلزم اختبار هاتف فعلي.
           </Text>
         </>
       )}
@@ -269,6 +331,16 @@ const styles = StyleSheet.create({
   title: { color: colors.text.primary, fontSize: typography.fontSize.xl, fontFamily: typography.fontFamily.bold, textAlign: "right" },
   subtitle: { color: colors.text.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular, textAlign: "right" },
   headerIcon: { width: 42, height: 42, borderRadius: radius.md, backgroundColor: colors.background.subtle, alignItems: "center", justifyContent: "center" },
+  nativeCard: { backgroundColor: colors.background.surface, borderWidth: 1, borderColor: colors.brand.aqua, borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm },
+  nativeHeading: { flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs },
+  nativeTitle: { color: colors.text.primary, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.bold, textAlign: "right" },
+  nativeDescription: { color: colors.text.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular, lineHeight: 20, textAlign: "right" },
+  nativeActions: { flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.xs },
+  nativeButton: { flexGrow: 1, minHeight: 42, borderRadius: radius.md, backgroundColor: colors.brand.primary, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingHorizontal: spacing.md },
+  nativeButtonText: { color: "#fff", fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.bold },
+  nativeSecondaryButton: { flexGrow: 1, minHeight: 42, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brand.aqua, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingHorizontal: spacing.md },
+  nativeSecondaryButtonText: { color: colors.brand.primary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.medium },
+  nativeFootnote: { color: colors.text.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular, lineHeight: 18, textAlign: "right" },
   card: { backgroundColor: colors.background.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm },
   alertHeading: { flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm },
   alertIcon: { width: 36, height: 36, borderRadius: radius.md, backgroundColor: colors.background.subtle, alignItems: "center", justifyContent: "center" },
