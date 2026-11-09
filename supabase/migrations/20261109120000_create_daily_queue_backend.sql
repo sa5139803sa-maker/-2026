@@ -1112,6 +1112,172 @@ REVOKE ALL ON FUNCTION public.cancel_daily_queue_auto_advance(uuid, uuid, text)
 GRANT EXECUTE ON FUNCTION public.cancel_daily_queue_auto_advance(uuid, uuid, text)
   TO authenticated;
 
+-- Add an additional registered, guest, or emergency item at the tail.
+-- Appending never retargets or cancels an already-persisted auto-advance.
+CREATE OR REPLACE FUNCTION water_management_private.add_daily_queue_item_internal(
+  p_queue_id uuid,
+  p_source_type text,
+  p_subscriber_id uuid,
+  p_subscriber_name text,
+  p_planned_minutes integer
+)
+RETURNS public.queue_items
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $add_daily_queue_item_internal$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_organization_id uuid := water_management_private.current_user_organization_id();
+  v_role public.app_role := water_management_private.current_user_role();
+  v_queue public.daily_queues%ROWTYPE;
+  v_name text;
+  v_branch_id uuid;
+  v_branch_name text;
+  v_sort_order integer;
+  v_item public.queue_items%ROWTYPE;
+  v_now timestamptz := clock_timestamp();
+BEGIN
+  IF v_user_id IS NULL OR v_organization_id IS NULL
+     OR v_role NOT IN ('manager'::public.app_role, 'operator'::public.app_role) THEN
+    RAISE EXCEPTION 'Not authorized to append daily queue items' USING ERRCODE = '42501';
+  END IF;
+
+  IF p_source_type NOT IN ('additional_registered', 'additional_guest', 'emergency') THEN
+    RAISE EXCEPTION 'Only additional or emergency queue items may be appended'
+      USING ERRCODE = '22023';
+  END IF;
+  IF p_planned_minutes IS NULL OR p_planned_minutes NOT BETWEEN 1 AND 1440 THEN
+    RAISE EXCEPTION 'Planned minutes must be between 1 and 1440'
+      USING ERRCODE = '22023';
+  END IF;
+
+  SELECT q.* INTO v_queue
+  FROM public.daily_queues q
+  WHERE q.id = p_queue_id
+    AND q.organization_id = v_organization_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Daily queue not found or not accessible' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_role = 'operator'::public.app_role AND NOT EXISTS (
+    SELECT 1 FROM public.pump_assignments pa
+    WHERE pa.organization_id = v_organization_id
+      AND pa.pump_id = v_queue.pump_id
+      AND pa.user_id = v_user_id
+      AND pa.assignment_role = 'operator'::public.app_role
+  ) THEN
+    RAISE EXCEPTION 'Operator is not assigned to this pump' USING ERRCODE = '42501';
+  END IF;
+
+  IF v_queue.queue_date <> (v_now AT TIME ZONE 'Asia/Hebron')::date THEN
+    RAISE EXCEPTION 'Only the current local-day queue may receive new items'
+      USING ERRCODE = '22023';
+  END IF;
+  IF v_queue.status = 'closed' THEN
+    RAISE EXCEPTION 'Closed daily queues cannot receive new items' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF p_source_type = 'additional_registered' THEN
+    IF p_subscriber_id IS NULL THEN
+      RAISE EXCEPTION 'A registered subscriber is required' USING ERRCODE = '22023';
+    END IF;
+
+    SELECT s.full_name, s.branch_id, b.name
+    INTO v_name, v_branch_id, v_branch_name
+    FROM public.subscribers s
+    LEFT JOIN public.branches b
+      ON b.id = s.branch_id
+     AND b.organization_id = s.organization_id
+     AND b.pump_id = s.pump_id
+    WHERE s.id = p_subscriber_id
+      AND s.organization_id = v_organization_id
+      AND s.pump_id = v_queue.pump_id
+      AND s.is_active;
+
+    IF v_name IS NULL THEN
+      RAISE EXCEPTION 'Subscriber must be active on the same pump'
+        USING ERRCODE = '22023';
+    END IF;
+  ELSE
+    IF p_subscriber_id IS NOT NULL THEN
+      RAISE EXCEPTION 'Guest and emergency items cannot reference a registered subscriber'
+        USING ERRCODE = '22023';
+    END IF;
+    v_name := btrim(COALESCE(p_subscriber_name, ''));
+    IF char_length(v_name) NOT BETWEEN 2 AND 120 THEN
+      RAISE EXCEPTION 'Guest or emergency beneficiary name is required'
+        USING ERRCODE = '22023';
+    END IF;
+  END IF;
+
+  SELECT COALESCE(max(qi.sort_order), -1) + 1
+  INTO v_sort_order
+  FROM public.queue_items qi
+  WHERE qi.daily_queue_id = p_queue_id;
+
+  INSERT INTO public.queue_items (
+    daily_queue_id, organization_id, pump_id, source_type,
+    subscriber_id, subscriber_name_snapshot, branch_id, branch_name_snapshot,
+    planned_minutes, sort_order
+  ) VALUES (
+    p_queue_id, v_organization_id, v_queue.pump_id, p_source_type,
+    p_subscriber_id, v_name, v_branch_id, v_branch_name,
+    p_planned_minutes, v_sort_order
+  )
+  RETURNING * INTO v_item;
+
+  UPDATE public.daily_queues
+  SET queue_version = queue_version + 1,
+      updated_at = v_now
+  WHERE id = p_queue_id;
+
+  PERFORM water_management_private.append_queue_item_event(
+    p_queue_id, v_item.id, v_organization_id, v_queue.pump_id,
+    'item_created', v_user_id, NULL,
+    jsonb_build_object(
+      'source_type', p_source_type,
+      'subscriber_id', p_subscriber_id,
+      'subscriber_name_snapshot', v_name,
+      'planned_minutes', p_planned_minutes,
+      'sort_order', v_sort_order,
+      'appended_to_end', true,
+      'auto_advance_preserved', v_queue.auto_advance_token IS NOT NULL
+    )
+  );
+
+  RETURN v_item;
+END;
+$add_daily_queue_item_internal$;
+
+REVOKE ALL ON FUNCTION water_management_private.add_daily_queue_item_internal(uuid, text, uuid, text, integer)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION water_management_private.add_daily_queue_item_internal(uuid, text, uuid, text, integer)
+  TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.add_daily_queue_item(
+  p_queue_id uuid,
+  p_source_type text,
+  p_subscriber_id uuid,
+  p_subscriber_name text,
+  p_planned_minutes integer
+)
+RETURNS public.queue_items
+LANGUAGE sql
+SECURITY INVOKER
+SET search_path = ''
+AS $add_daily_queue_item_rpc$
+  SELECT water_management_private.add_daily_queue_item_internal(
+    p_queue_id, p_source_type, p_subscriber_id, p_subscriber_name, p_planned_minutes
+  )
+$add_daily_queue_item_rpc$;
+
+REVOKE ALL ON FUNCTION public.add_daily_queue_item(uuid, text, uuid, text, integer)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.add_daily_queue_item(uuid, text, uuid, text, integer)
+  TO authenticated;
+
 -- Completion closes the linked queue item and schedules, but does not execute,
 -- the next item. A client (or a future scheduler worker) must consume the token.
 CREATE OR REPLACE FUNCTION water_management_private.complete_pump_operation_internal(
