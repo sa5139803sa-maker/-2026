@@ -57,5 +57,10 @@
     "@babel/core": "^7.29.0",
     "@types/react": "~19.2.4",
     "typescript": "~6.0.3"
+  },
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "./modules"
+    }
   }
 }
