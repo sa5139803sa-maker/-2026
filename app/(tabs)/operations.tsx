@@ -244,6 +244,9 @@ function OperationsScreenContent() {
       .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? "")),
     [dailyQueue],
   );
+  const hasForeignRunningQueueItem = (dailyQueue?.items ?? []).some(
+    (item) => item.is_owned === false && item.status === "running",
+  );
   const autoAdvanceRemainingSeconds = dailyQueue?.auto_advance_at
     ? Math.max(0, Math.ceil((new Date(dailyQueue.auto_advance_at).getTime() - now) / 1000))
     : null;
@@ -592,6 +595,10 @@ function OperationsScreenContent() {
 
   const startQueueItem = async (item: DailyQueueItem) => {
     if (!dailyQueue || busy || activeOperation) return;
+    if (item.is_owned === false) {
+      setError("هذا الدور تابع لمشغّل آخر. سيظهر لك ترتيب الدور دون بيانات المشترك.");
+      return;
+    }
     if (!selectedPowerSourceId) {
       setError("اختر مصدر الكهرباء المستخدم قبل بدء التعبئة.");
       return;
@@ -697,6 +704,10 @@ function OperationsScreenContent() {
 
   const manageQueueItem = async (item: DailyQueueItem, action: "defer" | "cancel") => {
     if (!dailyQueue || busy) return;
+    if (item.is_owned === false) {
+      setError("لا يمكنك تأجيل أو إلغاء دور مشغّل آخر.");
+      return;
+    }
     const reason = queueItemActionReason.trim();
     if (reason.length < 2 || reason.length > 240) {
       setError("أدخل سببًا واضحًا للتأجيل أو الإلغاء (من حرفين إلى 240 حرفًا).");
@@ -1390,8 +1401,9 @@ function OperationsScreenContent() {
                     </Text>
                   ) : queuedItems.map((item, index) => {
                     const isFirst = index === 0;
-                    const sourceLabel = item.source_type === "weekly" ? "حصة أسبوعية"
-                      : item.source_type === "weekly_reassigned" ? "حصة أسبوعية منقولة"
+                    const sourceLabel = item.source_type === "other" ? "دور لمشغّل آخر"
+                      : item.source_type === "weekly" ? "حصة أسبوعية"
+                        : item.source_type === "weekly_reassigned" ? "حصة أسبوعية منقولة"
                         : item.source_type === "additional_registered" ? "حصة إضافية لمشترك"
                           : item.source_type === "additional_guest" ? "مستفيد إضافي" : "حالة طارئة";
                     return (
@@ -1419,22 +1431,24 @@ function OperationsScreenContent() {
                               <Text style={styles.reorderText}>↓</Text>
                             </Pressable>
                           </>}
-                          <Pressable accessibilityLabel="تأجيل الدور إلى نهاية الطابور"
-                            disabled={busy || queuedItems.length < 2 || queueItemActionReason.trim().length < 2}
-                            onPress={() => void manageQueueItem(item, "defer")}
-                            style={[styles.reorderButton, (busy || queuedItems.length < 2 || queueItemActionReason.trim().length < 2) && styles.disabled]}>
-                            <Text style={styles.reorderText}>تأجيل</Text>
-                          </Pressable>
-                          <Pressable accessibilityLabel="إلغاء هذا الدور"
-                            disabled={busy || queueItemActionReason.trim().length < 2}
-                            onPress={() => confirmCancelQueueItem(item)}
-                            style={[styles.cancelAdvanceButton, (busy || queueItemActionReason.trim().length < 2) && styles.disabled]}>
-                            <Text style={styles.cancelAdvanceText}>إلغاء</Text>
-                          </Pressable>
+                          {item.is_owned !== false && <>
+                            <Pressable accessibilityLabel="تأجيل الدور إلى نهاية الطابور"
+                              disabled={busy || queuedItems.length < 2 || queueItemActionReason.trim().length < 2}
+                              onPress={() => void manageQueueItem(item, "defer")}
+                              style={[styles.reorderButton, (busy || queuedItems.length < 2 || queueItemActionReason.trim().length < 2) && styles.disabled]}>
+                              <Text style={styles.reorderText}>تأجيل</Text>
+                            </Pressable>
+                            <Pressable accessibilityLabel="إلغاء هذا الدور"
+                              disabled={busy || queueItemActionReason.trim().length < 2}
+                              onPress={() => confirmCancelQueueItem(item)}
+                              style={[styles.cancelAdvanceButton, (busy || queueItemActionReason.trim().length < 2) && styles.disabled]}>
+                              <Text style={styles.cancelAdvanceText}>إلغاء</Text>
+                            </Pressable>
+                          </>}
                         </View>
-                        <Pressable disabled={busy || Boolean(activeOperation) || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId}
+                        <Pressable disabled={busy || Boolean(activeOperation) || hasForeignRunningQueueItem || item.is_owned === false || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId}
                           onPress={() => void startQueueItem(item)}
-                          style={[styles.startButton, (busy || Boolean(activeOperation) || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId) && styles.disabled]}>
+                          style={[styles.startButton, (busy || Boolean(activeOperation) || hasForeignRunningQueueItem || item.is_owned === false || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId) && styles.disabled]}>
                           <Play size={14} color="#fff" /><Text style={styles.startText}>{isFirst ? "بدء" : "انتظار"}</Text>
                         </Pressable>
                       </View>
