@@ -204,6 +204,17 @@ export const pumpOperationsRepository = {
     });
   },
 
+  getReportActors(organizationId: string, actorIds: string[]) {
+    if (actorIds.length === 0) {
+      return Promise.resolve({ data: [], error: null });
+    }
+    return supabase
+      .from("profiles")
+      .select("id,display_name")
+      .eq("organization_id", organizationId)
+      .in("id", actorIds);
+  },
+
   async getDailyWorkReport(organizationId: string, pumpId: string, workDate: string) {
     const reportResult = await supabase
       .from("daily_work_reports")
