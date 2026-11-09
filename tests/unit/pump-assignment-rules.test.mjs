@@ -23,8 +23,17 @@ test("only employees with the selected role are eligible", () => {
   );
 });
 
-test("a pump cannot receive a second operator while its operator slot is occupied", () => {
-  assert.deepEqual(getAssignableEmployees("operator", "pump-1", employees, assignments), []);
+test("multiple operators can be assigned to the same pump", () => {
+  assert.deepEqual(
+    getAssignableEmployees("operator", "pump-1", employees, assignments).map((employee) => employee.id),
+    ["operator-2"],
+  );
+});
+
+test("the same operator cannot be assigned twice to the same pump", () => {
+  const withOperator = [...assignments, { pump_id: "pump-1", user_id: "operator-2", assignment_role: "operator" }];
+  assert.ok(!getAssignableEmployees("operator", "pump-1", employees, withOperator)
+    .some((employee) => employee.id === "operator-2"));
 });
 
 test("multiple collectors can be assigned to the same pump", () => {
