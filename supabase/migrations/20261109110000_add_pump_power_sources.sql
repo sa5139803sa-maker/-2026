@@ -45,10 +45,9 @@ CREATE POLICY pump_power_sources_select_assigned
         WHERE pa.organization_id = pump_power_sources.organization_id
           AND pa.pump_id = pump_power_sources.pump_id
           AND pa.user_id = (SELECT auth.uid())
-          AND (SELECT water_management_private.current_user_role()) IN (
+          AND pa.assignment_role IN (
             'operator'::public.app_role, 'supervisor'::public.app_role
           )
-          AND pa.assignment_role = (SELECT water_management_private.current_user_role())
       )
     )
   );
@@ -200,7 +199,9 @@ CREATE POLICY pump_operation_power_segments_select_scoped
         WHERE pa.organization_id = pump_operation_power_segments.organization_id
           AND pa.pump_id = pump_operation_power_segments.pump_id
           AND pa.user_id = (SELECT auth.uid())
-          AND pa.assignment_role = 'operator'::public.app_role
+          AND pa.assignment_role IN (
+            'operator'::public.app_role, 'supervisor'::public.app_role
+          )
       )
     )
   );
