@@ -2676,6 +2676,7 @@ DECLARE
   v_transfer_option_rows integer;
   v_report_date date;
   v_queue_date date;
+  v_reassignment_event jsonb;
 BEGIN
   IF (SELECT count(*) FROM public.subscribers
       WHERE id = '30000000-0000-4000-8000-000000000001') <> 1
