@@ -66,6 +66,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109111000_create_daily_work_reports.sql
 \ir ../../migrations/20261109120000_create_daily_queue_backend.sql
 \ir ../../migrations/20261109130000_version_weekly_entitlements_and_guarded_schedule_rpcs.sql
+\ir ../../migrations/20261109140000_add_pump_operation_time_extension.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -1653,9 +1654,39 @@ BEGIN
     RAISE EXCEPTION 'A second active operation was allowed on one pump';
   END IF;
 
+  v_rejected := false;
+  BEGIN
+    PERFORM public.extend_pump_operation_time(v_operation.id, 0);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'A zero-minute operation extension was accepted';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.extend_pump_operation_time(v_operation.id, 1431);
+  EXCEPTION WHEN invalid_parameter_value THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'An extension that would exceed the 24-hour operation cap was accepted';
+  END IF;
+
+  v_operation := public.extend_pump_operation_time(v_operation.id, 5);
+  IF v_operation.planned_minutes <> 15 OR v_operation.status <> 'running' THEN
+    RAISE EXCEPTION 'A running operation extension did not update the planned duration';
+  END IF;
+
   v_operation := public.pause_pump_operation(v_operation.id, 'انقطاع كهرباء تجريبي');
   IF v_operation.status <> 'paused' OR v_operation.paused_at IS NULL THEN
     RAISE EXCEPTION 'Manager pause transition did not persist';
+  END IF;
+
+  v_operation := public.extend_pump_operation_time(v_operation.id, 3);
+  IF v_operation.planned_minutes <> 18 OR v_operation.status <> 'paused' THEN
+    RAISE EXCEPTION 'A paused operation extension did not update the target without resuming the session';
   END IF;
 
   v_operation := public.resume_pump_operation(v_operation.id, v_power_source_id);
@@ -1667,8 +1698,29 @@ BEGIN
   IF v_operation.status <> 'completed'
      OR v_operation.ended_at IS NULL
      OR v_operation.actual_seconds IS NULL
-     OR v_operation.actual_seconds < 0 THEN
-    RAISE EXCEPTION 'Manager completion did not persist the final duration';
+     OR v_operation.actual_seconds < 0
+     OR v_operation.planned_minutes <> 18 THEN
+    RAISE EXCEPTION 'Manager completion did not preserve the extended target and final duration';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.extend_pump_operation_time(v_operation.id, 2);
+  EXCEPTION WHEN no_data_found THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'A completed operation accepted additional minutes';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    UPDATE public.pump_operations SET planned_minutes = 100 WHERE id = v_operation.id;
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Authenticated manager directly changed the planned duration outside the RPC';
   END IF;
 
   v_rejected := false;
@@ -1685,8 +1737,22 @@ BEGIN
   INTO v_event_types
   FROM public.pump_operation_events
   WHERE operation_id = v_operation.id;
-  IF v_event_types IS DISTINCT FROM ARRAY['started','paused','resumed','completed']::text[] THEN
+  IF v_event_types IS DISTINCT FROM ARRAY[
+       'started','time_extended','paused','time_extended','resumed','completed'
+     ]::text[] THEN
     RAISE EXCEPTION 'Operation event timeline is incomplete or out of order: %', v_event_types;
+  END IF;
+  IF (SELECT array_agg(metadata->>'planned_minutes_after' ORDER BY event_sequence)
+      FROM public.pump_operation_events
+      WHERE operation_id = v_operation.id AND event_type = 'time_extended')
+     IS DISTINCT FROM ARRAY['15','18']::text[] THEN
+    RAISE EXCEPTION 'Time extension events did not preserve the before/after targets in order';
+  END IF;
+  IF (SELECT count(*) FROM public.pump_operation_events
+      WHERE operation_id = v_operation.id
+        AND event_type = 'time_extended'
+        AND actor_id = auth.uid()) <> 2 THEN
+    RAISE EXCEPTION 'Time extension actor identity was not stored for every extension';
   END IF;
   IF (SELECT reason FROM public.pump_operation_events
       WHERE operation_id = v_operation.id AND event_type = 'paused')
