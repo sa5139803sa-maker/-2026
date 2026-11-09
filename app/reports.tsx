@@ -64,6 +64,7 @@ export default function ReportsScreen() {
   const [selectedPumpId, setSelectedPumpId] = useState("");
   const [workDate, setWorkDate] = useState(() => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Hebron" }));
   const [report, setReport] = useState<DailyWorkReportDetails | null>(null);
+  const [actorNames, setActorNames] = useState<Record<string, string>>({});
   const [powerPeriod, setPowerPeriod] = useState<"day" | "week" | "month">("day");
   const [powerRows, setPowerRows] = useState<PowerUsageRow[]>([]);
   const [powerLoading, setPowerLoading] = useState(false);
@@ -114,10 +115,26 @@ export default function ReportsScreen() {
     if (loadError) {
       console.error("daily work report read failed", loadError);
       setReport(null);
+      setActorNames({});
       setError("تعذر تحميل التقرير. قد لا تكون ترحيلات التقارير قد طُبقت على قاعدة البيانات بعد.");
     } else {
-      setReport(data as DailyWorkReportDetails | null);
+      const reportData = data as DailyWorkReportDetails | null;
+      setReport(reportData);
       setNotice(data ? "تم تحميل تفاصيل تقرير اليوم." : "لا يوجد تقرير محفوظ لهذا الغطاس في التاريخ المحدد.");
+      if (reportData) {
+        const actorIds = [...new Set(reportData.events.map((event) => event.actor_id))];
+        const actorsResult = await pumpOperationsRepository.getReportActors(organizationId, actorIds);
+        if (actorsResult.error) {
+          console.error("daily work report actor names load failed", actorsResult.error);
+          setActorNames({});
+        } else {
+          setActorNames(Object.fromEntries(
+            (actorsResult.data ?? []).map((actor) => [actor.id, actor.display_name]),
+          ));
+        }
+      } else {
+        setActorNames({});
+      }
     }
     setReportLoading(false);
   }, [canViewReports, organizationId, selectedPumpId, workDate]);
@@ -405,6 +422,9 @@ export default function ReportsScreen() {
               <View key={event.id} style={styles.dataRow}>
                 <View style={styles.eventBody}>
                   <Text style={styles.dataLabel}>{eventLabel(event.event_type)}</Text>
+                  <Text style={styles.smallNote}>
+                    بواسطة: {actorNames[event.actor_id] ?? (event.actor_id === profile?.id ? profile.display_name : "مستخدم مخوّل")}
+                  </Text>
                   <Text style={styles.smallNote}>{formatDateTime(event.occurred_at)}</Text>
                 </View>
               </View>
