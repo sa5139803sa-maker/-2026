@@ -313,6 +313,24 @@ export const pumpOperationsRepository = {
     });
   },
 
+  deferDailyQueueItem(queueId: string, itemId: string, expectedVersion: number, reason: string) {
+    return supabase.rpc("defer_daily_queue_item", {
+      p_queue_id: queueId,
+      p_queue_item_id: itemId,
+      p_expected_version: expectedVersion,
+      p_reason: reason,
+    });
+  },
+
+  cancelDailyQueueItem(queueId: string, itemId: string, expectedVersion: number, reason: string) {
+    return supabase.rpc("cancel_daily_queue_item", {
+      p_queue_id: queueId,
+      p_queue_item_id: itemId,
+      p_expected_version: expectedVersion,
+      p_reason: reason,
+    });
+  },
+
   startDailyQueueItem(queueId: string, itemId: string, powerSourceId: string) {
     return supabase.rpc("start_daily_queue_item", {
       p_queue_id: queueId,
