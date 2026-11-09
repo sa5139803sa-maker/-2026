@@ -1515,6 +1515,10 @@ BEGIN
      OR pg_catalog.has_function_privilege('anon','public.get_pump_power_usage(date,date,text,uuid)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','public.get_daily_work_report_allocations(uuid,date)','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','public.get_daily_work_report_allocations(uuid,date)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','public.get_daily_report_operators(uuid,date,boolean)','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','public.get_daily_report_operators(uuid,date,boolean)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','water_management_private.get_daily_report_operators_internal(uuid,date,boolean)','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','water_management_private.get_daily_report_operators_internal(uuid,date,boolean)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','public.prepare_daily_work_report(uuid,date)','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','public.prepare_daily_work_report(uuid,date)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','water_management_private.prepare_daily_work_report_internal(uuid,date)','EXECUTE')
@@ -2327,6 +2331,7 @@ DECLARE
   v_source_id uuid;
   v_first public.daily_work_reports%ROWTYPE;
   v_second public.daily_work_reports%ROWTYPE;
+  v_operator_count integer;
   v_rejected boolean := false;
 BEGIN
   SELECT id INTO v_source_id
@@ -2357,6 +2362,24 @@ BEGIN
     true,
     NULL
   );
+
+  SELECT count(*)::integer INTO v_operator_count
+  FROM public.get_daily_report_operators(
+    '20000000-0000-4000-8000-000000000001', DATE '2026-01-20', false
+  );
+  IF v_operator_count <> 2
+     OR NOT EXISTS (
+       SELECT 1 FROM public.get_daily_report_operators(
+         '20000000-0000-4000-8000-000000000001', DATE '2026-01-20', false
+       ) WHERE id = '10000000-0000-4000-8000-000000000002'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM public.get_daily_report_operators(
+         '20000000-0000-4000-8000-000000000001', DATE '2026-01-20', false
+       ) WHERE id = '10000000-0000-4000-8000-000000000003'
+     ) THEN
+    RAISE EXCEPTION 'Manager report operator selector did not return only the two assigned pump operators';
+  END IF;
 
   IF v_first.id = v_second.id
      OR v_first.operator_id <> '10000000-0000-4000-8000-000000000002'::uuid
@@ -2609,6 +2632,60 @@ BEGIN
 END;
 $multi_operator_daily_reports_operator_two$;
 RESET ROLE;
+
+-- Supervisors can select only operators who already have a report on
+-- the assigned pump/date; the profile table remains self-readable only.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
+DO $supervisor_daily_report_operator_selector$
+DECLARE
+  v_count integer;
+  v_rejected boolean := false;
+BEGIN
+  SELECT count(*)::integer INTO v_count
+  FROM public.get_daily_report_operators(
+    '20000000-0000-4000-8000-000000000001', DATE '2026-01-20', true
+  );
+
+  IF v_count <> 2
+     OR EXISTS (
+       SELECT 1 FROM public.get_daily_report_operators(
+         '20000000-0000-4000-8000-000000000001', DATE '2026-01-20', true
+       ) WHERE id NOT IN (
+         '10000000-0000-4000-8000-000000000002',
+         '10000000-0000-4000-8000-000000000003'
+       )
+     ) THEN
+    RAISE EXCEPTION 'Supervisor report selector returned operators outside the assigned pump/date reports';
+  END IF;
+
+  BEGIN
+    PERFORM 1 FROM public.get_daily_report_operators(
+      '20000000-0000-4000-8000-000000000001', DATE '2026-01-20', false
+    );
+    RAISE EXCEPTION 'Supervisor listed operators without filtering to existing reports';
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Supervisor unfiltered operator selector was not rejected';
+  END IF;
+
+  IF pg_catalog.has_table_privilege('authenticated','public.profiles','SELECT')
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_policies
+       WHERE schemaname = 'public'
+         AND tablename = 'profiles'
+         AND policyname = 'users_select_own_profile'
+     ) THEN
+    RAISE EXCEPTION 'Profiles RLS self-read boundary changed unexpectedly';
+  END IF;
+END;
+$supervisor_daily_report_operator_selector$;
+RESET ROLE;
+
+
 
 \ir daily_queue.sql
 
