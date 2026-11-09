@@ -55,7 +55,7 @@ DECLARE
   v_running_count integer;
   v_closed boolean := false;
 BEGIN
-  IF v_user_id IS NULL OR v_organization_id IS NULL
+  IF v_user_id IS NULL OR v_organization_id IS NULL OR v_role IS NULL
      OR v_role NOT IN ('manager'::public.app_role, 'operator'::public.app_role) THEN
     RAISE EXCEPTION 'Not authorized to manage daily queue items'
       USING ERRCODE = '42501';
