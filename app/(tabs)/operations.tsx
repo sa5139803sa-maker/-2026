@@ -1487,6 +1487,7 @@ function OperationsScreenContent() {
                           item_created: "إضافة دور",
                           item_deferred: "تأجيل إلى نهاية الطابور",
                           item_cancelled: "إلغاء دور",
+                          item_operator_reassigned: "تغيير المشغّل المسؤول",
                           reordered: "إعادة ترتيب الطابور",
                           branch_order_override: "تجاوز قاعدة التفرعات",
                           started: "بدء تعبئة",
