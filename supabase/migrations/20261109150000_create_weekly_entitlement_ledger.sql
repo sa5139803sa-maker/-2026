@@ -1077,6 +1077,11 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
+  -- Expire prior cycles on demand as well as during daily queue generation.
+  PERFORM water_management_private.expire_due_weekly_entitlement_cycles(
+    v_organization_id, v_source.pump_id, v_today, v_user_id
+  );
+
   IF v_source.allocation_date = p_target_date THEN
     RAISE EXCEPTION 'Source and target day must be different'
       USING ERRCODE = '22023';
@@ -1453,6 +1458,9 @@ BEGIN
   PERFORM water_management_private.ensure_weekly_entitlement_cycle(
     v_schedule.id, v_organization_id, p_pump_id,
     v_cycle_start, v_user_id
+  );
+  PERFORM water_management_private.expire_due_weekly_entitlement_cycles(
+    v_organization_id, p_pump_id, v_today, v_user_id
   );
 
   RETURN QUERY
