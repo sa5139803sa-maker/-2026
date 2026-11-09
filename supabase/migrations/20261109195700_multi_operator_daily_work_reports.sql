@@ -1645,3 +1645,30 @@ REVOKE ALL ON FUNCTION public.prepare_daily_work_report(uuid, date)
   FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.prepare_daily_work_report(uuid, date)
   TO authenticated;
+
+
+-- Extend the original pump teardown hook after the shared energy tables exist.
+-- A pump deletion must remove energy snapshots before its power sources cascade;
+-- individual source deletion remains protected by the RESTRICT foreign key.
+CREATE OR REPLACE FUNCTION water_management_private.delete_pump_daily_work_reports()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $delete_pump_daily_work_reports_multi$
+BEGIN
+  DELETE FROM public.daily_pump_energy_reports
+  WHERE organization_id = OLD.organization_id
+    AND pump_id = OLD.id;
+
+  DELETE FROM public.daily_work_reports
+  WHERE organization_id = OLD.organization_id
+    AND pump_id = OLD.id;
+
+  RETURN OLD;
+END;
+$delete_pump_daily_work_reports_multi$;
+
+ALTER FUNCTION water_management_private.delete_pump_daily_work_reports() OWNER TO postgres;
+REVOKE ALL ON FUNCTION water_management_private.delete_pump_daily_work_reports()
+  FROM PUBLIC, anon, authenticated, service_role;
