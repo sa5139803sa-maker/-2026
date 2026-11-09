@@ -1513,6 +1513,8 @@ BEGIN
   END IF;
   IF NOT pg_catalog.has_function_privilege('authenticated','public.get_pump_power_usage(date,date,text,uuid)','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','public.get_pump_power_usage(date,date,text,uuid)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','public.get_daily_work_report_allocations(uuid,date)','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','public.get_daily_work_report_allocations(uuid,date)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','public.save_daily_work_report(uuid,uuid,timestamptz,timestamptz,integer,jsonb,jsonb,boolean,uuid)','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','public.save_daily_work_report(uuid,uuid,timestamptz,timestamptz,integer,jsonb,jsonb,boolean,uuid)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','public.save_daily_work_report(uuid,timestamptz,timestamptz,integer,jsonb,jsonb,boolean,uuid)','EXECUTE')
@@ -2818,6 +2820,20 @@ BEGIN
   FROM public.daily_queues
   WHERE id = current_setting('test.daily_queue_id')::uuid;
 
+  IF (SELECT count(*) FROM public.get_daily_work_report_allocations(
+        '20000000-0000-4000-8000-000000000001', v_queue_date
+      ) WHERE operator_id = auth.uid()) < 1 THEN
+    RAISE EXCEPTION 'Former operator cannot view entitlement ownership for the date before reassignment';
+  END IF;
+
+  IF (SELECT count(*) FROM public.get_daily_work_report_allocations(
+        '20000000-0000-4000-8000-000000000001',
+        (SELECT queue_date FROM public.daily_queues
+         WHERE id = current_setting('test.assignment_future_queue_id')::uuid)
+      ) WHERE operator_id = auth.uid()) <> 0 THEN
+    RAISE EXCEPTION 'Former operator can view a future allocation after subscriber reassignment';
+  END IF;
+
   SELECT count(*)::integer INTO v_transfer_option_rows
   FROM public.get_weekly_entitlement_transfer_options(
     '20000000-0000-4000-8000-000000000001', v_queue_date + 3
@@ -2915,6 +2931,14 @@ BEGIN
   WHERE subscriber_id = '30000000-0000-4000-8000-000000000001';
   IF v_cycles < 1 OR v_allocations < 1 THEN
     RAISE EXCEPTION 'New operator cannot read current weekly entitlement balance';
+  END IF;
+
+  IF (SELECT count(*) FROM public.get_daily_work_report_allocations(
+        '20000000-0000-4000-8000-000000000001',
+        (SELECT queue_date FROM public.daily_queues
+         WHERE id = v_queue_id)
+      ) WHERE operator_id = auth.uid()) < 1 THEN
+    RAISE EXCEPTION 'New operator cannot load work-date entitlement ownership after reassignment';
   END IF;
 
   SELECT count(*)::integer INTO v_items
