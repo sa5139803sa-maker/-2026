@@ -278,7 +278,30 @@ BEGIN
     RAISE EXCEPTION 'Starting a queue item did not link its pump operation atomically';
   END IF;
 
+  -- Simulate two real minutes without waiting in CI. Only the test owner can
+  -- alter the persisted start timestamp; the completion RPC remains operator-scoped.
+  RESET ROLE;
+  UPDATE public.pump_operations
+  SET started_at = clock_timestamp() - interval '2 minutes'
+  WHERE id = v_operation.id;
+  SET LOCAL ROLE authenticated;
+
   PERFORM public.complete_pump_operation(v_operation.id);
+
+  IF (SELECT consumed_minutes FROM public.weekly_entitlement_allocations
+      WHERE id = (SELECT weekly_entitlement_allocation_id
+                  FROM public.queue_items WHERE id = v_weekly_item_id)) <> 2
+     OR (SELECT consumed_minutes FROM public.weekly_entitlement_cycles
+         WHERE id = (SELECT weekly_entitlement_cycle_id
+                     FROM public.weekly_entitlement_allocations
+                     WHERE id = (SELECT weekly_entitlement_allocation_id
+                                 FROM public.queue_items WHERE id = v_weekly_item_id))) <> 2
+     OR (SELECT count(*) FROM public.weekly_entitlement_events
+         WHERE event_type = 'minutes_consumed'
+           AND metadata->>'queue_item_id' = v_weekly_item_id::text
+           AND minutes = 2) <> 1 THEN
+    RAISE EXCEPTION 'Completed weekly operation did not consume its two actual minutes exactly once';
+  END IF;
 
   SELECT auto_advance_queue_item_id, auto_advance_token
   INTO v_next_item_id, v_token
@@ -490,9 +513,9 @@ BEGIN
      OR (SELECT consumed_minutes FROM public.weekly_entitlement_allocations
          WHERE id = v_allocation_id) <> 7
      OR (SELECT consumed_minutes FROM public.weekly_entitlement_cycles
-         WHERE id = v_cycle_id) <> 7
+         WHERE id = v_cycle_id) <> 9
      OR (SELECT remaining_minutes FROM public.weekly_entitlement_cycles
-         WHERE id = v_cycle_id) <> 38 THEN
+         WHERE id = v_cycle_id) <> 36 THEN
     RAISE EXCEPTION 'Submitted daily report did not reconcile seven manual weekly minutes exactly once';
   END IF;
 
