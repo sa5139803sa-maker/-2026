@@ -648,33 +648,13 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  -- Serialize manual item creation with subscriber reassignment and queue
-  -- generation using the same pump -> queue -> subscriber lock order.
-  SELECT q.pump_id INTO v_pump_id
-  FROM public.daily_queues q
-  WHERE q.id = p_queue_id
-    AND q.organization_id = v_organization_id;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Daily queue not found or not accessible' USING ERRCODE = 'P0002';
-  END IF;
-
-  PERFORM 1
-  FROM public.pumps p
-  WHERE p.id = v_pump_id
-    AND p.organization_id = v_organization_id
-  FOR UPDATE;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Daily queue pump is not accessible' USING ERRCODE = 'P0002';
-  END IF;
-
   SELECT q.* INTO v_queue
   FROM public.daily_queues q
   WHERE q.id = p_queue_id
     AND q.organization_id = v_organization_id
   FOR UPDATE;
-  IF NOT FOUND OR v_queue.pump_id IS DISTINCT FROM v_pump_id THEN
-    RAISE EXCEPTION 'Daily queue changed; reload before adding an item'
-      USING ERRCODE = '40001';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Daily queue not found or not accessible' USING ERRCODE = 'P0002';
   END IF;
 
   IF v_role = 'operator'::public.app_role AND NOT EXISTS (
