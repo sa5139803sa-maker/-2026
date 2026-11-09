@@ -87,6 +87,11 @@ BEGIN
       USING ERRCODE = '23503';
   END IF;
 
+  IF NEW.assigned_operator_id IS NULL THEN
+    RAISE EXCEPTION 'A registered subscriber must have a responsible operator before entering the daily queue'
+      USING ERRCODE = '23514';
+  END IF;
+
   RETURN NEW;
 END;
 $assign_queue_item_operator$;
