@@ -974,6 +974,9 @@ BEGIN
     ))
   );
 
+  PERFORM set_config('test.weekly_current_schedule_id', v_current_schedule_id::text, true);
+  PERFORM set_config('test.weekly_future_schedule_id', v_future_schedule_id::text, true);
+
   PERFORM public.activate_weekly_schedule(v_future_schedule_id);
 
   IF NOT EXISTS (
@@ -1238,10 +1241,19 @@ END;
 $collector_branch_scope$;
 DO $collector_schedule_scope$
 BEGIN
-  IF (SELECT count(*) FROM public.weekly_schedules) <> 1
+  IF (SELECT count(*) FROM public.weekly_schedules) <> 3
      OR NOT EXISTS (SELECT 1 FROM public.weekly_schedules WHERE id='50000000-0000-4000-8000-000000000002')
-     OR (SELECT count(*) FROM public.schedule_entries) <> 1 THEN
-    RAISE EXCEPTION 'Collector A must read only the schedule and entries for the assigned pump';
+     OR NOT EXISTS (
+       SELECT 1 FROM public.weekly_schedules
+       WHERE id=current_setting('test.weekly_current_schedule_id')::uuid
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM public.weekly_schedules
+       WHERE id=current_setting('test.weekly_future_schedule_id')::uuid
+     )
+     OR (SELECT count(*) FROM public.schedule_entries) <> 5
+     OR (SELECT count(*) FROM public.weekly_schedule_subscribers) <> 3 THEN
+    RAISE EXCEPTION 'Collector A must read only the historical, current, and future versions for the assigned pump';
   END IF;
 END;
 $collector_schedule_scope$;
