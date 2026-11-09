@@ -451,6 +451,13 @@ export const pumpOperationsRepository = {
     });
   },
 
+  extendTime(operationId: string, addedMinutes: number) {
+    return supabase.rpc("extend_pump_operation_time", {
+      p_operation_id: operationId,
+      p_added_minutes: addedMinutes,
+    });
+  },
+
   complete(operationId: string) {
     return supabase.rpc("complete_pump_operation", { p_operation_id: operationId });
   },
