@@ -410,6 +410,17 @@ INSERT INTO public.subscribers (id, organization_id, pump_id, full_name, phone) 
   ('30000000-0000-4000-8000-000000000003', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL, 'مشترك أ دون غطاس', '+970599111113'),
   ('30000000-0000-4000-8000-000000000004', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003', 'مشترك ب 1', '+970599111114');
 
+-- The migrations run before the test fixtures are inserted. Explicitly create
+-- the legacy-owner assignment for tenant B after both rows exist.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
+SELECT public.assign_subscriber_operator(
+  '30000000-0000-4000-8000-000000000004',
+  '10000000-0000-4000-8000-000000000007',
+  'تهيئة مسؤول المشترك في اختبار المؤسسة ب'
+);
+RESET ROLE;
+
 INSERT INTO public.branches (id, organization_id, pump_id, name, code, sort_order) VALUES
   ('40000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000001', 'تفرع أ 1', 'A-1', 0),
   ('40000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000002', 'تفرع أ 2', 'A-2', 0),
