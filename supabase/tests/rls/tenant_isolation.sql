@@ -1679,7 +1679,12 @@ BEGIN
   -- The manager management fixture above adds and reactivates one extra source.
   IF (SELECT count(*) FROM public.pump_power_sources
       WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 4 THEN
-    RAISE EXCEPTION 'Assigned supervisor must read every active and configured power source for their pump';
+    RAISE EXCEPTION 'Supervisor source scope mismatch: visible_sources=%, profile_role=%, profile_org=%, visible_assignments=%, assigned_pump=%',
+      (SELECT count(*) FROM public.pump_power_sources WHERE pump_id='20000000-0000-4000-8000-000000000001'),
+      water_management_private.current_user_role(),
+      water_management_private.current_user_organization_id(),
+      (SELECT count(*) FROM public.pump_assignments WHERE user_id=auth.uid() AND pump_id='20000000-0000-4000-8000-000000000001'),
+      (SELECT count(*) FROM public.pumps WHERE id='20000000-0000-4000-8000-000000000001');
   END IF;
   IF (SELECT count(*) FROM public.pump_operation_power_segments
       WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 4 THEN
