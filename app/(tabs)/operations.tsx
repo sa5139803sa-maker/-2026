@@ -578,7 +578,9 @@ function OperationsScreenContent() {
 
   const stopHandoverAlert = (token: string | null | undefined) => {
     if (!token) return;
-    void cancelHandoverNotification(token);
+    void cancelHandoverNotification(token).catch((cancelError) => {
+      console.warn("Android handover notification cancellation failed.", cancelError);
+    });
   };
 
   const startQueueItem = async (item: DailyQueueItem) => {
@@ -860,7 +862,11 @@ function OperationsScreenContent() {
       setError(friendlyError(actionError));
     } else {
       if (action !== "resume_pump_operation") {
-        await cancelOperationTimerNotifications(activeOperation.id);
+        try {
+          await cancelOperationTimerNotifications(activeOperation.id);
+        } catch (cancelError) {
+          console.warn("Android operation notification cancellation failed.", cancelError);
+        }
       }
       const messages = {
         pause_pump_operation: "تم إيقاف المؤقت مؤقتًا.",
