@@ -451,41 +451,186 @@ function OperationsScreenContent() {
     setBusy(false);
   };
 
-  const startOperation = async (subscriber: Subscriber | null) => {
-    if (!selectedPumpId || busy) return;
-    const plannedMinutes = Number(minutes);
+  const startQueueItem = async (item: DailyQueueItem) => {
+    if (!dailyQueue || busy || activeOperation) return;
     if (!selectedPowerSourceId) {
       setError("اختر مصدر الكهرباء المستخدم قبل بدء التعبئة.");
       return;
     }
-    if (!Number.isInteger(plannedMinutes) || plannedMinutes < 1 || plannedMinutes > 1440) {
-      setError("أدخل مدة صحيحة من دقيقة واحدة إلى 24 ساعة.");
-      return;
-    }
-    if (!subscriber && emergencyName.trim().length < 2) {
-      setError("أدخل اسم الحالة الطارئة بصورة صحيحة.");
+    const firstWaitingItem = queuedItems[0];
+    if (!firstWaitingItem || firstWaitingItem.id !== item.id) {
+      setError("يمكن بدء أول عنصر منتظر فقط. أعد ترتيب الطابور أولًا عند الحاجة.");
       return;
     }
     setBusy(true);
     setError(null);
     setNotice(null);
-    const { error: actionError } = await pumpOperationsRepository.start(
-      selectedPumpId,
-      subscriber?.id ?? null,
-      subscriber ? null : emergencyName.trim(),
-      plannedMinutes,
+    const { error: startError } = await pumpOperationsRepository.startDailyQueueItem(
+      dailyQueue.id,
+      item.id,
       selectedPowerSourceId,
     );
-    if (actionError) {
-      console.error("pump operation start failed", actionError);
-      setError(friendlyError(actionError));
+    if (startError) {
+      console.error("daily queue item start failed", startError);
+      setError(friendlyError(startError));
     } else {
-      setEmergencyName("");
-      setNotice(`بدأ تشغيل ${subscriber?.full_name ?? "الحالة الطارئة"} بنجاح.`);
+      setNotice(`بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي.`);
       await loadPumpData();
     }
     setBusy(false);
   };
+
+  const appendQueueItem = async () => {
+    if (!dailyQueue || busy || activeOperation) return;
+    const planned = Number(queueAdditionMinutes);
+    if (!Number.isInteger(planned) || planned < 1 || planned > 1440) {
+      setError("أدخل مدة صحيحة للإضافة من دقيقة واحدة إلى 24 ساعة.");
+      return;
+    }
+    if (queueAdditionType === "additional_registered" && !queueAdditionSubscriberId) {
+      setError("اختر المشترك المسجل الذي تريد إضافة حصة له.");
+      return;
+    }
+    if (queueAdditionType !== "additional_registered" && queueAdditionName.trim().length < 2) {
+      setError("أدخل اسم المستفيد بصورة صحيحة.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const { error: appendError } = await pumpOperationsRepository.addDailyQueueItem(
+      dailyQueue.id,
+      queueAdditionType,
+      planned,
+      queueAdditionType === "additional_registered" ? queueAdditionSubscriberId : null,
+      queueAdditionType === "additional_registered" ? null : queueAdditionName.trim(),
+    );
+    if (appendError) {
+      console.error("daily queue append failed", appendError);
+      setError(appendError.code === "22023"
+        ? "تحقق من اسم المستفيد أو مدة التعبئة أو أن المشترك تابع للغطاس المحدد."
+        : friendlyError(appendError));
+    } else {
+      setQueueAdditionName("");
+      setQueueAdditionSubscriberId("");
+      setQueueAdditionMinutes("30");
+      setQueueAdditionOpen(false);
+      setNotice("أضيف العنصر إلى نهاية الطابور دون تغيير ترتيب الأدوار السابقة.");
+      await loadPumpData();
+    }
+    setBusy(false);
+  };
+
+  const moveQueueItem = async (itemId: string, direction: -1 | 1) => {
+    if (!dailyQueue || busy) return;
+    const fromIndex = queuedItems.findIndex((item) => item.id === itemId);
+    const toIndex = fromIndex + direction;
+    if (fromIndex < 0 || toIndex < 0 || toIndex >= queuedItems.length) return;
+
+    const nextOrder = queuedItems.map((item) => item.id);
+    [nextOrder[fromIndex], nextOrder[toIndex]] = [nextOrder[toIndex], nextOrder[fromIndex]];
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const { error: reorderError } = await pumpOperationsRepository.reorderDailyQueue(
+      dailyQueue.id,
+      dailyQueue.queue_version,
+      nextOrder,
+      queueOverrideReason.trim() || null,
+    );
+    if (reorderError) {
+      console.error("daily queue reorder failed", reorderError);
+      setError(reorderError.code === "22023"
+        ? "هذا الترتيب يضع عنصرين من التفرع نفسه متتاليين. أدخل سبب التجاوز ثم أعد المحاولة."
+        : reorderError.code === "40001"
+          ? "تغير الطابور من جهاز آخر. حدّث الطابور ثم حاول مجددًا."
+          : friendlyError(reorderError));
+    } else {
+      setQueueOverrideReason("");
+      setNotice("تم حفظ ترتيب الطابور وسجل التعديل.");
+      await loadPumpData();
+    }
+    setBusy(false);
+  };
+
+  const cancelAutoAdvance = async () => {
+    if (!dailyQueue?.auto_advance_token || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error: cancelError } = await pumpOperationsRepository.cancelDailyQueueAutoAdvance(
+      dailyQueue.id,
+      dailyQueue.auto_advance_token,
+      "ألغى المشغّل الانتقال التلقائي",
+    );
+    if (cancelError) {
+      console.error("daily queue auto-advance cancellation failed", cancelError);
+      setError(friendlyError(cancelError));
+    } else {
+      setNotice("تم إلغاء بدء الدور التالي تلقائيًا. يمكنك بدءه يدويًا.");
+      await loadPumpData();
+    }
+    setBusy(false);
+  };
+
+  useEffect(() => {
+    const queue = dailyQueue;
+    const token = queue?.auto_advance_token;
+    const itemId = queue?.auto_advance_queue_item_id;
+    if (
+      !queue
+      || !token
+      || !itemId
+      || !queue.auto_advance_at
+      || activeOperation
+      || busy
+      || !selectedPump
+      || selectedPump.status !== "active"
+      || !selectedPowerSourceId
+      || new Date(queue.auto_advance_at).getTime() > now
+      || autoAdvanceInFlight.current === token
+    ) {
+      return;
+    }
+
+    autoAdvanceInFlight.current = token;
+    setBusy(true);
+    setError(null);
+    void (async () => {
+      try {
+        const { error: advanceError } = await pumpOperationsRepository.startNextDailyQueueItem(
+          queue.id,
+          itemId,
+          token,
+          selectedPowerSourceId,
+        );
+        if (advanceError) {
+          console.error("daily queue auto-advance failed", advanceError);
+          setError(advanceError.code === "P0002"
+            ? "تغير الطابور أو أُلغي الانتقال التلقائي قبل بدء الدور التالي."
+            : friendlyError(advanceError));
+        } else {
+          setNotice("بدأ الدور التالي تلقائيًا بعد انتهاء مهلة الثلاث ثوانٍ.");
+        }
+        await loadPumpData();
+      } finally {
+        if (autoAdvanceInFlight.current === token) autoAdvanceInFlight.current = null;
+        setBusy(false);
+      }
+    })();
+  }, [
+    activeOperation,
+    busy,
+    dailyQueue?.id,
+    dailyQueue?.auto_advance_at,
+    dailyQueue?.auto_advance_queue_item_id,
+    dailyQueue?.auto_advance_token,
+    loadPumpData,
+    now,
+    selectedPowerSourceId,
+    selectedPump,
+  ]);
 
   const runAction = useCallback(async (
     action: "pause_pump_operation" | "resume_pump_operation" | "complete_pump_operation",
