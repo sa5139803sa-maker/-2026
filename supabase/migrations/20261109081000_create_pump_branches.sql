@@ -25,6 +25,8 @@ CREATE UNIQUE INDEX branches_name_per_pump_uidx
 CREATE UNIQUE INDEX branches_code_per_pump_uidx
   ON public.branches (organization_id, pump_id, lower(btrim(code)))
   WHERE code IS NOT NULL;
+CREATE INDEX branches_pump_tenant_idx
+  ON public.branches (pump_id, organization_id);
 CREATE INDEX branches_pump_order_idx
   ON public.branches (pump_id, organization_id, is_active, sort_order, id);
 
