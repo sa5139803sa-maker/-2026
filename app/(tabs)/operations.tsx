@@ -908,7 +908,7 @@ function OperationsScreenContent() {
         ?? (profile?.role === "operator" ? profile.id : selectedReportOperatorId);
 
       if (profile?.role === "manager") {
-        const operatorsResult = await pumpOperationsRepository.listPumpOperators(organizationId, selectedPumpId);
+        const operatorsResult = await pumpOperationsRepository.listPumpOperators(organizationId, selectedPumpId, date);
         if (operatorsResult.error) throw operatorsResult.error;
         const operators = (operatorsResult.data ?? []) as { id: string; display_name: string }[];
         setReportOperators(operators);
