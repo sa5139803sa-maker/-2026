@@ -415,16 +415,16 @@ UPDATE public.subscribers SET branch_id = '40000000-0000-4000-8000-000000000003'
 WHERE id = '30000000-0000-4000-8000-000000000004';
 
 INSERT INTO public.weekly_schedules (
-  id, organization_id, pump_id, name, effective_from, effective_to, status, created_by
+  id, organization_id, pump_id, name, effective_from, effective_to, week_starts_on, status, created_by
 ) VALUES
   ('50000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-   '20000000-0000-4000-8000-000000000001', 'جدول أ 1', '2026-01-01', NULL, 'draft',
+   '20000000-0000-4000-8000-000000000001', 'جدول أ 1', '2026-01-05', NULL, 1, 'draft',
    '10000000-0000-4000-8000-000000000001'),
   ('50000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-   '20000000-0000-4000-8000-000000000002', 'جدول أ 2', '2026-01-01', NULL, 'draft',
+   '20000000-0000-4000-8000-000000000002', 'جدول أ 2', '2026-01-05', NULL, 1, 'draft',
    '10000000-0000-4000-8000-000000000001'),
   ('50000000-0000-4000-8000-000000000003', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-   '20000000-0000-4000-8000-000000000003', 'جدول ب 1', '2026-01-01', NULL, 'active',
+   '20000000-0000-4000-8000-000000000003', 'جدول ب 1', '2026-01-05', NULL, 1, 'active',
    '10000000-0000-4000-8000-000000000006');
 
 INSERT INTO public.schedule_entries (
