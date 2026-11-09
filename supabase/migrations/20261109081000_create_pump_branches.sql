@@ -44,6 +44,35 @@ CREATE INDEX subscribers_branch_tenant_idx
   ON public.subscribers (branch_id, organization_id, pump_id)
   WHERE branch_id IS NOT NULL;
 
+-- A pump deletion already clears subscribers.pump_id through the existing
+-- composite FK. Clear branch_id first so the branch-required-pump check remains
+-- valid regardless of the order in which PostgreSQL processes FK actions.
+SET ROLE water_management_authz;
+CREATE FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $
+BEGIN
+  UPDATE public.subscribers
+  SET branch_id = NULL
+  WHERE organization_id = OLD.organization_id
+    AND pump_id = OLD.id
+    AND branch_id IS NOT NULL;
+  RETURN OLD;
+END;
+$;
+RESET ROLE;
+
+GRANT EXECUTE ON FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
+  TO CURRENT_USER;
+CREATE TRIGGER clear_subscriber_branches_before_pump_delete
+  BEFORE DELETE ON public.pumps
+  FOR EACH ROW
+  EXECUTE FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete();
+REVOKE EXECUTE ON FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
+  FROM CURRENT_USER, PUBLIC, anon, authenticated, service_role;
+
 ALTER TABLE public.branches ENABLE ROW LEVEL SECURITY;
 
 -- Explicit grants are required for the authenticated Data API role; RLS
