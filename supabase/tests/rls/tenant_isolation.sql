@@ -2306,6 +2306,7 @@ DECLARE
   v_source_id uuid;
   v_first public.daily_work_reports%ROWTYPE;
   v_second public.daily_work_reports%ROWTYPE;
+  v_rejected boolean := false;
 BEGIN
   SELECT id INTO v_source_id
   FROM public.pump_power_sources
@@ -2332,7 +2333,7 @@ BEGIN
     0,
     jsonb_build_array(jsonb_build_object('power_source_id', v_source_id, 'minutes', 60)),
     '[]'::jsonb,
-    false,
+    true,
     NULL
   );
 
@@ -2355,6 +2356,10 @@ BEGIN
       WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
         AND pump_id = '20000000-0000-4000-8000-000000000001'
         AND work_date = DATE '2026-01-20') <> 1
+     OR (SELECT status FROM public.daily_pump_energy_reports
+         WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+           AND pump_id = '20000000-0000-4000-8000-000000000001'
+           AND work_date = DATE '2026-01-20') <> 'submitted'
      OR (SELECT count(*) FROM public.daily_pump_energy_source_totals totals
          JOIN public.daily_pump_energy_reports energy
            ON energy.id = totals.daily_pump_energy_report_id
@@ -2362,6 +2367,26 @@ BEGIN
            AND energy.pump_id = '20000000-0000-4000-8000-000000000001'
            AND energy.work_date = DATE '2026-01-20') <> 1 THEN
     RAISE EXCEPTION 'Pump energy totals were duplicated across independent operator reports';
+  END IF;
+  v_rejected := false;
+  BEGIN
+    PERFORM public.save_daily_work_report(
+      '20000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000002',
+      '2026-01-20 07:00:00+02'::timestamptz,
+      '2026-01-20 08:00:00+02'::timestamptz,
+      0,
+      jsonb_build_array(jsonb_build_object('power_source_id', v_source_id, 'minutes', 59)),
+      '[]'::jsonb,
+      false,
+      v_first.id
+    );
+    RAISE EXCEPTION 'A later operator report changed already submitted pump energy totals';
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Submitted pump energy totals were not immutable across operator reports';
   END IF;
 END;
 $multi_operator_daily_reports_manager$;
