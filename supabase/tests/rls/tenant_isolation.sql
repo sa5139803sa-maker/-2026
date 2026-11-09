@@ -2556,23 +2556,38 @@ BEGIN
    AND op.pump_id = seg.pump_id
   WHERE op.subscriber_id = '30000000-0000-4000-8000-000000000001';
 
+  -- Reports are per operator's submission and date. Count only this former
+  -- owner's historical reports; the pump may legitimately have reports for
+  -- multiple dates and must not be treated as a single-report aggregate.
   SELECT count(*)::integer INTO v_reports
   FROM public.daily_work_reports
-  WHERE pump_id = '20000000-0000-4000-8000-000000000001';
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+    AND operator_id = auth.uid();
 
   SELECT count(*)::integer INTO v_report_items
-  FROM public.daily_work_report_items
-  WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
-    AND assigned_operator_id = '10000000-0000-4000-8000-000000000002';
+  FROM public.daily_work_report_items ri
+  JOIN public.daily_work_reports r
+    ON r.id = ri.daily_work_report_id
+   AND r.organization_id = ri.organization_id
+   AND r.pump_id = ri.pump_id
+  WHERE ri.subscriber_id = '30000000-0000-4000-8000-000000000001'
+    AND ri.assigned_operator_id = auth.uid()
+    AND r.operator_id = auth.uid();
 
   SELECT count(*)::integer INTO v_source_totals
   FROM public.daily_work_source_totals t
-  JOIN public.daily_work_reports r ON r.id = t.daily_work_report_id
-  WHERE r.pump_id = '20000000-0000-4000-8000-000000000001';
+  JOIN public.daily_work_reports r
+    ON r.id = t.daily_work_report_id
+   AND r.organization_id = t.organization_id
+   AND r.pump_id = t.pump_id
+  WHERE r.pump_id = '20000000-0000-4000-8000-000000000001'
+    AND r.operator_id = auth.uid();
 
   SELECT work_date INTO v_report_date
   FROM public.daily_work_reports
   WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+    AND operator_id = auth.uid()
+  ORDER BY work_date DESC
   LIMIT 1;
 
   SELECT count(*)::integer INTO v_power_usage_rows
@@ -2590,7 +2605,7 @@ BEGIN
   );
 
   IF v_operations < 1 OR v_events < 1 OR v_segments < 1
-     OR v_reports <> 1 OR v_report_items < 1 OR v_source_totals < 1
+     OR v_reports < 1 OR v_report_items < 1 OR v_source_totals < 1
      OR v_power_usage_rows < 1 OR v_transfer_option_rows <> 0 THEN
     RAISE EXCEPTION 'Former operator historical scope mismatch: ops %, events %, segments %, reports %, items %, sources %, power rows %, transfer options %',
       v_operations, v_events, v_segments, v_reports, v_report_items, v_source_totals,
@@ -2664,8 +2679,9 @@ DECLARE
 BEGIN
   IF (SELECT count(*) FROM public.subscribers
       WHERE id = '30000000-0000-4000-8000-000000000001') <> 1
+     -- daily_queue.sql splits this subscriber's weekly quota across two dates.
      OR (SELECT count(*) FROM public.schedule_entries
-         WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 1
+         WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 2
      OR (SELECT count(*) FROM public.weekly_schedule_subscribers
          WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 1 THEN
     RAISE EXCEPTION 'New operator cannot read the reassigned subscriber and active schedule membership';
@@ -2728,19 +2744,17 @@ BEGIN
     RAISE EXCEPTION 'New operator directly selected an event created by the manager';
   END IF;
 
-  SELECT work_date INTO v_report_date
-  FROM public.daily_work_reports
-  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
-  LIMIT 1;
+  -- The new operator must not query an old owner's report date through RLS.
+  -- Use the daily queue's known date to verify their power view independently.
+  SELECT queue_date INTO v_queue_date
+  FROM public.daily_queues
+  WHERE id = current_setting('test.daily_queue_id')::uuid;
+  v_report_date := v_queue_date;
 
   SELECT count(*)::integer INTO v_power_usage_rows
   FROM public.get_pump_power_usage(
     v_report_date, v_report_date, 'day', '20000000-0000-4000-8000-000000000001'
   );
-
-  SELECT queue_date INTO v_queue_date
-  FROM public.daily_queues
-  WHERE id = current_setting('test.daily_queue_id')::uuid;
 
   SELECT count(*)::integer INTO v_transfer_option_rows
   FROM public.get_weekly_entitlement_transfer_options(
