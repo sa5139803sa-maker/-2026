@@ -554,7 +554,9 @@ BEGIN
   END IF;
 
   IF (SELECT consumed_minutes FROM public.weekly_entitlement_cycles
-      WHERE id = v_cycle_id) <> 7 THEN
+      WHERE id = v_cycle_id) <> 9
+     OR (SELECT consumed_minutes FROM public.weekly_entitlement_allocations
+         WHERE id = v_allocation_id) <> 9 THEN
     RAISE EXCEPTION 'Resubmitting a daily report consumed weekly minutes more than once';
   END IF;
 END;
