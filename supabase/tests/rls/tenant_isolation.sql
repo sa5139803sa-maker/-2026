@@ -2285,6 +2285,30 @@ BEGIN
     RAISE EXCEPTION 'Subscriber operator assignment history must record both assignment changes';
   END IF;
 
+  -- A manager cannot assign a subscriber to an operator from another tenant
+  -- or to a collector account, even when the target user ID is known.
+  BEGIN
+    PERFORM public.assign_subscriber_operator(
+      '30000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000007',
+      'يجب رفض مشغّل من مؤسسة أخرى'
+    );
+    RAISE EXCEPTION 'Cross-tenant subscriber operator assignment was accepted';
+  EXCEPTION WHEN foreign_key_violation THEN
+    NULL;
+  END;
+
+  BEGIN
+    PERFORM public.assign_subscriber_operator(
+      '30000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000004',
+      'يجب رفض حساب محصّل بدل المشغّل'
+    );
+    RAISE EXCEPTION 'A collector account was accepted as a subscriber operator';
+  EXCEPTION WHEN foreign_key_violation THEN
+    NULL;
+  END;
+
   IF (SELECT count(*) FROM public.queue_items
       WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
         AND status = 'completed'
@@ -2310,6 +2334,46 @@ BEGIN
   END IF;
 END;
 $subscriber_operator_direct_update_denied$;
+RESET ROLE;
+
+-- Assignment history is append-only and visible only to the organization manager.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000003', true);
+DO $subscriber_operator_history_not_visible_to_operator$
+BEGIN
+  IF (SELECT count(*) FROM public.subscriber_operator_assignment_events
+      WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 0 THEN
+    RAISE EXCEPTION 'Operator can read manager-only subscriber assignment history';
+  END IF;
+END;
+$subscriber_operator_history_not_visible_to_operator$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DO $subscriber_operator_history_append_only$
+DECLARE
+  v_update_rejected boolean := false;
+  v_delete_rejected boolean := false;
+BEGIN
+  BEGIN
+    UPDATE public.subscriber_operator_assignment_events
+    SET reason = 'عبث بالسجل'
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_update_rejected := true;
+  END;
+  BEGIN
+    DELETE FROM public.subscriber_operator_assignment_events
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_delete_rejected := true;
+  END;
+  IF NOT v_update_rejected OR NOT v_delete_rejected THEN
+    RAISE EXCEPTION 'Subscriber assignment history accepted update or delete';
+  END IF;
+END;
+$subscriber_operator_history_append_only$;
 RESET ROLE;
 
 -- A former owner cannot start a registered subscriber after reassignment.
