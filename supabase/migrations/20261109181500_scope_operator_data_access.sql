@@ -124,6 +124,107 @@ REVOKE ALL ON FUNCTION water_management_private.can_read_supervisor_pump_scope(u
 GRANT EXECUTE ON FUNCTION water_management_private.can_read_supervisor_pump_scope(uuid, uuid)
   TO authenticated;
 
+-- Snapshot the responsible operator on each operation when it starts. This
+-- keeps historical operations with their original owner after subscriber
+-- reassignment, independently of the operation executor (operator_id).
+ALTER TABLE public.pump_operations
+  ADD COLUMN subscriber_operator_id uuid;
+
+UPDATE public.pump_operations op
+SET subscriber_operator_id = s.operator_id
+FROM public.subscribers s
+WHERE s.id = op.subscriber_id
+  AND s.organization_id = op.organization_id
+  AND s.pump_id = op.pump_id;
+
+CREATE INDEX pump_operations_subscriber_operator_date_idx
+  ON public.pump_operations (organization_id, subscriber_operator_id, operation_date DESC)
+  WHERE subscriber_operator_id IS NOT NULL;
+
+CREATE FUNCTION water_management_private.capture_pump_operation_subscriber_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $capture_pump_operation_subscriber_owner$
+BEGIN
+  IF NEW.subscriber_id IS NULL THEN
+    NEW.subscriber_operator_id := NULL;
+    RETURN NEW;
+  END IF;
+
+  SELECT s.operator_id INTO NEW.subscriber_operator_id
+  FROM public.subscribers s
+  WHERE s.id = NEW.subscriber_id
+    AND s.organization_id = NEW.organization_id
+    AND s.pump_id = NEW.pump_id;
+
+  IF NOT FOUND OR NEW.subscriber_operator_id IS NULL THEN
+    RAISE EXCEPTION 'Registered operation requires an assigned subscriber operator'
+      USING ERRCODE = '23503';
+  END IF;
+
+  RETURN NEW;
+END;
+$capture_pump_operation_subscriber_owner$;
+REVOKE ALL ON FUNCTION water_management_private.capture_pump_operation_subscriber_owner()
+  FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER a_capture_pump_operation_subscriber_owner
+  BEFORE INSERT ON public.pump_operations
+  FOR EACH ROW
+  EXECUTE FUNCTION water_management_private.capture_pump_operation_subscriber_owner();
+
+CREATE OR REPLACE FUNCTION water_management_private.can_read_operation_snapshot_scope(
+  p_organization_id uuid,
+  p_pump_id uuid,
+  p_subscriber_id uuid,
+  p_subscriber_operator_id uuid,
+  p_executor_id uuid
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $can_read_operation_snapshot_scope$
+  SELECT
+    (SELECT auth.uid()) IS NOT NULL
+    AND p_organization_id = water_management_private.current_user_organization_id()
+    AND CASE water_management_private.current_user_role()
+      WHEN 'manager'::public.app_role THEN true
+      WHEN 'operator'::public.app_role THEN
+        CASE
+          WHEN p_subscriber_id IS NULL
+            THEN p_executor_id = (SELECT auth.uid())
+          ELSE p_subscriber_operator_id = (SELECT auth.uid())
+        END
+      ELSE false
+    END
+$can_read_operation_snapshot_scope$;
+ALTER FUNCTION water_management_private.can_read_operation_snapshot_scope(uuid, uuid, uuid, uuid, uuid) OWNER TO postgres;
+REVOKE ALL ON FUNCTION water_management_private.can_read_operation_snapshot_scope(uuid, uuid, uuid, uuid, uuid)
+  FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION water_management_private.can_read_operation_snapshot_scope(uuid, uuid, uuid, uuid, uuid)
+  TO authenticated;
+
+-- Report item ownership is also a historical snapshot. The report author may
+-- retain guest rows; registered subscriber rows remain visible to the operator
+-- who owned the subscriber when the report item was recorded.
+ALTER TABLE public.daily_work_report_items
+  ADD COLUMN assigned_operator_id uuid;
+
+UPDATE public.daily_work_report_items ri
+SET assigned_operator_id = s.operator_id
+FROM public.subscribers s
+WHERE s.id = ri.subscriber_id
+  AND s.organization_id = ri.organization_id
+  AND s.pump_id = ri.pump_id;
+
+CREATE INDEX daily_work_report_items_assigned_operator_idx
+  ON public.daily_work_report_items (daily_work_report_id, assigned_operator_id)
+  WHERE assigned_operator_id IS NOT NULL;
+
 -- Subscriber master rows: an operator sees only their own assigned subscribers.
 DROP POLICY IF EXISTS "members_select_subscribers" ON public.subscribers;
 CREATE POLICY members_select_subscribers
@@ -221,8 +322,9 @@ CREATE POLICY pump_operation_events_select_scoped
       WHERE op.id = pump_operation_events.operation_id
         AND op.organization_id = pump_operation_events.organization_id
         AND op.pump_id = pump_operation_events.pump_id
-        AND (SELECT water_management_private.can_read_operation_scope(
-          op.organization_id, op.pump_id, op.subscriber_id, op.operator_id
+        AND (SELECT water_management_private.can_read_operation_snapshot_scope(
+          op.organization_id, op.pump_id, op.subscriber_id,
+          op.subscriber_operator_id, op.operator_id
         ))
     )
   );
@@ -356,10 +458,18 @@ CREATE POLICY daily_work_report_items_select_scoped
     )
     AND (
       (SELECT water_management_private.current_user_role()) <> 'operator'::public.app_role
+      OR EXISTS (
+        SELECT 1 FROM public.daily_work_reports r
+        WHERE r.id = daily_work_report_items.daily_work_report_id
+          AND r.organization_id = daily_work_report_items.organization_id
+          AND r.pump_id = daily_work_report_items.pump_id
+          AND r.operator_id = (SELECT auth.uid())
+      )
+    )
+    AND (
+      (SELECT water_management_private.current_user_role()) <> 'operator'::public.app_role
       OR subscriber_id IS NULL
-      OR (SELECT water_management_private.can_read_subscriber_scope(
-        organization_id, pump_id, subscriber_id
-      ))
+      OR assigned_operator_id = (SELECT auth.uid())
     )
   );
 
@@ -381,7 +491,7 @@ CREATE POLICY daily_work_report_events_select_scoped
 -- A privileged report writer must not be able to smuggle another operator's
 -- subscriber into a report item. This trigger complements RLS because the save
 -- RPC is SECURITY DEFINER and therefore does not rely on table policies.
-CREATE FUNCTION water_management_private.guard_daily_work_report_item_owner()
+CREATE OR REPLACE FUNCTION water_management_private.guard_daily_work_report_item_owner()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -390,34 +500,48 @@ AS $guard_daily_work_report_item_owner$
 DECLARE
   v_role public.app_role := water_management_private.current_user_role();
   v_report public.daily_work_reports%ROWTYPE;
+  v_subscriber_operator_id uuid;
 BEGIN
-  IF v_role <> 'operator'::public.app_role THEN
-    RETURN NEW;
-  END IF;
-
   SELECT r.* INTO v_report
   FROM public.daily_work_reports r
   WHERE r.id = NEW.daily_work_report_id
     AND r.organization_id = NEW.organization_id
     AND r.pump_id = NEW.pump_id;
 
-  IF NOT FOUND OR v_report.operator_id <> auth.uid() THEN
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Daily report does not exist in the submitted organization and pump'
+      USING ERRCODE = '23503';
+  END IF;
+
+  IF v_role = 'operator'::public.app_role
+     AND v_report.operator_id <> auth.uid() THEN
     RAISE EXCEPTION 'Operator can only edit their own daily work report'
       USING ERRCODE = '42501';
   END IF;
 
-  IF NEW.subscriber_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1
-    FROM public.subscribers s
-    WHERE s.id = NEW.subscriber_id
-      AND s.organization_id = NEW.organization_id
-      AND s.pump_id = NEW.pump_id
-      AND s.operator_id = auth.uid()
-  ) THEN
+  IF NEW.subscriber_id IS NULL THEN
+    NEW.assigned_operator_id := NULL;
+    RETURN NEW;
+  END IF;
+
+  SELECT s.operator_id INTO v_subscriber_operator_id
+  FROM public.subscribers s
+  WHERE s.id = NEW.subscriber_id
+    AND s.organization_id = NEW.organization_id
+    AND s.pump_id = NEW.pump_id;
+
+  IF NOT FOUND OR v_subscriber_operator_id IS NULL THEN
+    RAISE EXCEPTION 'Daily report item must reference an assigned subscriber on this pump'
+      USING ERRCODE = '23503';
+  END IF;
+
+  IF v_role = 'operator'::public.app_role
+     AND v_subscriber_operator_id <> auth.uid() THEN
     RAISE EXCEPTION 'Daily report item belongs to another operator'
       USING ERRCODE = '42501';
   END IF;
 
+  NEW.assigned_operator_id := v_subscriber_operator_id;
   RETURN NEW;
 END;
 $guard_daily_work_report_item_owner$;
