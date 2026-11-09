@@ -548,15 +548,14 @@ export const pumpOperationsRepository = {
     });
   },
 
-  getReportActors(organizationId: string, actorIds: string[]) {
+  getReportActors(dailyWorkReportId: string, actorIds: string[]) {
     if (actorIds.length === 0) {
       return Promise.resolve({ data: [], error: null });
     }
-    return supabase
-      .from("profiles")
-      .select("id,display_name")
-      .eq("organization_id", organizationId)
-      .in("id", actorIds);
+    return supabase.rpc("get_daily_work_report_actors", {
+      p_daily_work_report_id: dailyWorkReportId,
+      p_actor_ids: actorIds,
+    });
   },
 
   async getDailyPumpEnergyReport(organizationId: string, pumpId: string, workDate: string) {
