@@ -647,7 +647,33 @@ BEGIN
   END IF;
   IF pg_catalog.has_function_privilege('authenticated', 'water_management_private.clear_subscriber_branches_before_pump_delete()', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'water_management_private.clear_subscriber_branches_before_pump_delete()', 'EXECUTE') THEN
-    RAISE EXCEPTION 'Private pump cleanup trigger function must not be executable from the Data API';
+    RAISE EXCEPTION 'Private pump branch cleanup trigger function must not be executable from the Data API';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_trigger t
+    WHERE t.tgname = 'clear_subscriber_operator_assignments_before_pump_delete'
+      AND t.tgrelid = 'public.pumps'::regclass
+      AND NOT t.tgisinternal
+  ) THEN
+    RAISE EXCEPTION 'Pump deletion operator cleanup trigger is missing';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'water_management_private'
+      AND p.proname = 'clear_subscriber_operator_assignments_before_pump_delete'
+      AND p.prosecdef
+      AND p.proconfig @> ARRAY['search_path=""']
+      AND pg_catalog.pg_get_userbyid(p.proowner) = 'postgres'
+  ) THEN
+    RAISE EXCEPTION 'Pump operator cleanup trigger must be SECURITY DEFINER, postgres-owned, and pin an empty search_path';
+  END IF;
+  IF pg_catalog.has_function_privilege('authenticated', 'water_management_private.clear_subscriber_operator_assignments_before_pump_delete()', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'water_management_private.clear_subscriber_operator_assignments_before_pump_delete()', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('service_role', 'water_management_private.clear_subscriber_operator_assignments_before_pump_delete()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Private pump operator cleanup trigger function must not be executable from the Data API';
   END IF;
 END;
 $branch_table_acl$;
