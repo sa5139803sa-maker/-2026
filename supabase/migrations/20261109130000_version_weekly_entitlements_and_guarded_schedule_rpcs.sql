@@ -321,7 +321,6 @@ DECLARE
   v_allocated_minutes integer;
   v_sort_order integer;
   v_seen_subscribers uuid[] := ARRAY[]::uuid[];
-  v_subscriber_name text;
   v_event_type text;
   v_total_allocations integer := 0;
 BEGIN
@@ -383,10 +382,6 @@ BEGIN
   DELETE FROM public.weekly_schedule_subscribers
   WHERE weekly_schedule_id = v_schedule_id;
 
-  FOREACH v_allocation IN ARRAY ARRAY[]::jsonb[] LOOP
-    NULL;
-  END LOOP;
-
   FOR v_allocation IN
     SELECT value FROM jsonb_array_elements(p_subscribers)
   LOOP
@@ -396,8 +391,8 @@ BEGIN
     v_allocations := v_allocation->'allocations';
 
     IF v_subscriber_id IS NULL
-       OR v_quota NOT BETWEEN 1 AND 10080
-       OR v_default_weekday NOT BETWEEN 1 AND 7
+       OR v_quota IS NULL OR v_quota NOT BETWEEN 1 AND 10080
+       OR v_default_weekday IS NULL OR v_default_weekday NOT BETWEEN 1 AND 7
        OR jsonb_typeof(v_allocations) IS DISTINCT FROM 'array'
        OR jsonb_array_length(v_allocations) = 0
        OR v_subscriber_id = ANY(v_seen_subscribers) THEN
@@ -418,20 +413,20 @@ BEGIN
     END IF;
 
     SELECT count(*)::integer,
-           count(DISTINCT (day->>'weekday')::integer)::integer,
-           COALESCE(sum((day->>'planned_minutes')::integer), 0)::integer
+           count(DISTINCT (day.value->>'weekday')::integer)::integer,
+           COALESCE(sum((day.value->>'planned_minutes')::integer), 0)::integer
     INTO v_allocation_count, v_distinct_days, v_allocated_minutes
-    FROM jsonb_array_elements(v_allocations) AS day;
+    FROM jsonb_array_elements(v_allocations) AS day(value);
 
     IF v_allocation_count <> v_distinct_days
        OR v_allocation_count = 0
        OR EXISTS (
          SELECT 1
-         FROM jsonb_array_elements(v_allocations) AS day
-         WHERE NULLIF(day->>'weekday', '') IS NULL
-            OR (day->>'weekday')::integer NOT BETWEEN 1 AND 7
-            OR NULLIF(day->>'planned_minutes', '') IS NULL
-            OR (day->>'planned_minutes')::integer NOT BETWEEN 1 AND 1440
+         FROM jsonb_array_elements(v_allocations) AS day(value)
+         WHERE NULLIF(day.value->>'weekday', '') IS NULL
+            OR (day.value->>'weekday')::integer NOT BETWEEN 1 AND 7
+            OR NULLIF(day.value->>'planned_minutes', '') IS NULL
+            OR (day.value->>'planned_minutes')::integer NOT BETWEEN 1 AND 1440
        )
        OR v_allocated_minutes <> v_quota THEN
       RAISE EXCEPTION 'The sum of this subscriber weekday allocations must exactly equal the weekly quota'
@@ -444,7 +439,7 @@ BEGIN
       v_schedule_id, v_subscriber_id, v_quota, v_default_weekday
     );
 
-    FOR v_day IN SELECT value FROM jsonb_array_elements(v_allocations) LOOP
+    FOR v_day IN SELECT value FROM jsonb_array_elements(v_allocations) AS days(value) LOOP
       SELECT count(*)::integer INTO v_sort_order
       FROM public.schedule_entries e
       WHERE e.weekly_schedule_id = v_schedule_id
@@ -717,9 +712,179 @@ $sync_current_weekly_entitlements$;
 REVOKE ALL ON FUNCTION water_management_private.sync_current_weekly_entitlements(uuid, uuid, uuid)
   FROM PUBLIC, anon, authenticated, service_role;
 
--- The public generator is SECURITY INVOKER and the internal routine is
--- SECURITY DEFINER; add synchronization through a guarded wrapper only after
--- a date/schedule scope check. (The daily queue snapshot remains immutable.)
+-- Sync current subscriber convenience fields when today's daily queue is
+-- first materialized from the effective schedule version.
+CREATE FUNCTION water_management_private.sync_weekly_entitlements_on_queue_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $sync_weekly_entitlements_on_queue_insert$
+BEGIN
+  IF NEW.queue_date = (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date THEN
+    PERFORM water_management_private.sync_current_weekly_entitlements(
+      NEW.weekly_schedule_id, NEW.organization_id, NEW.pump_id
+    );
+  END IF;
+  RETURN NEW;
+END;
+$sync_weekly_entitlements_on_queue_insert$;
+
+REVOKE ALL ON FUNCTION water_management_private.sync_weekly_entitlements_on_queue_insert()
+  FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER sync_weekly_entitlements_on_queue_insert
+  AFTER INSERT ON public.daily_queues
+  FOR EACH ROW EXECUTE FUNCTION water_management_private.sync_weekly_entitlements_on_queue_insert();
+
+-- Prevent schedule rotation from changing a day that was already snapshotted
+-- in a persistent daily queue.
+CREATE OR REPLACE FUNCTION water_management_private.activate_weekly_schedule_internal(
+  p_schedule_id uuid
+)
+RETURNS public.weekly_schedules
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $activate_weekly_schedule_internal$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_organization_id uuid := water_management_private.current_user_organization_id();
+  v_role public.app_role := water_management_private.current_user_role();
+  v_schedule public.weekly_schedules%ROWTYPE;
+  v_previous public.weekly_schedules%ROWTYPE;
+  v_today date := (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date;
+  v_cycle_start date;
+  v_members integer;
+BEGIN
+  IF v_user_id IS NULL OR v_organization_id IS NULL
+     OR v_role <> 'manager'::public.app_role THEN
+    RAISE EXCEPTION 'Only a manager can activate a weekly schedule'
+      USING ERRCODE = '42501';
+  END IF;
+
+  SELECT * INTO v_schedule
+  FROM public.weekly_schedules
+  WHERE id = p_schedule_id
+    AND organization_id = v_organization_id
+  FOR UPDATE;
+  IF NOT FOUND OR v_schedule.status <> 'draft' THEN
+    RAISE EXCEPTION 'Only an existing draft schedule can be activated'
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  PERFORM 1 FROM public.pumps p
+  WHERE p.id = v_schedule.pump_id
+    AND p.organization_id = v_organization_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Schedule pump not found in the current organization'
+      USING ERRCODE = '42501';
+  END IF;
+
+  v_cycle_start := v_today - (
+    (extract(isodow FROM v_today)::integer - v_schedule.week_starts_on + 7) % 7
+  );
+  IF v_schedule.effective_from < v_cycle_start THEN
+    RAISE EXCEPTION 'A new weekly schedule cannot be activated for an expired week'
+      USING ERRCODE = '22023';
+  END IF;
+
+  SELECT * INTO v_previous
+  FROM public.weekly_schedules ws
+  WHERE ws.organization_id = v_organization_id
+    AND ws.pump_id = v_schedule.pump_id
+    AND ws.status = 'active'
+  FOR UPDATE;
+
+  IF FOUND THEN
+    IF v_schedule.effective_from <= v_previous.effective_from THEN
+      RAISE EXCEPTION 'The next schedule version must start after the currently active version'
+        USING ERRCODE = '22023';
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM public.daily_queues q
+      WHERE q.organization_id = v_organization_id
+        AND q.pump_id = v_schedule.pump_id
+        AND q.queue_date >= v_schedule.effective_from
+        AND q.weekly_schedule_id = v_previous.id
+    ) THEN
+      RAISE EXCEPTION 'A daily queue already exists for this period; choose the next unsnapshotted weekly cycle'
+        USING ERRCODE = '55000';
+    END IF;
+    UPDATE public.weekly_schedules
+    SET status = 'archived',
+        effective_to = LEAST(
+          COALESCE(effective_to, v_schedule.effective_from - 1),
+          v_schedule.effective_from - 1
+        )
+    WHERE id = v_previous.id;
+
+    PERFORM water_management_private.append_weekly_schedule_event(
+      v_previous.id, v_previous.organization_id, v_previous.pump_id, v_user_id, 'archived',
+      jsonb_build_object('effective_to', v_schedule.effective_from - 1, 'replaced_by', v_schedule.id)
+    );
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.weekly_schedules older
+    WHERE older.organization_id = v_organization_id
+      AND older.pump_id = v_schedule.pump_id
+      AND older.status = 'archived'
+      AND older.id <> COALESCE(v_previous.id, '00000000-0000-0000-0000-000000000000'::uuid)
+      AND daterange(older.effective_from, COALESCE(older.effective_to, 'infinity'::date), '[]')
+        && daterange(v_schedule.effective_from, COALESCE(v_schedule.effective_to, 'infinity'::date), '[]')
+  ) THEN
+    RAISE EXCEPTION 'The new schedule effective period overlaps an archived schedule version'
+      USING ERRCODE = '23P01';
+  END IF;
+
+  SELECT count(*)::integer INTO v_members
+  FROM public.weekly_schedule_subscribers m
+  JOIN public.subscribers s
+    ON s.id = m.subscriber_id
+   AND s.organization_id = m.organization_id
+   AND s.pump_id = m.pump_id
+  WHERE m.weekly_schedule_id = v_schedule.id
+    AND s.is_active;
+  IF v_members = 0 OR EXISTS (
+    SELECT 1 FROM public.weekly_schedule_subscribers m
+    JOIN public.subscribers s
+      ON s.id = m.subscriber_id
+     AND s.organization_id = m.organization_id
+     AND s.pump_id = m.pump_id
+    WHERE m.weekly_schedule_id = v_schedule.id
+      AND NOT s.is_active
+  ) THEN
+    RAISE EXCEPTION 'Every entitlement in the new schedule must reference an active subscriber'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF v_schedule.effective_from <= v_today THEN
+    PERFORM water_management_private.sync_current_weekly_entitlements(
+      v_schedule.id, v_organization_id, v_schedule.pump_id
+    );
+  END IF;
+
+  UPDATE public.weekly_schedules
+  SET status = 'active'
+  WHERE id = v_schedule.id
+  RETURNING * INTO v_schedule;
+
+  PERFORM water_management_private.append_weekly_schedule_event(
+    v_schedule.id, v_schedule.organization_id, v_schedule.pump_id, v_user_id, 'activated',
+    jsonb_build_object(
+      'effective_from', v_schedule.effective_from,
+      'effective_to', v_schedule.effective_to,
+      'subscriber_count', v_members,
+      'previous_schedule_id', v_previous.id
+    )
+  );
+
+  RETURN v_schedule;
+END;
+$activate_weekly_schedule_internal$;
+
 COMMENT ON TABLE public.weekly_schedule_events IS
   'Append-only audit trail for weekly schedule draft changes, activation, and historical version rotation.';
 
