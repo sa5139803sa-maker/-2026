@@ -1545,6 +1545,22 @@ BEGIN
 END;
 $shared_phone$;
 
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DELETE FROM public.branches WHERE id = '40000000-0000-4000-8000-000000000002';
+RESET ROLE;
+DO $branch_delete_behavior$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.subscribers
+    WHERE id = '30000000-0000-4000-8000-000000000002'
+      AND (branch_id IS NOT NULL OR pump_id <> '20000000-0000-4000-8000-000000000002')
+  ) THEN
+    RAISE EXCEPTION 'Deleting a branch must clear only branch_id and preserve subscriber pump_id';
+  END IF;
+END;
+$branch_delete_behavior$;
+
 -- Organization deletion must cascade organization-owned rows while retaining auth profiles.
 SET CONSTRAINTS pump_assignments_user_tenant_role_fkey DEFERRED;
 DELETE FROM public.organizations
@@ -1653,22 +1669,6 @@ BEGIN
   END IF;
 END;
 $tenant_fk_indexes$;
-
-SET LOCAL ROLE authenticated;
-SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
-DELETE FROM public.branches WHERE id = '40000000-0000-4000-8000-000000000002';
-RESET ROLE;
-DO $branch_delete_behavior$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM public.subscribers
-    WHERE id = '30000000-0000-4000-8000-000000000002'
-      AND (branch_id IS NOT NULL OR pump_id <> '20000000-0000-4000-8000-000000000002')
-  ) THEN
-    RAISE EXCEPTION 'Deleting a branch must clear only branch_id and preserve subscriber pump_id';
-  END IF;
-END;
-$branch_delete_behavior$;
 
 SET CONSTRAINTS ALL IMMEDIATE;
 ROLLBACK;
