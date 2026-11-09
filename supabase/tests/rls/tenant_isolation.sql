@@ -1901,6 +1901,11 @@ DELETE FROM public.daily_work_source_totals
 WHERE pump_id <> '20000000-0000-4000-8000-000000000003';
 DELETE FROM public.daily_work_reports
 WHERE pump_id <> '20000000-0000-4000-8000-000000000003';
+-- Queue items retain operation_id with ON DELETE RESTRICT; clear the queue
+-- event/item/snapshot graph before removing operation sessions.
+DELETE FROM public.queue_item_events;
+DELETE FROM public.queue_items;
+DELETE FROM public.daily_queues;
 DELETE FROM public.pump_operation_power_segments;
 DELETE FROM public.pump_operation_events;
 DELETE FROM public.pump_operations;
