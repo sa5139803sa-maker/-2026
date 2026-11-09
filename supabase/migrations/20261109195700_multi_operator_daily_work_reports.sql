@@ -536,6 +536,61 @@ BEGIN
   FOR UPDATE;
   v_exists := FOUND;
 
+  IF v_exists AND v_report.status = 'draft'
+     AND v_role = 'operator'::public.app_role
+     AND v_report.created_by <> v_actor_id THEN
+    SELECT COALESCE(
+      jsonb_agg(
+        jsonb_build_object(
+          'power_source_id', totals.power_source_id,
+          'minutes', totals.minutes
+        )
+        ORDER BY totals.power_source_id
+      ),
+      '[]'::jsonb
+    )
+    INTO v_existing
+    FROM public.daily_pump_energy_source_totals totals
+    WHERE totals.daily_pump_energy_report_id = v_report.id;
+
+    IF v_report.work_started_at IS DISTINCT FROM p_work_started_at
+       OR v_report.work_ended_at IS DISTINCT FROM p_work_ended_at
+       OR v_report.stoppage_minutes IS DISTINCT FROM p_stoppage_minutes
+       OR v_existing IS DISTINCT FROM v_input THEN
+      RAISE EXCEPTION 'Only the draft creator or a manager can change shared pump energy values; another operator may reuse the exact draft'
+        USING ERRCODE = '55000';
+    END IF;
+
+    -- A second operator may reuse the exact shared draft and may confirm it
+    -- as submitted, but cannot silently replace its physical pump totals.
+    IF p_submit THEN
+      UPDATE public.daily_pump_energy_reports
+      SET status = 'submitted',
+          submitted_at = clock_timestamp(),
+          submitted_by = v_actor_id,
+          updated_at = clock_timestamp(),
+          revision = revision + 1
+      WHERE id = v_report.id
+      RETURNING * INTO v_report;
+
+      INSERT INTO public.daily_pump_energy_report_events (
+        daily_pump_energy_report_id, organization_id, pump_id,
+        actor_id, event_type, metadata
+      ) VALUES (
+        v_report.id, v_org_id, p_pump_id, v_actor_id, 'submitted',
+        jsonb_build_object(
+          'revision', v_report.revision,
+          'source_count', v_source_count,
+          'source_minutes', v_source_minutes,
+          'submitted', true,
+          'confirmed_existing_draft', true
+        )
+      );
+    END IF;
+
+    RETURN v_report;
+  END IF;
+
   IF v_exists AND v_report.status = 'submitted' THEN
     SELECT COALESCE(
       jsonb_agg(
