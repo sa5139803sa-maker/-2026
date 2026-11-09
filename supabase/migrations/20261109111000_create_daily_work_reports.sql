@@ -155,14 +155,14 @@ RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
-AS $
+AS $delete_pump_daily_work_reports$
 BEGIN
   DELETE FROM public.daily_work_reports
   WHERE organization_id = OLD.organization_id
     AND pump_id = OLD.id;
   RETURN OLD;
 END;
-$;
+$delete_pump_daily_work_reports$;
 ALTER FUNCTION water_management_private.delete_pump_daily_work_reports() OWNER TO postgres;
 REVOKE ALL ON FUNCTION water_management_private.delete_pump_daily_work_reports()
   FROM PUBLIC, anon, authenticated, service_role;
