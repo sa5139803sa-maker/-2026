@@ -2526,6 +2526,54 @@ BEGIN
   END IF;
 END;
 $operator_a1_historical_operation_report_scope$;
+
+DO $operator_a1_cannot_write_new_owner_report_item$
+DECLARE
+  v_queue_date date;
+  v_target_date date;
+  v_rejected boolean := false;
+  v_started_at timestamptz;
+  v_ended_at timestamptz;
+BEGIN
+  SELECT queue_date INTO v_queue_date
+  FROM public.daily_queues
+  WHERE id = current_setting('test.daily_queue_id')::uuid;
+  v_target_date := v_queue_date + 1;
+  v_started_at := (v_target_date + time '07:00') AT TIME ZONE 'Asia/Hebron';
+  v_ended_at := (v_target_date + time '08:00') AT TIME ZONE 'Asia/Hebron';
+
+  BEGIN
+    PERFORM public.save_daily_work_report(
+      '20000000-0000-4000-8000-000000000001',
+      v_started_at,
+      v_ended_at,
+      0,
+      '[]'::jsonb,
+      jsonb_build_array(jsonb_build_object(
+        'entry_type', 'additional_registered',
+        'subscriber_id', '30000000-0000-4000-8000-000000000001',
+        'sort_order', 0,
+        'manual_minutes', 0,
+        'extra_minutes', 0,
+        'note', 'اختبار منع كتابة سجل لمشترك مشغّل آخر'
+      )),
+      false,
+      NULL
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+
+  IF NOT v_rejected OR EXISTS (
+    SELECT 1 FROM public.daily_work_reports
+    WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+      AND work_date = v_target_date
+      AND operator_id = auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'Former operator created a report item for a subscriber assigned to another operator';
+  END IF;
+END;
+$operator_a1_cannot_write_new_owner_report_item$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
