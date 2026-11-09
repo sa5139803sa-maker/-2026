@@ -64,6 +64,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109093000_create_weekly_schedules.sql
 \ir ../../migrations/20261109110000_add_pump_power_sources.sql
 \ir ../../migrations/20261109111000_create_daily_work_reports.sql
+\ir ../../migrations/20261109120000_create_daily_queue_backend.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -1835,6 +1836,8 @@ END;
 $daily_work_report_manager_b$;
 RESET ROLE;
 
+\ir daily_queue.sql
+
 DO $daily_work_report_acl$
 BEGIN
   IF NOT EXISTS (
@@ -2092,6 +2095,9 @@ BEGIN
 END;$platform_organization_audit$;
 -- Retrospective report rows hold RESTRICT references to pump power sources.
 -- Remove the tenant B report ledger explicitly before the pump/source cascade.
+DELETE FROM public.queue_item_events;
+DELETE FROM public.queue_items;
+DELETE FROM public.daily_queues;
 DELETE FROM public.daily_work_report_events
 WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
   AND pump_id='20000000-0000-4000-8000-000000000003';
