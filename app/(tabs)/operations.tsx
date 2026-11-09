@@ -796,7 +796,7 @@ function OperationsScreenContent() {
 
   const reloadSurveySeed = async (date: string) => {
     if (!organizationId || !selectedPumpId) return;
-    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       setError("أدخل تاريخًا صحيحًا بصيغة YYYY-MM-DD.");
       return;
     }
@@ -1009,9 +1009,9 @@ function OperationsScreenContent() {
                     accessibilityLabel="عدد الدقائق الإضافية"
                   />
                   <Pressable
-                    disabled={busy || !/^\\d+$/.test(extensionMinutes) || Number(extensionMinutes) < 1}
+                    disabled={busy || !/^\d+$/.test(extensionMinutes) || Number(extensionMinutes) < 1}
                     onPress={() => void extendActiveOperation()}
-                    style={[styles.extensionButton, (busy || !/^\\d+$/.test(extensionMinutes) || Number(extensionMinutes) < 1) && styles.disabled]}
+                    style={[styles.extensionButton, (busy || !/^\d+$/.test(extensionMinutes) || Number(extensionMinutes) < 1) && styles.disabled]}
                   >
                     <Plus size={17} color="#fff" />
                     <Text style={styles.actionText}>إضافة الوقت</Text>
