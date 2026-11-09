@@ -4,6 +4,7 @@ import {
   END_REMINDER_GRACE_MS,
   getHandoverAlertWindow,
   getOperationNotificationSchedule,
+  getPersistentTimerSnapshot,
   shouldTriggerMinuteWarning,
 } from "../../lib/alerts/timing-rules.ts";
 
@@ -49,4 +50,71 @@ test("cancelled and expired queue deadlines never replay", () => {
   assert.equal(getHandoverAlertWindow(0, 0), null);
   assert.equal(getHandoverAlertWindow(999, 1000), null);
   assert.equal(getHandoverAlertWindow(Number.NaN, 0), null);
+});
+
+
+test("persistent notification derives an absolute end timestamp for a running operation", () => {
+  const start = "2026-11-09T20:00:00.000Z";
+  assert.deepEqual(getPersistentTimerSnapshot({
+    id: "operation-1",
+    status: "running",
+    started_at: start,
+    paused_at: null,
+    planned_minutes: 5,
+    paused_seconds: 30,
+  }, Date.parse(start) + 1000), {
+    mode: "running",
+    operationId: "operation-1",
+    endAtEpochMs: Date.parse(start) + 330_000,
+  });
+});
+
+test("persistent notification freezes correct remaining time while paused", () => {
+  const start = "2026-11-09T20:00:00.000Z";
+  assert.deepEqual(getPersistentTimerSnapshot({
+    id: "operation-2",
+    status: "paused",
+    started_at: start,
+    paused_at: "2026-11-09T20:02:00.000Z",
+    planned_minutes: 5,
+    paused_seconds: 0,
+  }, Date.parse("2026-11-09T20:03:00.000Z")), {
+    mode: "paused",
+    operationId: "operation-2",
+    remainingMs: 180_000,
+  });
+});
+
+test("persistent paused time subtracts only previously accumulated pauses", () => {
+  const start = "2026-11-09T20:00:00.000Z";
+  const snapshot = getPersistentTimerSnapshot({
+    id: "operation-3",
+    status: "paused",
+    started_at: start,
+    paused_at: "2026-11-09T20:02:00.000Z",
+    planned_minutes: 5,
+    paused_seconds: 15,
+  }, Date.parse(start));
+  assert.equal(snapshot?.mode, "paused");
+  assert.equal(snapshot?.remainingMs, 165_000);
+});
+
+test("completed or invalid operations do not leave a persistent countdown", () => {
+  const start = "2026-11-09T20:00:00.000Z";
+  assert.equal(getPersistentTimerSnapshot({
+    id: "operation-4",
+    status: "completed",
+    started_at: start,
+    paused_at: null,
+    planned_minutes: 5,
+    paused_seconds: 0,
+  }, Date.parse(start)), null);
+  assert.equal(getPersistentTimerSnapshot({
+    id: "operation-5",
+    status: "paused",
+    started_at: start,
+    paused_at: null,
+    planned_minutes: 5,
+    paused_seconds: 0,
+  }, Date.parse(start)), null);
 });
