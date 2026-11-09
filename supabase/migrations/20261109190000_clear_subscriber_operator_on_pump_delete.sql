@@ -44,7 +44,8 @@ BEGIN
   END IF;
 
   -- A new subscriber may legitimately be created before it is assigned.
-  -- An UPDATE from an assigned operator to NULL is an audited unassignment.
+  -- An UPDATE from an assigned operator to NULL is an audited system
+  -- unassignment performed only by the dedicated pump-delete trigger.
   IF TG_OP = 'INSERT' AND NEW.operator_id IS NULL THEN
     RETURN NEW;
   END IF;
@@ -61,16 +62,27 @@ BEGIN
     WHERE p.id = NEW.operator_id;
   END IF;
 
-  v_reason := NULLIF(btrim(COALESCE(
-    current_setting('water_management.subscriber_operator_reason', true), ''
-  )), '');
+  IF TG_OP = 'INSERT' THEN
+    -- Never trust a client-settable GUC for a new subscriber's audit reason.
+    v_reason := 'إسناد عند إنشاء المشترك';
+  ELSIF NEW.operator_id IS NULL THEN
+    -- The privileged pump-delete trigger owns this lifecycle reason.
+    v_reason := 'إلغاء إسناد المشترك تلقائيًا بسبب حذف الغطاس';
+  ELSE
+    -- For reassignment to another operator, the BEFORE trigger permits the
+    -- update only while executing the postgres-owned assignment RPC.
+    v_reason := NULLIF(btrim(COALESCE(
+      current_setting('water_management.subscriber_operator_reason', true), ''
+    )), '');
+    IF v_reason IS NULL THEN
+      RAISE EXCEPTION 'A server-authored reassignment reason is required'
+        USING ERRCODE = '22023';
+    END IF;
+  END IF;
 
-  IF v_reason IS NULL THEN
-    v_reason := CASE
-      WHEN TG_OP = 'INSERT' THEN 'إسناد عند إنشاء المشترك'
-      WHEN NEW.operator_id IS NULL THEN 'إلغاء إسناد المشترك بسبب حذف الغطاس'
-      ELSE 'تحديث إسناد المشترك'
-    END;
+  IF v_actor_id IS NULL AND NEW.operator_id IS NOT NULL THEN
+    RAISE EXCEPTION 'An authenticated actor is required to record an operator assignment'
+      USING ERRCODE = '42501';
   END IF;
 
   v_actor_type := CASE WHEN v_actor_id IS NULL THEN 'system' ELSE 'user' END;
