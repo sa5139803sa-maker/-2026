@@ -3,7 +3,8 @@
 
 CREATE TABLE public.branches (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id uuid NOT NULL,
+  organization_id uuid NOT NULL
+    DEFAULT water_management_private.current_user_organization_id(),
   pump_id uuid NOT NULL,
   name text NOT NULL
     CHECK (char_length(btrim(name)) BETWEEN 2 AND 80),
@@ -47,8 +48,12 @@ ALTER TABLE public.branches ENABLE ROW LEVEL SECURITY;
 
 -- Explicit grants are required for the authenticated Data API role; RLS
 -- remains the row-level boundary. No anonymous table access is permitted.
-REVOKE ALL ON TABLE public.branches FROM PUBLIC, anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.branches TO authenticated;
+REVOKE ALL ON TABLE public.branches FROM PUBLIC, anon, authenticated;
+GRANT SELECT, DELETE ON TABLE public.branches TO authenticated;
+GRANT INSERT (pump_id, name, code, sort_order, is_active)
+  ON TABLE public.branches TO authenticated;
+GRANT UPDATE (name, code, sort_order, is_active)
+  ON TABLE public.branches TO authenticated;
 
 DROP POLICY IF EXISTS branches_select_assigned_pumps ON public.branches;
 CREATE POLICY branches_select_assigned_pumps ON public.branches
