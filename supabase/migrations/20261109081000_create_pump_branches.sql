@@ -52,7 +52,7 @@ CREATE FUNCTION water_management_private.clear_subscriber_branches_before_pump_d
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = ''
-AS $
+AS $clear_subscriber_branches$
 BEGIN
   UPDATE public.subscribers
   SET branch_id = NULL
@@ -61,7 +61,7 @@ BEGIN
     AND branch_id IS NOT NULL;
   RETURN OLD;
 END;
-$;
+$clear_subscriber_branches$;
 RESET ROLE;
 
 GRANT EXECUTE ON FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
