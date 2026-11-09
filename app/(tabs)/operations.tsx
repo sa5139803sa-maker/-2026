@@ -706,7 +706,8 @@ function OperationsScreenContent() {
                 {powerSources.length === 0 ? (
                   <Text style={styles.empty}>لا توجد مصادر كهرباء نشطة لهذا الغطاس. اطلب من المدير إعداد المصادر.</Text>
                 ) : (
-                  <View style={styles.sourceChoices}>
+                  <>
+                    <View style={styles.sourceChoices}>
                     {powerSources.map((source) => (
                       <View key={source.id} style={styles.sourceChoiceRow}>
                         <Pressable onPress={() => setSelectedPowerSourceId(source.id)}
@@ -751,6 +752,7 @@ function OperationsScreenContent() {
                       ) : null}
                     </View>
                   ) : null}
+                  </>
                 )}
               </View>
               <Text style={styles.fieldLabel}>مدة التعبئة بالدقائق</Text>
