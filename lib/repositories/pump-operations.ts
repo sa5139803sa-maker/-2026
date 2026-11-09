@@ -239,6 +239,22 @@ export const pumpOperationsRepository = {
     };
   },
 
+  addDailyQueueItem(
+    queueId: string,
+    sourceType: "additional_registered" | "additional_guest" | "emergency",
+    plannedMinutes: number,
+    subscriberId?: string | null,
+    subscriberName?: string | null,
+  ) {
+    return supabase.rpc("add_daily_queue_item", {
+      p_queue_id: queueId,
+      p_source_type: sourceType,
+      p_subscriber_id: subscriberId ?? null,
+      p_subscriber_name: subscriberName ?? null,
+      p_planned_minutes: plannedMinutes,
+    });
+  },
+
   reorderDailyQueue(queueId: string, expectedVersion: number, orderedItemIds: string[], overrideReason?: string | null) {
     return supabase.rpc("reorder_daily_queue", {
       p_queue_id: queueId,
