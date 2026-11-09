@@ -181,6 +181,7 @@ function OperationsScreenContent() {
   const [weeklyTransferOptions, setWeeklyTransferOptions] = useState<WeeklyEntitlementTransferOption[]>([]);
   const [weeklyTransferMinutes, setWeeklyTransferMinutes] = useState<Record<string, string>>({});
   const [weeklyTransferReason, setWeeklyTransferReason] = useState("");
+  const [weeklyTransferTargetDate, setWeeklyTransferTargetDate] = useState(localOperationDate());
   const autoAdvanceInFlight = useRef<string | null>(null);
   const handoverStartTimer = useRef<{ key: string; timer: ReturnType<typeof setTimeout> } | null>(null);
   const minuteAlertPlayedForOperation = useRef<string | null>(null);
@@ -971,13 +972,13 @@ function OperationsScreenContent() {
     setError(null);
     const { data, error: optionsError } = await pumpOperationsRepository.getWeeklyEntitlementTransferOptions(
       selectedPumpId,
-      localOperationDate(),
+      weeklyTransferTargetDate,
     );
     if (optionsError) {
       console.error("weekly entitlement transfer options failed", optionsError);
       setWeeklyTransferOptions([]);
       setError(optionsError.code === "P0002"
-        ? "لا يوجد جدول أسبوعي فعّال يسمح بنقل الحصة لهذا اليوم."
+        ? "لا يوجد جدول أسبوعي فعّال لهذا التاريخ المستهدف أو أن التاريخ خارج الدورة الحالية."
         : "تعذر تحميل الأرصدة الأسبوعية القابلة للنقل.");
     } else {
       const rows = (data ?? []) as WeeklyEntitlementTransferOption[];
@@ -999,6 +1000,12 @@ function OperationsScreenContent() {
     if (!selectedPumpId || busy) return;
     const minutes = Number(weeklyTransferMinutes[item.allocation_id] ?? "");
     const reason = weeklyTransferReason.trim();
+    const targetDate = weeklyTransferTargetDate.trim();
+    const today = localOperationDate();
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(targetDate) || targetDate < today || targetDate > item.cycle_end) {
+      setError(`اختر تاريخًا من ${today} إلى ${item.cycle_end} داخل الدورة الأسبوعية الحالية.`);
+      return;
+    }
     if (!Number.isInteger(minutes) || minutes < 1 || minutes > item.available_minutes) {
       setError(`أدخل دقائق من 1 إلى ${item.available_minutes} لهذه الحصة.`);
       return;
@@ -1013,7 +1020,7 @@ function OperationsScreenContent() {
     setNotice(null);
     const { error: transferError } = await pumpOperationsRepository.transferWeeklyEntitlementMinutes({
       sourceAllocationId: item.allocation_id,
-      targetDate: localOperationDate(),
+      targetDate,
       minutes,
       reason,
     });
@@ -1029,7 +1036,7 @@ function OperationsScreenContent() {
         setError("تعذر نقل الحصة. حدّث الطابور ثم أعد المحاولة.");
       }
     } else {
-      setNotice(`تم نقل ${minutes} دقيقة من ${item.subscriber_name} إلى طابور اليوم، وسُجلت الحركة في دفتر الاستحقاق.`);
+      setNotice(`تم نقل ${minutes} دقيقة من ${item.subscriber_name} إلى ${targetDate} داخل الدورة الأسبوعية، وسُجلت الحركة في دفتر الاستحقاق.`);
       setWeeklyTransferReason("");
       await loadPumpData();
       await loadWeeklyTransferOptions();
@@ -1392,8 +1399,18 @@ function OperationsScreenContent() {
                       {weeklyTransferOpen ? (
                         <View style={styles.weeklyTransferForm}>
                           <Text style={styles.detailText}>
-                            انقل الدقائق غير المستخدمة من يوم سابق إلى اليوم الحالي داخل الدورة نفسها. لا يمكن نقل الدقائق المنفذة أو ترحيلها إلى أسبوع آخر.
+                            انقل الدقائق غير المستخدمة إلى أي يوم قادم داخل الدورة الأسبوعية نفسها. لا يمكن نقل الدقائق المنفذة أو ترحيلها إلى أسبوع آخر.
                           </Text>
+                          <Text style={styles.fieldLabel}>تاريخ اليوم المستهدف (YYYY-MM-DD)</Text>
+                          <TextInput
+                            value={weeklyTransferTargetDate}
+                            onChangeText={(value) => setWeeklyTransferTargetDate(value)}
+                            placeholder="YYYY-MM-DD"
+                            keyboardType="numbers-and-punctuation"
+                            maxLength={10}
+                            textAlign="center"
+                            style={styles.queueReasonInput}
+                          />
                           {weeklyTransferLoading ? (
                             <ActivityIndicator color={colors.brand.teal} />
                           ) : weeklyTransferOptions.length === 0 ? (
@@ -1424,9 +1441,11 @@ function OperationsScreenContent() {
                                       style={styles.weeklyTransferInput}
                                     />
                                     <Pressable
-                                      disabled={busy || !valid || weeklyTransferReason.trim().length < 2 || dailyQueue.status === "closed"}
+                                      disabled={busy || !valid || weeklyTransferReason.trim().length < 2
+                                        || (weeklyTransferTargetDate === localOperationDate() && dailyQueue.status === "closed")}
                                       onPress={() => void transferWeeklyMinutes(item)}
-                                      style={[styles.weeklyTransferButton, (busy || !valid || weeklyTransferReason.trim().length < 2 || dailyQueue.status === "closed") && styles.disabled]}
+                                      style={[styles.weeklyTransferButton, (busy || !valid || weeklyTransferReason.trim().length < 2
+                                        || (weeklyTransferTargetDate === localOperationDate() && dailyQueue.status === "closed")) && styles.disabled]}
                                     >
                                       <Text style={styles.actionText}>نقل إلى اليوم</Text>
                                     </Pressable>
@@ -1445,9 +1464,9 @@ function OperationsScreenContent() {
                             style={styles.queueReasonInput}
                           />
                           <Pressable
-                            disabled={weeklyTransferLoading || busy || weeklyTransferReason.trim().length < 2 || dailyQueue.status === "closed"}
+                            disabled={weeklyTransferLoading || busy}
                             onPress={() => void loadWeeklyTransferOptions()}
-                            style={[styles.refresh, (weeklyTransferLoading || busy || weeklyTransferReason.trim().length < 2 || dailyQueue.status === "closed") && styles.disabled]}
+                            style={[styles.refresh, (weeklyTransferLoading || busy) && styles.disabled]}
                           >
                             <Text style={styles.refreshText}>تحديث الأرصدة المتاحة</Text>
                           </Pressable>
