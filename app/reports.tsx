@@ -170,7 +170,7 @@ export default function ReportsScreen() {
         : `لا يوجد تقرير محفوظ للمشغّل ${selectedOperatorName ?? "المحدد"} في هذا التاريخ.`);
       if (reportData) {
         const actorIds = [...new Set(reportData.events.map((event) => event.actor_id))];
-        const actorsResult = await pumpOperationsRepository.getReportActors(organizationId, actorIds);
+        const actorsResult = await pumpOperationsRepository.getReportActors(reportData.id, actorIds);
         if (actorsResult.error) {
           console.error("daily work report actor names load failed", actorsResult.error);
           setActorNames({});
