@@ -626,6 +626,25 @@ BEGIN
     v_event_type := 'submitted';
   END IF;
 
+  -- Keep any already-created operator drafts aligned with this shared
+  -- pump-day work interval. Energy totals belong to the pump, not a single
+  -- operator; all drafts therefore display the same shared interval.
+  UPDATE public.daily_work_reports r
+  SET work_started_at = v_report.work_started_at,
+      work_ended_at = v_report.work_ended_at,
+      stoppage_minutes = v_report.stoppage_minutes,
+      updated_at = clock_timestamp(),
+      revision = r.revision + 1
+  WHERE r.organization_id = v_org_id
+    AND r.pump_id = p_pump_id
+    AND r.work_date = v_work_date
+    AND r.status = 'draft'
+    AND (
+      r.work_started_at IS DISTINCT FROM v_report.work_started_at
+      OR r.work_ended_at IS DISTINCT FROM v_report.work_ended_at
+      OR r.stoppage_minutes IS DISTINCT FROM v_report.stoppage_minutes
+    );
+
   INSERT INTO public.daily_pump_energy_report_events (
     daily_pump_energy_report_id, organization_id, pump_id,
     actor_id, event_type, metadata
