@@ -454,6 +454,32 @@ BEGIN
   -- or consumes an entitlement for the cancelled queue entry.
   SELECT queue_version INTO v_version
   FROM public.daily_queues WHERE id = v_queue_id;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.cancel_daily_queue_item(
+      v_queue_id, v_additional_item_id, v_version - 1,
+      'محاولة إلغاء بإصدار طابور قديم'
+    );
+  EXCEPTION WHEN serialization_failure THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Queue item cancellation accepted a stale queue version';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.cancel_daily_queue_item(
+      v_queue_id, v_additional_item_id, v_version, ''
+    );
+  EXCEPTION WHEN invalid_parameter_value THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Queue item cancellation accepted a missing audit reason';
+  END IF;
+
   PERFORM public.cancel_daily_queue_item(
     v_queue_id, v_additional_item_id, v_version,
     'إلغاء الدور بناءً على طلب المستفيد'
@@ -474,8 +500,11 @@ BEGIN
       AND actor_id = auth.uid()
       AND reason = 'إلغاء الدور بناءً على طلب المستفيد'
   ) OR (SELECT auto_advance_queue_item_id FROM public.daily_queues WHERE id = v_queue_id)
-       IS DISTINCT FROM v_guest_item_id THEN
-    RAISE EXCEPTION 'Cancelling a waiting item did not preserve history or the remaining auto-advance target';
+       IS DISTINCT FROM v_guest_item_id
+     OR (SELECT consumed_minutes FROM public.weekly_entitlement_allocations
+         WHERE id = (SELECT weekly_entitlement_allocation_id
+                     FROM public.queue_items WHERE id = v_weekly_item_id)) <> 2 THEN
+    RAISE EXCEPTION 'Cancelling a waiting item did not preserve history, weekly consumption, or the remaining auto-advance target';
   END IF;
 
   v_rejected := false;
