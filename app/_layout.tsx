@@ -24,5 +24,5 @@ export default function RootLayout() {
 
   if (!fontsLoaded && !fontError) return null;
 
-  return <AuthProvider><><Stack screenOptions={{ headerShown: false }}><Stack.Screen name="(tabs)" /><Stack.Screen name="sign-in" /><Stack.Screen name="change-password" /><Stack.Screen name="account-management" /><Stack.Screen name="reports" /><Stack.Screen name="weekly-schedule" /></Stack><StatusBar style="dark" /></></AuthProvider>;
+  return <AuthProvider><><Stack screenOptions={{ headerShown: false }}><Stack.Screen name="(tabs)" /><Stack.Screen name="sign-in" /><Stack.Screen name="change-password" /><Stack.Screen name="account-management" /><Stack.Screen name="reports" /><Stack.Screen name="weekly-schedule" /><Stack.Screen name="alert-settings" /></Stack><StatusBar style="dark" /></></AuthProvider>;
 }
