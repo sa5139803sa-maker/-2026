@@ -62,6 +62,8 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109077000_route_pump_operation_creation_through_guarded_rpc.sql
 \ir ../../migrations/20261109081000_create_pump_branches.sql
 \ir ../../migrations/20261109093000_create_weekly_schedules.sql
+\ir ../../migrations/20261109110000_add_pump_power_sources.sql
+\ir ../../migrations/20261109111000_create_daily_work_reports.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -1226,29 +1228,29 @@ BEGIN
      OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'planned_minutes', 'INSERT') THEN
     RAISE EXCEPTION 'Clients can directly forge operation identity, timestamps, or insert sessions';
   END IF;
-  IF NOT pg_catalog.has_function_privilege('authenticated', 'public.start_pump_operation(uuid,uuid,text,integer)', 'EXECUTE')
+  IF NOT pg_catalog.has_function_privilege('authenticated', 'public.start_pump_operation(uuid,uuid,text,integer,uuid)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.pause_pump_operation(uuid,text)', 'EXECUTE')
-     OR NOT pg_catalog.has_function_privilege('authenticated', 'public.resume_pump_operation(uuid)', 'EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated', 'public.resume_pump_operation(uuid,uuid)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.complete_pump_operation(uuid)', 'EXECUTE')
-     OR pg_catalog.has_function_privilege('anon', 'public.start_pump_operation(uuid,uuid,text,integer)', 'EXECUTE')
-     OR NOT pg_catalog.has_function_privilege('authenticated', 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer)', 'EXECUTE')
-     OR pg_catalog.has_function_privilege('anon', 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'public.start_pump_operation(uuid,uuid,text,integer,uuid)', 'EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated', 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer,uuid)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer,uuid)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.pause_pump_operation(uuid,text)', 'EXECUTE')
-     OR pg_catalog.has_function_privilege('anon', 'public.resume_pump_operation(uuid)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'public.resume_pump_operation(uuid,uuid)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.complete_pump_operation(uuid)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.get_pump_operations_dashboard(date,date)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.get_pump_operations_dashboard(date,date)', 'EXECUTE') THEN
     RAISE EXCEPTION 'Pump operation RPC grants are incorrect';
   END IF;
   IF (SELECT prosecdef FROM pg_catalog.pg_proc
-      WHERE oid = 'public.start_pump_operation(uuid,uuid,text,integer)'::regprocedure) THEN
+      WHERE oid = 'public.start_pump_operation(uuid,uuid,text,integer,uuid)'::regprocedure) THEN
     RAISE EXCEPTION 'Exposed start operation endpoint must remain SECURITY INVOKER';
   END IF;
   IF NOT (SELECT prosecdef FROM pg_catalog.pg_proc
-      WHERE oid = 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer)'::regprocedure)
+      WHERE oid = 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer,uuid)'::regprocedure)
      OR NOT EXISTS (
        SELECT 1 FROM pg_catalog.pg_proc p
-       WHERE p.oid = 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer)'::regprocedure
+       WHERE p.oid = 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer,uuid)'::regprocedure
          AND p.proconfig @> ARRAY['search_path=""']
      ) THEN
     RAISE EXCEPTION 'Private start operation implementation is not hardened SECURITY DEFINER';
@@ -1280,7 +1282,7 @@ BEGIN
        'authenticated', 'water_management_private.pause_pump_operation_internal(uuid,text)', 'EXECUTE'
      )
      OR NOT pg_catalog.has_function_privilege(
-       'authenticated', 'water_management_private.resume_pump_operation_internal(uuid)', 'EXECUTE'
+       'authenticated', 'water_management_private.resume_pump_operation_internal(uuid,uuid)', 'EXECUTE'
      )
      OR NOT pg_catalog.has_function_privilege(
        'authenticated', 'water_management_private.complete_pump_operation_internal(uuid)', 'EXECUTE'
@@ -1300,14 +1302,22 @@ DECLARE
   v_operation public.pump_operations%ROWTYPE;
   v_event_types text[];
   v_dashboard jsonb;
+  v_power_source_id uuid;
   v_rejected boolean := false;
 BEGIN
+  SELECT id INTO v_power_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id='20000000-0000-4000-8000-000000000001'
+    AND name='طاقة شمسية – مزود 1';
+  IF v_power_source_id IS NULL THEN RAISE EXCEPTION 'Default source 1 was not seeded'; END IF;
+
   SELECT * INTO v_operation
   FROM public.start_pump_operation(
     '20000000-0000-4000-8000-000000000001',
     '30000000-0000-4000-8000-000000000001',
     NULL,
-    10
+    10,
+    v_power_source_id
   );
   IF v_operation.status <> 'running' OR v_operation.operator_id <> auth.uid() THEN
     RAISE EXCEPTION 'Manager could not start a pump operation as the authenticated actor';
@@ -1336,7 +1346,8 @@ BEGIN
       '20000000-0000-4000-8000-000000000001',
       '30000000-0000-4000-8000-000000000001',
       NULL,
-      10
+      10,
+      v_power_source_id
     );
   EXCEPTION WHEN unique_violation THEN
     v_rejected := true;
@@ -1350,7 +1361,7 @@ BEGIN
     RAISE EXCEPTION 'Manager pause transition did not persist';
   END IF;
 
-  v_operation := public.resume_pump_operation(v_operation.id);
+  v_operation := public.resume_pump_operation(v_operation.id, v_power_source_id);
   IF v_operation.status <> 'running' OR v_operation.paused_at IS NOT NULL THEN
     RAISE EXCEPTION 'Manager resume transition did not persist';
   END IF;
@@ -1389,6 +1400,18 @@ BEGIN
              WHERE operation_id = v_operation.id AND actor_id <> auth.uid()) THEN
     RAISE EXCEPTION 'Operation event actor identity does not match the authenticated user';
   END IF;
+  IF (SELECT count(*) FROM public.pump_operation_power_segments
+      WHERE operation_id = v_operation.id) <> 2
+     OR EXISTS (
+       SELECT 1 FROM public.pump_operation_power_segments
+       WHERE operation_id = v_operation.id AND power_source_id <> v_power_source_id
+     )
+     OR EXISTS (
+       SELECT 1 FROM public.pump_operation_power_segments
+       WHERE operation_id = v_operation.id AND ended_at IS NULL
+     ) THEN
+    RAISE EXCEPTION 'Power source segments were not closed and retained across pause/resume';
+  END IF;
 
   v_dashboard := public.get_pump_operations_dashboard(
     v_operation.operation_date,
@@ -1412,8 +1435,18 @@ DECLARE
   v_operation public.pump_operations%ROWTYPE;
   v_event_types text[];
   v_dashboard jsonb;
+  v_power_source_id uuid;
+  v_other_pump_source_id uuid;
   v_rejected boolean := false;
 BEGIN
+  SELECT id INTO v_power_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id='20000000-0000-4000-8000-000000000001'
+    AND name='مولد – مزود 3';
+  SELECT id INTO v_other_pump_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id='20000000-0000-4000-8000-000000000003'
+    AND name='مولد – مزود 3';
   IF (SELECT count(*) FROM public.pump_operations
       WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 1 THEN
     RAISE EXCEPTION 'Assigned operator cannot read the pump operation history';
@@ -1426,7 +1459,7 @@ BEGIN
 
   BEGIN
     PERFORM public.start_pump_operation(
-      '20000000-0000-4000-8000-000000000002', NULL, 'حالة غير مصرح بها', 5
+      '20000000-0000-4000-8000-000000000002', NULL, 'حالة غير مصرح بها', 5, NULL
     );
   EXCEPTION WHEN insufficient_privilege THEN
     v_rejected := true;
@@ -1440,7 +1473,8 @@ BEGIN
     '20000000-0000-4000-8000-000000000001',
     NULL,
     'حالة طارئة للاختبار',
-    5
+    5,
+    v_power_source_id
   );
   IF v_operation.operator_id <> auth.uid() OR v_operation.subscriber_id IS NOT NULL THEN
     RAISE EXCEPTION 'Assigned operator could not start an emergency operation';
@@ -1449,7 +1483,7 @@ BEGIN
   v_rejected := false;
   BEGIN
     PERFORM public.start_pump_operation(
-      '20000000-0000-4000-8000-000000000001', NULL, 'تعبئة مكررة', 5
+      '20000000-0000-4000-8000-000000000001', NULL, 'تعبئة مكررة', 5, v_power_source_id
     );
   EXCEPTION WHEN unique_violation THEN
     v_rejected := true;
@@ -1459,7 +1493,7 @@ BEGIN
   END IF;
 
   v_operation := public.pause_pump_operation(v_operation.id, 'تغيير فلتر تجريبي');
-  v_operation := public.resume_pump_operation(v_operation.id);
+  v_operation := public.resume_pump_operation(v_operation.id, v_power_source_id);
   v_operation := public.complete_pump_operation(v_operation.id);
   IF v_operation.status <> 'completed' OR v_operation.actual_seconds IS NULL THEN
     RAISE EXCEPTION 'Assigned operator could not complete their operation';
@@ -1528,14 +1562,19 @@ RESET ROLE;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000007', true);
 DO $tenant_b_operation$
-DECLARE v_operation public.pump_operations%ROWTYPE;
+DECLARE v_operation public.pump_operations%ROWTYPE; v_power_source_id uuid;
 BEGIN
+  SELECT id INTO v_power_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id='20000000-0000-4000-8000-000000000003'
+    AND name='طاقة شمسية – مزود 2';
   SELECT * INTO v_operation
   FROM public.start_pump_operation(
     '20000000-0000-4000-8000-000000000003',
     '30000000-0000-4000-8000-000000000004',
     NULL,
-    5
+    5,
+    v_power_source_id
   );
   v_operation := public.complete_pump_operation(v_operation.id);
   IF v_operation.status <> 'completed' THEN
