@@ -185,7 +185,7 @@ export async function syncPumpTimerNotifications(
         "minute",
         timing.minuteWarningAt,
         "بقيت دقيقة على انتهاء التعبئة",
-        "اقترب انتهاء دور " + active.subscriber_name + ". افتح التطبيق عند الحاجة.",
+        "بقيت دقيقة على نهاية مدة التعبئة الحالية. افتح التطبيق عند الحاجة.",
         settings.minuteWarning.vibrate,
         {
           alertScope: "pump-operation",
