@@ -1077,3 +1077,16 @@
 - حُذف الملف مباشرة من `main` باستخدام SHA الملف، ثم أُنشئ الملف الصحيح على `security/tenant-isolation-rls` وتأكد وجوده في فرع التطوير وعدم وجوده في `main`.
 - الحالة الحالية: شجرة ملفات `main` لا تحتوي migration التشغيل هذه، لكن سجل Git في `main` تقدم بعمليتي إضافة ثم حذف. أصبح مقارنة الفرعين تشير إلى أن `main` متقدم تاريخيًا باثنين من commits، بينما بقيت تغييرات التطبيق والترحيلات المطلوبة في فرع التطوير.
 - لم يُجرِ أي merge أو deploy إنتاجي، ولم تُعد كتابة تاريخ `main`. يلزم قرار مستقل إذا أُريد تنظيف هذين الـcommits من تاريخ الفرع الافتراضي؛ لم أجرِ ذلك لتجنب force-push أو إعادة كتابة تاريخ الفرع.
+
+
+## 2026-11-09 — نجاح CI وإعداد وثيقة التسليم الشاملة
+
+- على HEAD الكود `54d692d5979fc1f4978e55f94e7473222272a232` نجحت سير العمل الأربعة:
+  - Quality #371 — [run](https://github.com/sa5139803sa-maker/-2026/actions/runs/42582933877): Deno setup، dependency install، Edge typecheck، IP/session tests، unit tests، TypeScript وweb export كلها success. فشلت المحاولة الأولى في تنزيل Deno بـHTTP 504 من GitHub Releases، ثم نجحت إعادة تشغيل المهمة.
+  - Web Console #209 — [run](https://github.com/sa5139803sa-maker/-2026/actions/runs/42582933905): npm audit، اختبارات الويب، TypeScript وNext.js build — success.
+  - PostgreSQL RLS #658 — [run](https://github.com/sa5139803sa-maker/-2026/actions/runs/42582934018) — success.
+  - Secret History #176 — [run](https://github.com/sa5139803sa-maker/-2026/actions/runs/42582933939) — success.
+- Vercel Preview على SHA نفسه READY، `target=null`، وليست Production.
+- حُدث وصف PR #2 ليطابق القرارات المعتمدة: المدير يعمل على الويب وAndroid، ويمكن تعيين عدة محصّلين إلى الغطاس الواحد.
+- أضيفت الوثيقة `docs/HANDOVER_CONTEXT_AR_2026-11-09.md` لتجميع المنصات والأدوار وقرارات التعيين ونموذج التشغيل والصلاحيات والاختبارات والمتبقي وتعليمات بدء جلسة جديدة.
+- المرحلة 4 جزئية؛ المرحلة 5 Offline First لم تبدأ. لا دمج ولا نشر Production.
