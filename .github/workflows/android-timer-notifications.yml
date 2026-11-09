@@ -64,6 +64,23 @@ jobs:
           fi
           echo "PumpTimer native module autolinking verified."
 
+      - name: Verify Android foreground-service manifest
+        shell: bash
+        run: |
+          manifest="android/app/src/main/AndroidManifest.xml"
+          for required in \
+            "android.permission.FOREGROUND_SERVICE" \
+            "android.permission.FOREGROUND_SERVICE_SPECIAL_USE" \
+            "expo.modules.pumptimer.PumpTimerForegroundService" \
+            'android:foregroundServiceType="specialUse"' \
+            "android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"; do
+            if ! grep --fixed-strings --quiet "$required" "$manifest"; then
+              echo "Required foreground-service manifest entry missing: $required"
+              exit 1
+            fi
+          done
+          echo "Android special-use foreground-service manifest verified."
+
       - name: Assemble Android debug APK
         working-directory: android
         run: ./gradlew --no-daemon assembleDebug
