@@ -53,6 +53,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109065108_allow_multiple_collectors_and_create_pump_operations.sql
 \ir ../../migrations/20261109065908_harden_pump_operations_grants_and_indexes.sql
 \ir ../../migrations/20261109070000_restrict_pump_operation_lifecycle_to_guarded_rpcs.sql
+\ir ../../migrations/20261109071000_revoke_direct_pump_operation_state_column_updates.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -701,7 +702,9 @@ BEGIN
   END IF;
   IF pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'started_at', 'INSERT')
      OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'operator_id', 'UPDATE')
-     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'started_at', 'UPDATE') THEN
+     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'started_at', 'UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'status', 'UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'paused_at', 'UPDATE') THEN
     RAISE EXCEPTION 'Clients can directly forge operation identity or timestamps';
   END IF;
   IF NOT pg_catalog.has_function_privilege('authenticated', 'public.start_pump_operation(uuid,uuid,text,integer)', 'EXECUTE')
@@ -875,13 +878,52 @@ END;
 $supervisor_operation_read$;
 RESET ROLE;
 
--- Operation rows are removed before the test deletes pumps with RESTRICT FKs.
-DELETE FROM public.pump_operations;
-
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
 SELECT test_support.assert_scope('manager B', 1, 1, 1, 1, 2);
 RESET ROLE;
+
+-- Second organization may operate its own pump but cannot view tenant A sessions.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000007', true);
+DO $tenant_b_operation$
+DECLARE v_operation public.pump_operations%ROWTYPE;
+BEGIN
+  SELECT * INTO v_operation
+  FROM public.start_pump_operation(
+    '20000000-0000-4000-8000-000000000003',
+    '30000000-0000-4000-8000-000000000004',
+    NULL,
+    5
+  );
+  v_operation := public.complete_pump_operation(v_operation.id);
+  IF v_operation.status <> 'completed' THEN
+    RAISE EXCEPTION 'Tenant B operator could not complete its own operation';
+  END IF;
+  IF (SELECT count(*) FROM public.pump_operations
+      WHERE pump_id = '20000000-0000-4000-8000-000000000003') <> 1
+     OR (SELECT count(*) FROM public.pump_operations
+         WHERE pump_id = '20000000-0000-4000-8000-000000000001') <> 0 THEN
+    RAISE EXCEPTION 'Tenant B operator operation visibility crossed organization boundaries';
+  END IF;
+END;
+$tenant_b_operation$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DO $tenant_a_cannot_see_tenant_b_operation$
+BEGIN
+  IF (SELECT count(*) FROM public.pump_operations
+      WHERE pump_id = '20000000-0000-4000-8000-000000000003') <> 0 THEN
+    RAISE EXCEPTION 'Tenant A manager read an operation from tenant B';
+  END IF;
+END;
+$tenant_a_cannot_see_tenant_b_operation$;
+RESET ROLE;
+
+-- Operation rows are removed before the test deletes pumps with RESTRICT FKs.
+DELETE FROM public.pump_operations;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000008', true);
