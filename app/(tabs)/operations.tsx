@@ -23,6 +23,7 @@ import {
   type PumpPowerSource,
   type PowerUsageRow,
   type DailyScheduleEntry,
+  type DailyWorkReportDetails,
 } from "@/lib/repositories/pump-operations";
 
 function localOperationDate() {
@@ -141,6 +142,9 @@ function OperationsScreenContent() {
   const [powerUsageRows, setPowerUsageRows] = useState<PowerUsageRow[]>([]);
   const [powerUsageLoading, setPowerUsageLoading] = useState(false);
   const [powerUsageError, setPowerUsageError] = useState<string | null>(null);
+  const [dailyWorkReport, setDailyWorkReport] = useState<DailyWorkReportDetails | null>(null);
+  const [dailyWorkReportLoading, setDailyWorkReportLoading] = useState(false);
+  const [dailyWorkReportError, setDailyWorkReportError] = useState<string | null>(null);
   const [surveyOpen, setSurveyOpen] = useState(false);
   const [surveyStep, setSurveyStep] = useState<1 | 2>(1);
   const [surveyLoading, setSurveyLoading] = useState(false);
@@ -316,9 +320,30 @@ function OperationsScreenContent() {
     setPowerUsageLoading(false);
   }, [selectedPumpId, usagePeriod]);
 
+  const loadDailyWorkReport = useCallback(async (workDate: string) => {
+    if (!organizationId || !selectedPumpId) {
+      setDailyWorkReport(null);
+      return;
+    }
+    setDailyWorkReportLoading(true);
+    setDailyWorkReportError(null);
+    const { data, error: reportError } = await pumpOperationsRepository.getDailyWorkReport(
+      organizationId, selectedPumpId, workDate,
+    );
+    if (reportError) {
+      console.error("daily work report load failed", reportError);
+      setDailyWorkReport(null);
+      setDailyWorkReportError("تعذر تحميل تقرير العمل اليومي.");
+    } else {
+      setDailyWorkReport((data ?? null) as DailyWorkReportDetails | null);
+    }
+    setDailyWorkReportLoading(false);
+  }, [organizationId, selectedPumpId]);
+
   useEffect(() => { void loadPumps(); }, [loadPumps]);
   useEffect(() => { void loadPumpData(); }, [loadPumpData]);
   useEffect(() => { void loadPowerUsage(); }, [loadPowerUsage]);
+  useEffect(() => { void loadDailyWorkReport(localOperationDate()); }, [loadDailyWorkReport]);
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
@@ -556,6 +581,7 @@ function OperationsScreenContent() {
         throw new Error("تعذر حفظ تقرير العمل اليومي. تحقق من الاتصال والبيانات.");
       }
       setNotice(submit ? "تم اعتماد تقرير العمل اليومي." : "تم حفظ مسودة تقرير العمل اليومي.");
+      await loadDailyWorkReport(surveyDate);
       if (submit) {
         setSurveyOpen(false);
         setSurveyStep(1);
@@ -1000,6 +1026,65 @@ function OperationsScreenContent() {
             ))}
           </Card>
 
+          {dailyWorkReportLoading ? (
+            <Card style={styles.card}>
+              <ActivityIndicator color={colors.brand.teal} />
+              <Text style={styles.empty}>جاري تحميل التقرير اليومي...</Text>
+            </Card>
+          ) : dailyWorkReportError ? (
+            <Card style={styles.card}>
+              <Text style={styles.error}>{dailyWorkReportError}</Text>
+            </Card>
+          ) : dailyWorkReport ? (
+            <Card style={styles.card}>
+              <View style={styles.sectionHeader}>
+                <SectionTitle title="تفاصيل تقرير العمل اليومي" />
+                <StatusBadge
+                  label={dailyWorkReport.status === "submitted" ? "معتمد" : "مسودة"}
+                  status={dailyWorkReport.status === "submitted" ? "success" : "warning"}
+                />
+              </View>
+              <Text style={styles.historyMeta}>
+                {dailyWorkReport.work_date} · {formatTime(dailyWorkReport.work_started_at)} – {formatTime(dailyWorkReport.work_ended_at)}
+              </Text>
+              <Text style={styles.detailText}>مجموع التوقفات: {dailyWorkReport.stoppage_minutes} دقيقة</Text>
+              <Text style={styles.surveyStep}>توزيع دقائق مصادر الكهرباء</Text>
+              {dailyWorkReport.sourceTotals.map((source) => (
+                <View key={source.id} style={styles.usageRow}>
+                  <Text style={styles.queueName}>{source.source_name_snapshot}</Text>
+                  <Text style={styles.usageMinutes}>{source.minutes} دقيقة</Text>
+                </View>
+              ))}
+              <Text style={styles.surveyStep}>تفصيل التعبئات</Text>
+              {dailyWorkReport.items.map((item) => (
+                <View key={item.id} style={styles.surveyEntry}>
+                  <View style={styles.surveyEntryHeader}>
+                    <View style={styles.surveyEntryInfo}>
+                      <Text style={styles.queueName}>
+                        {item.subscriber_name_snapshot ?? item.external_beneficiary_name ?? "مستفيد إضافي"}
+                      </Text>
+                      <Text style={styles.historyMeta}>
+                        {item.fulfillment_status === "complete" ? "مكتملة" :
+                          item.fulfillment_status === "partial" ? "جزئية" :
+                            item.fulfillment_status === "not_done" ? "لم تتم" : "إضافية"}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.reportMetricRow}>
+                    <Text style={styles.reportMetric}>المقرر: {item.scheduled_minutes} د</Text>
+                    <Text style={styles.reportMetric}>آلي: {item.app_recorded_minutes} د</Text>
+                    <Text style={styles.reportMetric}>يدوي: {item.manual_minutes} د</Text>
+                    <Text style={styles.reportMetric}>مستهلك أسبوعيًا: {item.weekly_minutes_consumed} د</Text>
+                    <Text style={styles.reportMetric}>إضافي: {item.extra_minutes + item.app_over_quota_minutes} د</Text>
+                  </View>
+                </View>
+              ))}
+              <Text style={styles.historyMeta}>
+                سجل التدقيق: {dailyWorkReport.events.length} أحداث محفوظة · آخر تحديث {formatTime(dailyWorkReport.updated_at)}
+              </Text>
+            </Card>
+          ) : null}
+
           <Card style={styles.card}>
             <View style={styles.sectionHeader}>
               <SectionTitle title="سجل عمليات اليوم" />
@@ -1084,6 +1169,8 @@ const styles = StyleSheet.create({
   usagePeriodText: { color: colors.text.primary, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.medium },
   usagePeriodTextSelected: { color: colors.text.inverse },
   usageRow: { gap: 4, paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.background.subtle, alignItems: "flex-end" },
+  reportMetricRow: { flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.xs },
+  reportMetric: { color: colors.text.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.medium, backgroundColor: colors.background.subtle, borderRadius: radius.sm, paddingVertical: 4, paddingHorizontal: spacing.xs },
   usageMinutes: { color: colors.brand.primary, fontSize: typography.fontSize.lg, fontFamily: typography.fontFamily.bold, fontVariant: ["tabular-nums"] },
   activeCard: { backgroundColor: colors.brand.navy, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.md },
   activeHeader: { flexDirection: "row-reverse", justifyContent: "space-between", alignItems: "center", gap: spacing.sm },
