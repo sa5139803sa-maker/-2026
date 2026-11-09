@@ -168,8 +168,6 @@ function OperationsScreenContent() {
   const [surveyOperations, setSurveyOperations] = useState<Operation[]>([]);
   const [surveyManualMinutes, setSurveyManualMinutes] = useState<Record<string, string>>({});
   const [surveyExtraMinutes, setSurveyExtraMinutes] = useState<Record<string, string>>({});
-  const [minutes, setMinutes] = useState("30");
-  const [emergencyName, setEmergencyName] = useState("");
   const autoAdvanceInFlight = useRef<string | null>(null);
   const [pauseReason, setPauseReason] = useState("");
   const [loading, setLoading] = useState(true);
@@ -386,6 +384,7 @@ function OperationsScreenContent() {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         setNow(Date.now());
+        autoAdvanceInFlight.current = null;
         void loadPumpData();
       }
     });
@@ -481,7 +480,7 @@ function OperationsScreenContent() {
   };
 
   const appendQueueItem = async () => {
-    if (!dailyQueue || busy || activeOperation) return;
+    if (!dailyQueue || busy) return;
     const planned = Number(queueAdditionMinutes);
     if (!Number.isInteger(planned) || planned < 1 || planned > 1440) {
       setError("أدخل مدة صحيحة للإضافة من دقيقة واحدة إلى 24 ساعة.");
@@ -615,7 +614,6 @@ function OperationsScreenContent() {
         }
         await loadPumpData();
       } finally {
-        if (autoAdvanceInFlight.current === token) autoAdvanceInFlight.current = null;
         setBusy(false);
       }
     })();
