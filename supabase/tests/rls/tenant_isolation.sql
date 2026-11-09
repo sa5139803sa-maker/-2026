@@ -58,6 +58,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109073000_add_rls_scoped_operations_dashboard_aggregate.sql
 \ir ../../migrations/20261109074000_add_append_only_pump_operation_event_ledger.sql
 \ir ../../migrations/20261109075000_add_monotonic_event_sequence_to_pump_operation_ledger.sql
+\ir ../../migrations/20261109076000_index_pump_operation_events_foreign_keys.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -1437,6 +1438,17 @@ BEGIN
   END IF;
   IF pg_get_indexdef(v_index) NOT LIKE '%(pump_id, organization_id)' THEN
     RAISE EXCEPTION 'Invalid index definition for subscribers (pump_id, organization_id)';
+  END IF;
+
+  v_index := to_regclass('public.pump_operation_events_actor_id_idx');
+  IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(actor_id)' THEN
+    RAISE EXCEPTION 'Missing covering index for pump_operation_events.actor_id';
+  END IF;
+
+  v_index := to_regclass('public.pump_operation_events_operation_scope_fk_idx');
+  IF v_index IS NULL
+     OR pg_get_indexdef(v_index) NOT LIKE '%(operation_id, organization_id, pump_id)' THEN
+    RAISE EXCEPTION 'Missing covering index for pump_operation_events operation scope foreign key';
   END IF;
 END;
 $tenant_fk_indexes$;
