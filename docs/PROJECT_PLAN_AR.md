@@ -208,7 +208,7 @@ water-management/
 | المشتركون | subscribers, branches |
 | الجداول | weekly_schedules, schedule_entries, schedule_exceptions |
 | الطابور | daily_queues, queue_items |
-| التعبئات | fill_jobs, fill_events, fill_pauses |
+| التعبئات | fill_jobs, fill_events, fill_pauses (التطبيق الحالي: pump_operations لجلسة التشغيل وpump_operation_events لسجل الأحداث) |
 | الحسابات | accounts, account_transactions, transaction_allocations |
 | التحصيل | collections, collection_allocations, receipts |
 | إشعارات التحويل | payment_notifications, payment_reviews |
