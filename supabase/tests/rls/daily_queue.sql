@@ -538,6 +538,107 @@ END;
 $weekly_entitlement_manual_report_reconciliation$;
 RESET ROLE;
 
+-- A weekly allocation moved to a day with no template entry must still appear
+-- in the daily report and reconcile against that same weekly cycle.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $weekly_entitlement_reassigned_report$
+DECLARE
+  v_today date := (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date;
+  v_cycle_start date;
+  v_target_date date;
+  v_cycle_id uuid;
+  v_source_allocation_id uuid;
+  v_target_allocation_id uuid;
+  v_source_id uuid;
+  v_report public.daily_work_reports%ROWTYPE;
+  v_started_at timestamptz;
+  v_ended_at timestamptz;
+BEGIN
+  SELECT c.id, c.cycle_start
+  INTO v_cycle_id, v_cycle_start
+  FROM public.weekly_entitlement_cycles c
+  WHERE c.weekly_schedule_id = '50000000-0000-4000-8000-000000000001'
+    AND c.subscriber_id = '30000000-0000-4000-8000-000000000001';
+
+  v_target_date := v_cycle_start + 2;
+
+  SELECT a.id INTO v_source_allocation_id
+  FROM public.weekly_entitlement_allocations a
+  WHERE a.weekly_entitlement_cycle_id = v_cycle_id
+    AND a.allocation_date = v_cycle_start + 1
+    AND a.available_minutes >= 5
+  FOR UPDATE;
+
+  IF v_source_allocation_id IS NULL THEN
+    RAISE EXCEPTION 'Expected source-day remaining entitlement for reassigned report test';
+  END IF;
+
+  UPDATE public.weekly_entitlement_allocations
+  SET allocated_minutes = allocated_minutes - 5,
+      updated_at = clock_timestamp()
+  WHERE id = v_source_allocation_id;
+
+  INSERT INTO public.weekly_entitlement_allocations (
+    weekly_entitlement_cycle_id, organization_id, pump_id, subscriber_id,
+    allocation_date, source_schedule_entry_id, original_minutes,
+    allocated_minutes, consumed_minutes
+  )
+  VALUES (
+    v_cycle_id, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '20000000-0000-4000-8000-000000000001',
+    '30000000-0000-4000-8000-000000000001',
+    v_target_date, NULL, 0, 5, 0
+  )
+  RETURNING id INTO v_target_allocation_id;
+
+  SELECT id INTO v_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+    AND name = 'طاقة شمسية – مزود 1'
+    AND is_active;
+
+  v_started_at := (v_target_date + time '07:00') AT TIME ZONE 'Asia/Hebron';
+  v_ended_at := (v_target_date + time '08:00') AT TIME ZONE 'Asia/Hebron';
+
+  v_report := public.save_daily_work_report(
+    '20000000-0000-4000-8000-000000000001',
+    v_started_at,
+    v_ended_at,
+    0,
+    jsonb_build_array(jsonb_build_object('power_source_id', v_source_id, 'minutes', 60)),
+    jsonb_build_array(jsonb_build_object(
+      'entry_type', 'weekly_reassigned',
+      'schedule_entry_id', NULL,
+      'subscriber_id', '30000000-0000-4000-8000-000000000001',
+      'sort_order', 0,
+      'manual_minutes', 3,
+      'extra_minutes', 0,
+      'note', 'اختبار تقرير حصة منقولة إلى يوم بلا موعد أصلي'
+    )),
+    true,
+    NULL
+  );
+
+  IF (SELECT count(*) FROM public.daily_work_report_items
+      WHERE daily_work_report_id = v_report.id
+        AND entry_type = 'weekly_reassigned'
+        AND weekly_entitlement_allocation_id = v_target_allocation_id
+        AND scheduled_minutes = 5
+        AND weekly_minutes_consumed = 3
+        AND fulfillment_status = 'partial') <> 1
+     OR (SELECT consumed_minutes FROM public.weekly_entitlement_allocations
+         WHERE id = v_target_allocation_id) <> 3
+     OR (SELECT consumed_minutes FROM public.weekly_entitlement_cycles
+         WHERE id = v_cycle_id) <> 10
+     OR (SELECT remaining_minutes FROM public.weekly_entitlement_cycles
+         WHERE id = v_cycle_id) <> 35 THEN
+    RAISE EXCEPTION 'Reassigned weekly minutes were not included and reconciled as part of the same entitlement cycle';
+  END IF;
+END;
+$weekly_entitlement_reassigned_report$;
+RESET ROLE;
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
 DO $supervisor_queue_read$
