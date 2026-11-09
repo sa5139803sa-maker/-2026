@@ -186,7 +186,6 @@ CREATE POLICY managers_update_draft_weekly_schedules
     organization_id = (SELECT water_management_private.current_user_organization_id())
     AND (SELECT water_management_private.current_user_role()) = 'manager'::public.app_role
     AND status = 'draft'
-    AND created_by = (SELECT auth.uid())
   );
 
 CREATE POLICY managers_delete_draft_weekly_schedules
