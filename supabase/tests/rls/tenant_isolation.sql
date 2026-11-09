@@ -58,7 +58,6 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109073000_add_rls_scoped_operations_dashboard_aggregate.sql
 \ir ../../migrations/20261109074000_add_append_only_pump_operation_event_ledger.sql
 \ir ../../migrations/20261109075000_add_monotonic_event_sequence_to_pump_operation_ledger.sql
-\ir ../../migrations/20261109072000_move_pump_operation_definers_to_private_schema.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
