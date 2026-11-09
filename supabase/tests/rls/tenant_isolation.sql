@@ -2386,6 +2386,9 @@ DO $subscriber_operator_direct_update_denied$
 DECLARE
   v_rejected boolean := false;
 BEGIN
+  -- Custom GUC values are settable by API sessions and must not be accepted
+  -- as an authorization capability for bypassing the assignment RPC.
+  PERFORM set_config('water_management.allow_subscriber_operator_change', 'on', true);
   BEGIN
     UPDATE public.subscribers
     SET operator_id = '10000000-0000-4000-8000-000000000002'
@@ -2766,6 +2769,25 @@ DECLARE
   v_update_rejected boolean := false;
   v_delete_rejected boolean := false;
 BEGIN
+  IF (SELECT count(*) FROM public.subscriber_operator_assignment_events
+      WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+        AND organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        AND actor_id = '10000000-0000-4000-8000-000000000001'
+        AND reason IN (
+          'تهيئة مسؤول المشترك في اختبار المؤسسة أ',
+          'إعادة توزيع مسؤولية المشترك إلى المشغّل الثاني'
+        )) <> 2
+     OR NOT EXISTS (
+       SELECT 1 FROM public.subscriber_operator_assignment_events
+       WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+         AND previous_operator_id = '10000000-0000-4000-8000-000000000002'
+         AND new_operator_id = '10000000-0000-4000-8000-000000000003'
+         AND actor_id = '10000000-0000-4000-8000-000000000001'
+         AND reason = 'إعادة توزيع مسؤولية المشترك إلى المشغّل الثاني'
+     ) THEN
+    RAISE EXCEPTION 'Assignment history did not preserve the exact actor, previous/new owner, and reason';
+  END IF;
+
   BEGIN
     UPDATE public.subscriber_operator_assignment_events
     SET reason = 'عبث بالسجل'
@@ -2784,6 +2806,22 @@ BEGIN
   END IF;
 END;
 $subscriber_operator_history_append_only$;
+RESET ROLE;
+
+-- A manager from another tenant must not read organization A assignment history.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
+DO $subscriber_operator_history_cross_tenant$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.subscriber_operator_assignment_events
+    WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+       OR subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) THEN
+    RAISE EXCEPTION 'Tenant B manager read tenant A subscriber assignment history';
+  END IF;
+END;
+$subscriber_operator_history_cross_tenant$;
 RESET ROLE;
 
 -- A former owner cannot start a registered subscriber after reassignment.
