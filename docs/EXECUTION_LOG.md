@@ -1090,3 +1090,24 @@
 - حُدث وصف PR #2 ليطابق القرارات المعتمدة: المدير يعمل على الويب وAndroid، ويمكن تعيين عدة محصّلين إلى الغطاس الواحد.
 - أضيفت الوثيقة `docs/HANDOVER_CONTEXT_AR_2026-11-09.md` لتجميع المنصات والأدوار وقرارات التعيين ونموذج التشغيل والصلاحيات والاختبارات والمتبقي وتعليمات بدء جلسة جديدة.
 - المرحلة 4 جزئية؛ المرحلة 5 Offline First لم تبدأ. لا دمج ولا نشر Production.
+
+## 2026-11-09 — تنفيذ بنية الفروع على Supabase والتحقق الحي
+
+- أُضيفت migration `20261109081000_create_pump_branches.sql` على فرع `security/tenant-isolation-rls` لإنشاء `public.branches` وإضافة `subscribers.branch_id` الاختياري وربطه بمفتاح مركب `(branch_id, organization_id, pump_id)`.
+- سياسات RLS:
+  - المدير يقرأ ويدير الفروع ضمن مؤسسته فقط.
+  - الموظف يقرأ الفروع ضمن الغطاسات المعيّنة له بحسب دوره.
+  - `anon` لا يملك أي امتيازات.
+  - منح الكتابة لـ`authenticated` مقتصرة على الأعمدة اللازمة؛ لا يمكن تقديم `organization_id` أو تغيير `pump_id`، وحالة الفرع وهويته ووقت إنشائه لا يمكن تعديلها من العميل.
+- حذف فرع يزيل `branch_id` فقط ويبقي `pump_id` للمشترك. حذف الغطاس يمسح `branch_id` أولًا عبر trigger داخلي `SECURITY INVOKER` ثم يعمل FK الحالي على تصفير `pump_id`. دالة trigger لها `search_path = ''` ولا يملك `anon/authenticated` صلاحية استدعائها مباشرة.
+- أُضيفت اختبارات في `supabase/tests/rls/tenant_isolation.sql` تشمل المدير والمشغّل والمحصّل والمشرف ومؤسستين، وتتحقق من RLS والمنح المركبة ورفض تعيين تفرع من غطاس/مؤسسة أخرى، والحذف والفهارس.
+- نتائج CI على Commit `d3fe69005707f5c25e91bd722a958a3bd0f8b7ba`:
+  - Quality #388 — success (Edge checks، unit tests، TypeScript، Expo web export).
+  - Web Console #226 — success (اختبارات Next.js وTypeScript وproduction build).
+  - PostgreSQL RLS #695 — success.
+  - Secret History #213 — success.
+- طُبقت migration على مشروع Supabase `kxdncnswbwktbiphptbr` وسُجلت باسم `create_pump_branches` والإصدار `20261109090703`.
+- فحص حي للتحقق من صلاحيات المدير داخل `ROLLBACK`: إنشاء/قراءة/تعديل الاسم/حذف فرع، ورفض تزوير `organization_id` ورفض تحديث `pump_id`.
+- فحص حي إضافي داخل `ROLLBACK`: حذف فرع يبقي الغطاس ويرفع ارتباط الفرع، وحذف الغطاس يزيل ارتباط الفرع ثم الغطاس. كل سجلات الاختبار المؤقتة صفر بعد rollback.
+- Advisor: لا توجد Health findings؛ بقيت 3 INFO من `rls_enabled_no_policy` في مخطط البوابة الخاص (مقصودة)، وتحذير WARN `auth_leaked_password_protection` لم يتغير. ظهرت unused-index INFO في قاعدة منخفضة البيانات، ولا نحذفها دون قياس.
+- لم يحدث merge ولا نشر Production. المرحلة التالية: بناء `weekly_schedules` و`schedule_entries` والاستثناءات مع RLS قبل إنشاء طابور اليوم الدائم وربطه بجلسات التشغيل.
