@@ -836,11 +836,11 @@ RETURNS jsonb
 LANGUAGE sql
 SECURITY INVOKER
 SET search_path = ''
-AS $
+AS $reorder_queue_rpc$
   SELECT water_management_private.reorder_daily_queue_internal(
     p_queue_id, p_expected_version, p_order, p_override_reason
   )
-$;
+$reorder_queue_rpc$;
 REVOKE ALL ON FUNCTION public.reorder_daily_queue(uuid, integer, uuid[], text)
   FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.reorder_daily_queue(uuid, integer, uuid[], text)
@@ -1102,11 +1102,11 @@ RETURNS boolean
 LANGUAGE sql
 SECURITY INVOKER
 SET search_path = ''
-AS $
+AS $cancel_auto_advance_rpc$
   SELECT water_management_private.cancel_daily_queue_auto_advance_internal(
     p_queue_id, p_auto_advance_token, p_reason
   )
-$;
+$cancel_auto_advance_rpc$;
 REVOKE ALL ON FUNCTION public.cancel_daily_queue_auto_advance(uuid, uuid, text)
   FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.cancel_daily_queue_auto_advance(uuid, uuid, text)
