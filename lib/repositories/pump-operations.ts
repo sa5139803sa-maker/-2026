@@ -121,7 +121,8 @@ export type DailyQueueEvent = {
     | "item_operator_reassigned" | "reordered" | "branch_order_override" | "started" | "completed"
     | "auto_advance_scheduled" | "auto_advance_retargeted"
     | "auto_advance_cancelled" | "queue_closed" | "weekly_minutes_transferred";
-  actor_id: string;
+  /** Null when the redacted queue view hides another actor's identity. */
+  actor_id: string | null;
   occurred_at: string;
   reason: string | null;
   metadata: Record<string, unknown>;
