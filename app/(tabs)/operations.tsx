@@ -269,6 +269,11 @@ function OperationsScreenContent() {
     setDataPumpId(null);
     setSubscribers([]);
     setOperations([]);
+    setDailyQueue(null);
+    setDailyQueueError(null);
+    setQueueAdditionOpen(false);
+    setQueueAdditionSubscriberId("");
+    setQueueAdditionName("");
     setRefreshing(true);
     setError(null);
     try {
@@ -974,7 +979,10 @@ function OperationsScreenContent() {
             {activeOperation ? (
               <View style={styles.sourceSelector}>
                 <Text style={styles.fieldLabel}>مصدر الكهرباء للدور التالي</Text>
-                <View style={styles.sourceChoices}>
+                {powerSources.length === 0 ? (
+                  <Text style={styles.empty}>لا يوجد مصدر طاقة نشط متاح. أوقف الانتقال التلقائي واطلب من المدير تفعيل مصدر.</Text>
+                ) : (
+                  <View style={styles.sourceChoices}>
                   {powerSources.map((source) => (
                     <Pressable key={source.id} onPress={() => setSelectedPowerSourceId(source.id)}
                       style={[styles.sourceChoice, selectedPowerSourceId === source.id && styles.sourceChoiceSelected]}>
@@ -983,7 +991,8 @@ function OperationsScreenContent() {
                       </Text>
                     </Pressable>
                   ))}
-                </View>
+                  </View>
+                )}
               </View>
             ) : null}
             <View style={styles.queueHeader}>
