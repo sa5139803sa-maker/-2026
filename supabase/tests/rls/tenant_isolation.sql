@@ -1570,6 +1570,22 @@ BEGIN
     RAISE EXCEPTION 'Operator started a pump outside their assignment';
   END IF;
 
+  v_rejected := false;
+  BEGIN
+    PERFORM public.start_pump_operation(
+      '20000000-0000-4000-8000-000000000001',
+      NULL,
+      'مصدر من غطاس آخر',
+      5,
+      v_other_pump_source_id
+    );
+  EXCEPTION WHEN invalid_parameter_value THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Operator used a power source from another pump';
+  END IF;
+
   SELECT * INTO v_operation
   FROM public.start_pump_operation(
     '20000000-0000-4000-8000-000000000001',
@@ -1625,6 +1641,23 @@ RESET ROLE;
 -- Collectors and supervisors can neither view nor control operation records.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000004', true);
+DO $collector_power_source_read$
+BEGIN
+  IF (SELECT count(*) FROM public.pump_power_sources
+      WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 0 THEN
+    RAISE EXCEPTION 'Collector unexpectedly read operator-only power source configuration';
+  END IF;
+END;
+$collector_power_source_read$;
+DO $collector_operation_power_read$
+BEGIN
+  IF (SELECT count(*) FROM public.pump_operation_power_segments
+      WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 0 THEN
+    RAISE EXCEPTION 'Collector unexpectedly read operator-only power usage segments';
+  END IF;
+END;
+$collector_operation_power_read$;
+
 DO $collector_operation_read$
 BEGIN
   IF (SELECT count(*) FROM public.pump_operations
@@ -1641,6 +1674,15 @@ RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
+DO $supervisor_power_source_read$
+BEGIN
+  IF (SELECT count(*) FROM public.pump_power_sources
+      WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 0 THEN
+    RAISE EXCEPTION 'Supervisor unexpectedly read power sources without an assignment path';
+  END IF;
+END;
+$supervisor_power_source_read$;
+
 DO $supervisor_operation_read$
 BEGIN
   IF (SELECT count(*) FROM public.pump_operations
