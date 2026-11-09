@@ -59,6 +59,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109074000_add_append_only_pump_operation_event_ledger.sql
 \ir ../../migrations/20261109075000_add_monotonic_event_sequence_to_pump_operation_ledger.sql
 \ir ../../migrations/20261109076000_index_pump_operation_events_foreign_keys.sql
+\ir ../../migrations/20261109077000_route_pump_operation_creation_through_guarded_rpc.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -702,7 +703,8 @@ BEGIN
      OR pg_catalog.has_table_privilege('authenticated', 'public.pump_operations', 'INSERT')
      OR pg_catalog.has_table_privilege('authenticated', 'public.pump_operations', 'UPDATE')
      OR pg_catalog.has_table_privilege('authenticated', 'public.pump_operations', 'DELETE')
-     OR pg_catalog.has_table_privilege('anon', 'public.pump_operations', 'SELECT') THEN
+     OR pg_catalog.has_table_privilege('anon', 'public.pump_operations', 'SELECT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.pump_operations', 'INSERT') THEN
     RAISE EXCEPTION 'Pump operation table privileges are not least-privilege';
   END IF;
   IF NOT pg_catalog.has_table_privilege('authenticated', 'public.pump_operation_events', 'SELECT')
@@ -721,20 +723,39 @@ BEGIN
      OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'operator_id', 'UPDATE')
      OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'started_at', 'UPDATE')
      OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'status', 'UPDATE')
-     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'paused_at', 'UPDATE') THEN
-    RAISE EXCEPTION 'Clients can directly forge operation identity or timestamps';
+     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'paused_at', 'UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'organization_id', 'INSERT')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'pump_id', 'INSERT')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'operator_id', 'INSERT')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.pump_operations', 'planned_minutes', 'INSERT') THEN
+    RAISE EXCEPTION 'Clients can directly forge operation identity, timestamps, or insert sessions';
   END IF;
   IF NOT pg_catalog.has_function_privilege('authenticated', 'public.start_pump_operation(uuid,uuid,text,integer)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.pause_pump_operation(uuid,text)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.resume_pump_operation(uuid)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.complete_pump_operation(uuid)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.start_pump_operation(uuid,uuid,text,integer)', 'EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated', 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.pause_pump_operation(uuid,text)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.resume_pump_operation(uuid)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.complete_pump_operation(uuid)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.get_pump_operations_dashboard(date,date)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.get_pump_operations_dashboard(date,date)', 'EXECUTE') THEN
     RAISE EXCEPTION 'Pump operation RPC grants are incorrect';
+  END IF;
+  IF (SELECT prosecdef FROM pg_catalog.pg_proc
+      WHERE oid = 'public.start_pump_operation(uuid,uuid,text,integer)'::regprocedure) THEN
+    RAISE EXCEPTION 'Exposed start operation endpoint must remain SECURITY INVOKER';
+  END IF;
+  IF NOT (SELECT prosecdef FROM pg_catalog.pg_proc
+      WHERE oid = 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer)'::regprocedure)
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_proc p
+       WHERE p.oid = 'water_management_private.start_pump_operation_internal(uuid,uuid,text,integer)'::regprocedure
+         AND p.proconfig @> ARRAY['search_path=""']
+     ) THEN
+    RAISE EXCEPTION 'Private start operation implementation is not hardened SECURITY DEFINER';
   END IF;
   IF EXISTS (
     SELECT 1 FROM pg_catalog.pg_proc p
@@ -794,6 +815,24 @@ BEGIN
   );
   IF v_operation.status <> 'running' OR v_operation.operator_id <> auth.uid() THEN
     RAISE EXCEPTION 'Manager could not start a pump operation as the authenticated actor';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    INSERT INTO public.pump_operations (
+      organization_id, pump_id, subscriber_name, operator_id, planned_minutes
+    ) VALUES (
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      '20000000-0000-4000-8000-000000000001',
+      'محاولة إدخال مباشر',
+      auth.uid(),
+      5
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Authenticated manager directly inserted a pump operation outside the RPC';
   END IF;
 
   BEGIN
