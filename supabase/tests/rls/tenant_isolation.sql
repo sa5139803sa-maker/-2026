@@ -2221,6 +2221,46 @@ RESET ROLE;
 
 \ir daily_queue.sql
 
+-- Collectors retain their prior pump-level schedule/subscriber visibility, but
+-- they must not inherit the operator/supervisor-only weekly entitlement ledger.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
+VALUES (
+  '20000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000004',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  'collector'
+);
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000004', true);
+DO $collector_weekly_entitlement_boundary$
+BEGIN
+  IF (SELECT count(*) FROM public.weekly_schedule_subscribers
+      WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 1
+     OR (SELECT count(*) FROM public.schedule_entries
+         WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 1 THEN
+    RAISE EXCEPTION 'Collector lost its existing pump-level weekly schedule visibility';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.weekly_entitlement_cycles
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) OR EXISTS (
+    SELECT 1 FROM public.weekly_entitlement_allocations
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) OR EXISTS (
+    SELECT 1 FROM public.weekly_entitlement_events
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+  ) THEN
+    RAISE EXCEPTION 'Collector read the weekly entitlement ledger outside its former role scope';
+  END IF;
+END;
+$collector_weekly_entitlement_boundary$;
+RESET ROLE;
+
 -- Materialize a future queue while the first operator owns the subscriber;
 -- reassignment must move only waiting items and leave completed history intact.
 SET LOCAL ROLE authenticated;
