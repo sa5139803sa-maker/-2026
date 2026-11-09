@@ -715,6 +715,14 @@ ALTER TABLE public.daily_work_report_items
   ADD COLUMN weekly_entitlement_allocation_id uuid;
 
 ALTER TABLE public.daily_work_report_items
+  DROP CONSTRAINT daily_work_report_items_entry_type_check;
+
+ALTER TABLE public.daily_work_report_items
+  ADD CONSTRAINT daily_work_report_items_entry_type_check CHECK (
+    entry_type IN ('weekly', 'weekly_reassigned', 'additional_registered', 'additional_guest')
+  );
+
+ALTER TABLE public.daily_work_report_items
   DROP CONSTRAINT daily_work_report_items_type_check;
 
 ALTER TABLE public.daily_work_report_items
