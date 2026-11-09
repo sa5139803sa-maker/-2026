@@ -1,0 +1,39 @@
+name: Refresh SDK 57 notification lockfile
+
+on:
+  push:
+    branches:
+      - security/tenant-isolation-rls
+    paths:
+      - ".github/dependency-requests/refresh-notifications-lock.json"
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout dependency branch
+        uses: actions/checkout@v4
+        with:
+          ref: security/tenant-isolation-rls
+          persist-credentials: true
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Resolve the SDK-compatible native notification packages
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Commit the generated lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- package.json package-lock.json; then
+            echo "No dependency lock changes."
+            exit 0
+          fi
+          git add package.json package-lock.json
+          git commit -m "chore: lock Expo SDK 57 notification dependencies"
+          git push origin "HEAD:security/tenant-isolation-rls"
