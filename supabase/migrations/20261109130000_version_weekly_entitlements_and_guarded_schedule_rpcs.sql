@@ -179,6 +179,7 @@ AS $prepare_schedule_entry_scope$
 DECLARE
   v_organization_id uuid;
   v_pump_id uuid;
+  v_schedule_status text;
   v_member_exists boolean;
 BEGIN
   IF TG_OP = 'UPDATE'
@@ -187,15 +188,18 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  SELECT ws.organization_id, ws.pump_id
-    INTO v_organization_id, v_pump_id
+  SELECT ws.organization_id, ws.pump_id, ws.status
+    INTO v_organization_id, v_pump_id, v_schedule_status
   FROM public.weekly_schedules ws
-  WHERE ws.id = NEW.weekly_schedule_id
-    AND ws.status = 'draft';
+  WHERE ws.id = NEW.weekly_schedule_id;
 
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'Weekly schedule not found or not editable'
+    RAISE EXCEPTION 'Weekly schedule does not exist'
       USING ERRCODE = '23503';
+  END IF;
+  IF v_schedule_status <> 'draft' THEN
+    RAISE EXCEPTION 'Only a draft weekly schedule can receive schedule entries'
+      USING ERRCODE = '42501';
   END IF;
 
   SELECT EXISTS (
