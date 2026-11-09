@@ -6,7 +6,7 @@ import { SectionTitle, StatCard, StatusBadge } from "@/components/UI";
 import { Card } from "@/components/ui";
 import { colors, radius, spacing } from "@/constants/theme";
 import { useAuth } from "@/lib/auth";
-import { supabase } from "@/lib/supabase";
+import { pumpOperationsRepository, type PumpOperationsDashboard } from "@/lib/repositories/pump-operations";
 import { canAccessFeature } from "@/lib/permissions";
 
 type Pump = { id: string; name: string; code: string };
@@ -100,29 +100,15 @@ export default function DashboardScreen() {
       const weekStart = week[0]?.date ?? today;
 
       try {
-        const [pumpsResult, subscribersResult, operationsResult] = await Promise.all([
-          supabase
-            .from("pumps")
-            .select("id,name,code")
-            .eq("organization_id", profile.organization_id as string)
-            .order("created_at", { ascending: true }),
-          supabase
-            .from("subscribers")
-            .select("id", { count: "exact", head: true })
-            .eq("organization_id", profile.organization_id as string)
-            .eq("is_active", true),
-          supabase
-            .from("pump_operations")
-            .select("id,pump_id,subscriber_name,status,started_at,ended_at,actual_seconds,operation_date")
-            .eq("organization_id", profile.organization_id as string)
-            .or(`operation_date.gte.${weekStart},status.in.(running,paused)`)
-            .order("started_at", { ascending: false })
-            .limit(5000),
+        const [pumpsResult, subscribersResult, dashboardResult] = await Promise.all([
+          pumpOperationsRepository.listPumps(profile.organization_id as string),
+          pumpOperationsRepository.countActiveSubscribers(profile.organization_id as string),
+          pumpOperationsRepository.loadDashboard(weekStart, today),
         ]);
 
         if (!active) return;
-        if (pumpsResult.error || subscribersResult.error || operationsResult.error) {
-          console.error("dashboard data load failed", pumpsResult.error ?? subscribersResult.error ?? operationsResult.error);
+        if (pumpsResult.error || subscribersResult.error || dashboardResult.error) {
+          console.error("dashboard data load failed", pumpsResult.error ?? subscribersResult.error ?? dashboardResult.error);
           setStats({ pumps: 0, subscribers: 0, todayOperations: 0, activeOperations: 0 });
           setDailyOperations([]);
           setRecentOperations([]);
@@ -131,27 +117,22 @@ export default function DashboardScreen() {
         }
 
         const pumps = (pumpsResult.data ?? []) as Pump[];
-        const operations = (operationsResult.data ?? []) as Operation[];
-        const pumpNames = new Map(pumps.map((pump) => [pump.id, pump.name]));
-        const todayOperations = operations.filter((operation) => operation.operation_date === today);
-        const activeOperations = operations.filter(
-          (operation) => operation.status === "running" || operation.status === "paused",
-        );
+        const dashboard = dashboardResult.data as unknown as PumpOperationsDashboard;
 
         setStats({
           pumps: pumps.length,
           subscribers: subscribersResult.count ?? 0,
-          todayOperations: todayOperations.length,
-          activeOperations: activeOperations.length,
+          todayOperations: dashboard.today_operations ?? 0,
+          activeOperations: dashboard.active_operations ?? 0,
         });
+        const dailyCounts = new Map(
+          (dashboard.daily ?? []).map((item) => [item.date, item.count]),
+        );
         setDailyOperations(week.map((bucket) => ({
           ...bucket,
-          count: operations.filter((operation) => operation.operation_date === bucket.date).length,
+          count: dailyCounts.get(bucket.date) ?? 0,
         })));
-        setRecentOperations(operations.slice(0, 6).map((operation) => ({
-          ...operation,
-          pump_name: pumpNames.get(operation.pump_id) ?? "غطاس",
-        })));
+        setRecentOperations((dashboard.recent ?? []).slice(0, 6));
       } catch (loadError) {
         console.error("dashboard request failed", loadError);
         if (!active) return;
