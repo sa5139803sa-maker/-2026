@@ -19,6 +19,9 @@ import {
   type OperationPump as Pump,
   type OperationSubscriber as Subscriber,
   type PumpOperation as Operation,
+  type PumpPowerSource,
+  type PowerUsageRow,
+  type DailyScheduleEntry,
 } from "@/lib/repositories/pump-operations";
 
 function localOperationDate() {
@@ -45,6 +48,64 @@ function formatTime(value: string | null) {
   return new Date(value).toLocaleTimeString("ar-PS", { timeZone: "Asia/Hebron", hour: "2-digit", minute: "2-digit" });
 }
 
+function hebrewLocalToIso(date: string, time: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+    throw new Error("أدخل تاريخًا ووقتًا صحيحين.");
+  }
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const localTarget = Date.UTC(year, month - 1, day, hour, minute, 0);
+  let utcMillis = localTarget;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Hebron",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(utcMillis));
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const representedAsUtc = Date.UTC(
+      Number(values.year), Number(values.month) - 1, Number(values.day),
+      Number(values.hour), Number(values.minute), Number(values.second),
+    );
+    const offset = representedAsUtc - utcMillis;
+    const nextUtc = localTarget - offset;
+    if (nextUtc === utcMillis) break;
+    utcMillis = nextUtc;
+  }
+
+  const result = new Date(utcMillis);
+  const check = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Hebron",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(result);
+  const values = Object.fromEntries(check.map((part) => [part.type, part.value]));
+  if (`${values.year}-${values.month}-${values.day}` !== date
+      || `${values.hour}:${values.minute}` !== time) {
+    throw new Error("الوقت المدخل غير موجود في التوقيت المحلي لهذا التاريخ.");
+  }
+  return result.toISOString();
+}
+
+function powerDateRange(period: "day" | "week" | "month") {
+  const today = localOperationDate();
+  const [year, month, day] = today.split("-").map(Number);
+  const todayUtc = new Date(Date.UTC(year, month - 1, day));
+  if (period === "day") return { from: today, to: today };
+  if (period === "month") {
+    return { from: `${year}-${String(month).padStart(2, "0")}-01`, to: today };
+  }
+  const fromDate = new Date(todayUtc);
+  fromDate.setUTCDate(fromDate.getUTCDate() - 6);
+  return { from: fromDate.toISOString().slice(0, 10), to: today };
+}
+
 function friendlyError(error: { code?: string; message?: string }) {
   if (error.code === "23505") return "يوجد تشغيل قائم بالفعل على هذا الغطاس.";
   if (error.code === "42501") return "ليس لديك صلاحية التشغيل على هذا الغطاس.";
@@ -68,6 +129,24 @@ function OperationsScreenContent() {
   const [selectedPumpId, setSelectedPumpId] = useState("");
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [operations, setOperations] = useState<Operation[]>([]);
+  const [powerSources, setPowerSources] = useState<PumpPowerSource[]>([]);
+  const [selectedPowerSourceId, setSelectedPowerSourceId] = useState("");
+  const [resumePowerSourceId, setResumePowerSourceId] = useState("");
+  const [usagePeriod, setUsagePeriod] = useState<"day" | "week" | "month">("day");
+  const [powerUsageRows, setPowerUsageRows] = useState<PowerUsageRow[]>([]);
+  const [powerUsageLoading, setPowerUsageLoading] = useState(false);
+  const [powerUsageError, setPowerUsageError] = useState<string | null>(null);
+  const [surveyOpen, setSurveyOpen] = useState(false);
+  const [surveyLoading, setSurveyLoading] = useState(false);
+  const [surveySaving, setSurveySaving] = useState(false);
+  const [surveyDate, setSurveyDate] = useState(localOperationDate());
+  const [workStartTime, setWorkStartTime] = useState("");
+  const [workEndTime, setWorkEndTime] = useState("");
+  const [stoppageMinutes, setStoppageMinutes] = useState("0");
+  const [sourceMinutes, setSourceMinutes] = useState<Record<string, string>>({});
+  const [surveyEntries, setSurveyEntries] = useState<DailyScheduleEntry[]>([]);
+  const [surveyOperations, setSurveyOperations] = useState<Operation[]>([]);
+  const [surveyManualMinutes, setSurveyManualMinutes] = useState<Record<string, string>>({});
   const [minutes, setMinutes] = useState("30");
   const [emergencyName, setEmergencyName] = useState("");
   const [pauseReason, setPauseReason] = useState("");
@@ -84,6 +163,31 @@ function OperationsScreenContent() {
     () => pumps.find((pump) => pump.id === selectedPumpId) ?? null,
     [pumps, selectedPumpId],
   );
+  const selectedPowerSource = useMemo(
+    () => powerSources.find((source) => source.id === selectedPowerSourceId) ?? null,
+    [powerSources, selectedPowerSourceId],
+  );
+  const groupedPowerUsage = useMemo(() => {
+    const selectedRows = usagePeriod === "week" && powerUsageRows.length > 0
+      ? powerUsageRows.filter((row) => row.period_start === powerUsageRows.reduce(
+        (latest, item) => item.period_start > latest ? item.period_start : latest,
+        powerUsageRows[0].period_start,
+      ))
+      : powerUsageRows;
+    const grouped = new Map<string, { id: string; name: string; minutes: number; sources: Set<string> }>();
+    for (const row of selectedRows) {
+      const current = grouped.get(row.power_source_id) ?? {
+        id: row.power_source_id,
+        name: row.power_source_name,
+        minutes: 0,
+        sources: new Set<string>(),
+      };
+      current.minutes += Number(row.total_minutes ?? 0);
+      current.sources.add(row.data_source);
+      grouped.set(row.power_source_id, current);
+    }
+    return [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  }, [powerUsageRows, usagePeriod]);
   const activeOperation = useMemo(
     () => dataPumpId === selectedPumpId && selectedPumpId
       ? operations.find((operation) =>
@@ -146,20 +250,33 @@ function OperationsScreenContent() {
     setError(null);
     try {
       const day = localOperationDate();
-      const [subscriberResult, operationResult] = await Promise.all([
+      const [subscriberResult, operationResult, sourceResult] = await Promise.all([
         pumpOperationsRepository.listActiveSubscribers(organizationId, selectedPumpId),
         pumpOperationsRepository.listPumpOperations(organizationId, selectedPumpId, day),
+        pumpOperationsRepository.listPowerSources(organizationId, selectedPumpId),
       ]);
       if (requestId !== dataRequestSequence.current) return;
-      if (subscriberResult.error || operationResult.error) {
-        console.error("operation queue load failed", subscriberResult.error ?? operationResult.error);
+      if (subscriberResult.error || operationResult.error || sourceResult.error) {
+        console.error("operation queue load failed", subscriberResult.error ?? operationResult.error ?? sourceResult.error);
         setSubscribers([]);
         setOperations([]);
+        setPowerSources([]);
+        setSelectedPowerSourceId("");
         setDataPumpId(selectedPumpId);
-        setError("تعذر تحميل طابور المشتركين أو سجل التشغيل. حدّث الشاشة.");
+        setError("تعذر تحميل بيانات التشغيل أو مصادر الكهرباء. تحقق من تحديث قاعدة البيانات ثم حدّث الشاشة.");
       } else {
+        const loadedOperations = (operationResult.data ?? []) as Operation[];
+        const loadedSources = (sourceResult.data ?? []) as PumpPowerSource[];
         setSubscribers((subscriberResult.data ?? []) as Subscriber[]);
-        setOperations((operationResult.data ?? []) as Operation[]);
+        setOperations(loadedOperations);
+        setPowerSources(loadedSources);
+        setSelectedPowerSourceId((current) =>
+          loadedSources.some((source) => source.id === current) ? current : loadedSources[0]?.id ?? "",
+        );
+        const paused = loadedOperations.find((operation) =>
+          operation.pump_id === selectedPumpId && operation.status === "paused",
+        );
+        setResumePowerSourceId(paused?.last_power_source_id ?? loadedSources[0]?.id ?? "");
         setDataPumpId(selectedPumpId);
       }
     } catch (loadError) {
@@ -175,8 +292,30 @@ function OperationsScreenContent() {
     }
   }, [organizationId, selectedPumpId]);
 
+  const loadPowerUsage = useCallback(async () => {
+    if (!selectedPumpId) {
+      setPowerUsageRows([]);
+      return;
+    }
+    setPowerUsageLoading(true);
+    setPowerUsageError(null);
+    const range = powerDateRange(usagePeriod);
+    const { data, error: queryError } = await pumpOperationsRepository.getPowerUsage(
+      range.from, range.to, usagePeriod, selectedPumpId,
+    );
+    if (queryError) {
+      console.error("power usage report load failed", queryError);
+      setPowerUsageRows([]);
+      setPowerUsageError("تعذر تحميل إحصاءات مصادر الكهرباء.");
+    } else {
+      setPowerUsageRows((data ?? []) as PowerUsageRow[]);
+    }
+    setPowerUsageLoading(false);
+  }, [selectedPumpId, usagePeriod]);
+
   useEffect(() => { void loadPumps(); }, [loadPumps]);
   useEffect(() => { void loadPumpData(); }, [loadPumpData]);
+  useEffect(() => { void loadPowerUsage(); }, [loadPowerUsage]);
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
@@ -209,6 +348,10 @@ function OperationsScreenContent() {
   const startOperation = async (subscriber: Subscriber | null) => {
     if (!selectedPumpId || busy) return;
     const plannedMinutes = Number(minutes);
+    if (!selectedPowerSourceId) {
+      setError("اختر مصدر الكهرباء المستخدم قبل بدء التعبئة.");
+      return;
+    }
     if (!Number.isInteger(plannedMinutes) || plannedMinutes < 1 || plannedMinutes > 1440) {
       setError("أدخل مدة صحيحة من دقيقة واحدة إلى 24 ساعة.");
       return;
@@ -225,6 +368,7 @@ function OperationsScreenContent() {
       subscriber?.id ?? null,
       subscriber ? null : emergencyName.trim(),
       plannedMinutes,
+      selectedPowerSourceId,
     );
     if (actionError) {
       console.error("pump operation start failed", actionError);
@@ -263,7 +407,73 @@ function OperationsScreenContent() {
       await loadPumpData();
     }
     setBusy(false);
-  }, [activeOperation, busy, loadPumpData, pauseReason]);
+  }, [activeOperation, busy, loadPumpData, pauseReason, resumePowerSourceId]);
+
+  const saveDailySurvey = async (submit: boolean) => {
+    if (!selectedPumpId || surveySaving || activeOperation) return;
+    setSurveySaving(true);
+    setError(null);
+    try {
+      const startIso = hebrewLocalToIso(surveyDate, workStartTime);
+      const endIso = hebrewLocalToIso(surveyDate, workEndTime);
+      const elapsedMinutes = Math.floor((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000);
+      const stops = Number(stoppageMinutes);
+      if (!Number.isInteger(stops) || stops < 0 || stops > elapsedMinutes) {
+        throw new Error("تحقق من مجموع التوقفات بالدقائق.");
+      }
+      const expectedPowerMinutes = elapsedMinutes - stops;
+      const sourceTotals = Object.entries(sourceMinutes)
+        .map(([power_source_id, value]) => ({ power_source_id, minutes: Number(value || 0) }))
+        .filter((row) => row.minutes > 0);
+      if (sourceTotals.some((row) => !Number.isInteger(row.minutes) || row.minutes < 0)) {
+        throw new Error("أدخل دقائق صحيحة لكل مصدر كهرباء.");
+      }
+      const enteredSourceMinutes = sourceTotals.reduce((sum, row) => sum + row.minutes, 0);
+      if (submit && enteredSourceMinutes !== expectedPowerMinutes) {
+        throw new Error(`مجموع دقائق المصادر ${enteredSourceMinutes}، بينما مدة التشغيل الصافية ${expectedPowerMinutes} دقيقة. صحح التوزيع قبل الإرسال.`);
+      }
+      const items = surveyEntries.map((entry, index) => {
+        const manual = Number(surveyManualMinutes[entry.id] || 0);
+        if (!Number.isInteger(manual) || manual < 0) {
+          throw new Error(`تحقق من الدقائق اليدوية للمشترك ${entry.subscribers?.full_name ?? ""}.`);
+        }
+        return {
+          entry_type: "weekly" as const,
+          schedule_entry_id: entry.id,
+          subscriber_id: entry.subscriber_id,
+          sort_order: index,
+          manual_minutes: manual,
+          extra_minutes: 0,
+          note: null,
+        };
+      });
+      const { data, error: saveError } = await pumpOperationsRepository.saveDailyWorkReport({
+        pumpId: selectedPumpId,
+        workStartedAt: startIso,
+        workEndedAt: endIso,
+        stoppageMinutes: stops,
+        sourceTotals,
+        items,
+        submit,
+      });
+      if (saveError) {
+        console.error("daily work report save failed", saveError);
+        if (saveError.code === "23514") throw new Error("بيانات التقرير لا تطابق الجدول أو مجموع دقائق الطاقة.");
+        if (saveError.code === "42501") throw new Error("ليس لديك صلاحية إرسال تقرير هذا الغطاس.");
+        if (saveError.code === "55000") throw new Error("يوجد تشغيل لم يُنهَ بعد، أو أن التقرير سبق اعتماده.");
+        throw new Error("تعذر حفظ تقرير العمل اليومي. تحقق من الاتصال والبيانات.");
+      }
+      setNotice(submit ? "تم اعتماد تقرير العمل اليومي." : "تم حفظ مسودة تقرير العمل اليومي.");
+      if (submit) {
+        setSurveyOpen(false);
+        await loadPowerUsage();
+      }
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "تعذر حفظ تقرير العمل اليومي.");
+    } finally {
+      setSurveySaving(false);
+    }
+  };
 
   const autoCompletedOperationId = useRef<string | null>(null);
   useEffect(() => {
@@ -347,8 +557,24 @@ function OperationsScreenContent() {
               <View style={styles.activeDetails}>
                 <Text style={styles.detailText}>بدأت: {formatTime(activeOperation.started_at)}</Text>
                 <Text style={styles.detailText}>المدة المحددة: {activeOperation.planned_minutes} دقيقة</Text>
+                <Text style={styles.detailText}>
+                  مصدر الطاقة: {powerSources.find((source) => source.id === (activeOperation.current_power_source_id ?? activeOperation.last_power_source_id))?.name ?? "غير محدد"}
+                </Text>
                 {activeOperation.pause_reason ? <Text style={styles.detailText}>سبب التوقف: {activeOperation.pause_reason}</Text> : null}
               </View>
+              {activeOperation.status === "paused" ? (
+                <View style={styles.sourceSelector}>
+                  <Text style={styles.fieldLabel}>مصدر الكهرباء عند الاستئناف</Text>
+                  <View style={styles.sourceChoices}>
+                    {powerSources.map((source) => (
+                      <Pressable key={source.id} onPress={() => setResumePowerSourceId(source.id)}
+                        style={[styles.sourceChoice, resumePowerSourceId === source.id && styles.sourceChoiceSelected]}>
+                        <Text style={[styles.sourceChoiceText, resumePowerSourceId === source.id && styles.sourceChoiceTextSelected]}>{source.name}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
               <View style={styles.actionRow}>
                 {activeOperation.status === "running" ? (
                   <View style={styles.pauseControl}>
@@ -386,6 +612,21 @@ function OperationsScreenContent() {
                 <SectionTitle title="بدء تعبئة جديدة" />
                 <StatusBadge label="جاهز للتشغيل" status="info" />
               </View>
+              <View style={styles.sourceSelector}>
+                <Text style={styles.fieldLabel}>مصدر الكهرباء المستخدم</Text>
+                {powerSources.length === 0 ? (
+                  <Text style={styles.empty}>لا توجد مصادر كهرباء نشطة لهذا الغطاس. اطلب من المدير إعداد المصادر.</Text>
+                ) : (
+                  <View style={styles.sourceChoices}>
+                    {powerSources.map((source) => (
+                      <Pressable key={source.id} onPress={() => setSelectedPowerSourceId(source.id)}
+                        style={[styles.sourceChoice, selectedPowerSourceId === source.id && styles.sourceChoiceSelected]}>
+                        <Text style={[styles.sourceChoiceText, selectedPowerSourceId === source.id && styles.sourceChoiceTextSelected]}>{source.name}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+              </View>
               <Text style={styles.fieldLabel}>مدة التعبئة بالدقائق</Text>
               <TextInput value={minutes} onChangeText={setMinutes} keyboardType="number-pad"
                 placeholder="30" style={styles.durationInput} accessibilityLabel="مدة التعبئة بالدقائق" />
@@ -402,8 +643,8 @@ function OperationsScreenContent() {
                     <Text style={styles.queueName}>{subscriber.full_name}</Text>
                     <Text style={styles.queueMeta}>رقم المشترك {String(subscriber.subscriber_number).padStart(6, "0")}</Text>
                   </View>
-                  <Pressable disabled={busy || selectedPump.status !== "active"} onPress={() => void startOperation(subscriber)}
-                    style={[styles.startButton, (busy || selectedPump.status !== "active") && styles.disabled]}>
+                  <Pressable disabled={busy || selectedPump.status !== "active" || !selectedPowerSourceId} onPress={() => void startOperation(subscriber)}
+                    style={[styles.startButton, (busy || selectedPump.status !== "active" || !selectedPowerSourceId) && styles.disabled]}>
                     <Play size={14} color="#fff" /><Text style={styles.startText}>بدء</Text>
                   </Pressable>
                 </View>
@@ -413,14 +654,183 @@ function OperationsScreenContent() {
                 <TextInput value={emergencyName} onChangeText={setEmergencyName}
                   placeholder="اسم الحالة الطارئة" style={styles.emergencyInput}
                   maxLength={120} textAlign="right" />
-                <Pressable disabled={busy || selectedPump.status !== "active" || emergencyName.trim().length < 2}
+                <Pressable disabled={busy || selectedPump.status !== "active" || emergencyName.trim().length < 2 || !selectedPowerSourceId}
                   onPress={() => void startOperation(null)}
-                  style={[styles.emergencyButton, (busy || selectedPump.status !== "active" || emergencyName.trim().length < 2) && styles.disabled]}>
+                  style={[styles.emergencyButton, (busy || selectedPump.status !== "active" || emergencyName.trim().length < 2 || !selectedPowerSourceId) && styles.disabled]}>
                   <Play size={15} color={colors.status.warning.text} /><Text style={styles.emergencyText}>بدء تعبئة طارئة</Text>
                 </Pressable>
               </View>
             </Card>
           )}
+
+          <Card style={styles.card}>
+            <Pressable onPress={() => {
+              if (!surveyOpen) {
+                setSurveyLoading(true);
+                setSurveyDate(localOperationDate());
+                setWorkStartTime("");
+                setWorkEndTime("");
+                setStoppageMinutes("0");
+                const day = localOperationDate();
+                void Promise.all([
+                  pumpOperationsRepository.listDailyScheduleEntries(organizationId ?? "", selectedPumpId, day),
+                  pumpOperationsRepository.listPumpOperations(organizationId ?? "", selectedPumpId, day),
+                  pumpOperationsRepository.getPowerUsage(day, day, "day", selectedPumpId),
+                ]).then(([scheduleResult, operationsResult, usageResult]) => {
+                  if (scheduleResult.error || operationsResult.error) {
+                    setError("تعذر تحميل الجدول الفعلي لليوم. حدّث الشاشة وحاول مجددًا.");
+                    setSurveyEntries([]);
+                    setSurveyOperations([]);
+                  } else {
+                    const entries = (scheduleResult.data ?? []) as unknown as DailyScheduleEntry[];
+                    setSurveyEntries(entries);
+                    setSurveyOperations((operationsResult.data ?? []) as Operation[]);
+                    setSurveyManualMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
+                  }
+                  const usage = (usageResult.data ?? []) as PowerUsageRow[];
+                  const automatic = usage.filter((row) => row.data_source === "automatic");
+                  setSourceMinutes(Object.fromEntries(
+                    powerSources.map((source) => [
+                      source.id,
+                      String(automatic.filter((row) => row.power_source_id === source.id)
+                        .reduce((sum, row) => sum + Number(row.total_minutes ?? 0), 0) || ""),
+                    ]),
+                  ));
+                  if (usageResult.error) console.error("daily source prefill failed", usageResult.error);
+                }).catch((loadError) => {
+                  console.error("daily work survey seed failed", loadError);
+                  setError("تعذر تحميل بيانات استبيان اليوم.");
+                }).finally(() => setSurveyLoading(false));
+              }
+              setSurveyOpen((open) => !open);
+            }} style={styles.surveyToggle}>
+              <View style={styles.sectionHeader}>
+                <SectionTitle title="استبيان عمل اليوم" />
+                <Text style={styles.refreshText}>{surveyOpen ? "إخفاء" : "تسجيل عمل اليوم"}</Text>
+              </View>
+              <Text style={styles.empty}>يوثّق ما تم بعد انتهاء العمل، بما في ذلك التعبئات التي نُفذت خارج التطبيق.</Text>
+            </Pressable>
+            {surveyOpen ? (
+              surveyLoading ? <ActivityIndicator color={colors.brand.teal} /> : (
+                <View style={styles.surveyBody}>
+                  <Text style={styles.surveyStep}>الخطوة 1 — وقت العمل ومصادر الكهرباء</Text>
+                  <Text style={styles.fieldLabel}>تاريخ العمل (YYYY-MM-DD)</Text>
+                  <TextInput value={surveyDate} onChangeText={setSurveyDate} style={styles.durationInput}
+                    autoCapitalize="none" placeholder="2026-11-09" />
+                  <View style={styles.surveyInputsRow}>
+                    <View style={styles.surveyInputCell}>
+                      <Text style={styles.fieldLabel}>بداية العمل</Text>
+                      <TextInput value={workStartTime} onChangeText={setWorkStartTime} style={styles.surveyTimeInput}
+                        placeholder="07:00" keyboardType="numbers-and-punctuation" />
+                    </View>
+                    <View style={styles.surveyInputCell}>
+                      <Text style={styles.fieldLabel}>نهاية العمل</Text>
+                      <TextInput value={workEndTime} onChangeText={setWorkEndTime} style={styles.surveyTimeInput}
+                        placeholder="15:00" keyboardType="numbers-and-punctuation" />
+                    </View>
+                    <View style={styles.surveyInputCell}>
+                      <Text style={styles.fieldLabel}>التوقفات بالدقائق</Text>
+                      <TextInput value={stoppageMinutes} onChangeText={setStoppageMinutes} style={styles.surveyTimeInput}
+                        keyboardType="number-pad" placeholder="0" />
+                    </View>
+                  </View>
+                  <Text style={styles.fieldLabel}>إجمالي دقائق كل مصدر (تشمل المسجل آليًا)</Text>
+                  {powerSources.map((source) => (
+                    <View key={source.id} style={styles.surveySourceRow}>
+                      <Text style={styles.surveySourceName}>{source.name}</Text>
+                      <TextInput value={sourceMinutes[source.id] ?? ""} onChangeText={(value) =>
+                        setSourceMinutes((current) => ({ ...current, [source.id]: value }))
+                      } style={styles.surveyMinutesInput} keyboardType="number-pad" placeholder="الدقائق" />
+                    </View>
+                  ))}
+                  <Text style={styles.surveyStep}>الخطوة 2 — تنفيذ الجدول اليومي</Text>
+                  <Text style={styles.empty}>المسجل آليًا لا تعِد إدخاله. أدخل فقط الدقائق التي نُفذت خارج التطبيق.</Text>
+                  {surveyEntries.length === 0 ? (
+                    <Text style={styles.empty}>لا توجد حصص أسبوعية في الجدول لهذا اليوم. يمكن حفظ تقرير المصادر، وسيظل الجدول فارغًا.</Text>
+                  ) : surveyEntries.map((entry, index) => {
+                    const subscriber = entry.subscribers;
+                    const automaticMinutes = Math.floor(
+                      surveyOperations.filter((operation) =>
+                        operation.status === "completed" && operation.subscriber_id === entry.subscriber_id,
+                      ).reduce((sum, operation) => sum + (operation.actual_seconds ?? 0), 0) / 60,
+                    );
+                    return (
+                      <View key={entry.id} style={styles.surveyEntry}>
+                        <View style={styles.surveyEntryHeader}>
+                          <View style={styles.surveyReorder}>
+                            <Pressable disabled={index === 0} onPress={() => setSurveyEntries((current) => {
+                              const next = [...current]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next;
+                            })} style={styles.reorderButton}><Text style={styles.reorderText}>↑</Text></Pressable>
+                            <Pressable disabled={index === surveyEntries.length - 1} onPress={() => setSurveyEntries((current) => {
+                              const next = [...current]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; return next;
+                            })} style={styles.reorderButton}><Text style={styles.reorderText}>↓</Text></Pressable>
+                          </View>
+                          <View style={styles.surveyEntryInfo}>
+                            <Text style={styles.queueName}>{subscriber?.full_name ?? "مشترك"}</Text>
+                            <Text style={styles.queueMeta}>المقرر {entry.planned_minutes} د · المسجل آليًا {automaticMinutes} د</Text>
+                          </View>
+                        </View>
+                        <View style={styles.surveyInputsRow}>
+                          <View style={styles.surveyInputCell}>
+                            <Text style={styles.fieldLabel}>المنفذ خارج التطبيق</Text>
+                            <TextInput value={surveyManualMinutes[entry.id] ?? ""} onChangeText={(value) =>
+                              setSurveyManualMinutes((current) => ({ ...current, [entry.id]: value }))
+                            } style={styles.surveyTimeInput} keyboardType="number-pad" placeholder="0" />
+                          </View>
+                          <View style={styles.surveyInputCell}>
+                            <Text style={styles.fieldLabel}>الإجمالي الفعلي</Text>
+                            <Text style={styles.surveyActual}>
+                              {automaticMinutes + (Number(surveyManualMinutes[entry.id] || 0) || 0)} دقيقة
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                  <View style={styles.surveyActions}>
+                    <Pressable disabled={surveySaving || Boolean(activeOperation)} onPress={() => void saveDailySurvey(false)}
+                      style={[styles.surveySaveButton, (surveySaving || Boolean(activeOperation)) && styles.disabled]}>
+                      <Text style={styles.actionText}>حفظ مسودة</Text>
+                    </Pressable>
+                    <Pressable disabled={surveySaving || Boolean(activeOperation)} onPress={() => void saveDailySurvey(true)}
+                      style={[styles.surveySubmitButton, (surveySaving || Boolean(activeOperation)) && styles.disabled]}>
+                      <Text style={styles.actionText}>إرسال التقرير واعتماده</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              )
+            ) : null}
+          </Card>
+
+          <Card style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <SectionTitle title="استهلاك مصادر الكهرباء" />
+              <Text style={styles.count}>بالدقائق</Text>
+            </View>
+            <View style={styles.usagePeriods}>
+              {(["day", "week", "month"] as const).map((period) => (
+                <Pressable key={period} onPress={() => setUsagePeriod(period)}
+                  style={[styles.usagePeriodButton, usagePeriod === period && styles.usagePeriodButtonSelected]}>
+                  <Text style={[styles.usagePeriodText, usagePeriod === period && styles.usagePeriodTextSelected]}>
+                    {period === "day" ? "اليوم" : period === "week" ? "الأسبوع" : "الشهر"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            {powerUsageLoading ? <ActivityIndicator color={colors.brand.teal} /> : powerUsageError ? (
+              <Text style={styles.error}>{powerUsageError}</Text>
+            ) : groupedPowerUsage.length === 0 ? (
+              <Text style={styles.empty}>لا توجد دقائق مسجلة لمصادر الكهرباء في هذه الفترة.</Text>
+            ) : groupedPowerUsage.map((row) => (
+              <View key={row.id} style={styles.usageRow}>
+                <Text style={styles.queueName}>{row.name}</Text>
+                <Text style={styles.usageMinutes}>{row.minutes.toFixed(2)} دقيقة</Text>
+                <Text style={styles.historyMeta}>
+                  {row.sources.has("daily_survey") ? "يشمل استبيان عمل اليوم" : "من سجل التشغيل الآلي"}
+                </Text>
+              </View>
+            ))}
+          </Card>
 
           <Card style={styles.card}>
             <View style={styles.sectionHeader}>
@@ -468,6 +878,38 @@ const styles = StyleSheet.create({
   pumpChoiceName: { color: colors.text.primary, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.bold },
   pumpChoiceCode: { color: colors.text.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular },
   pumpChoiceTextSelected: { color: colors.text.inverse },
+  sourceSelector: { gap: spacing.xs },
+  sourceChoices: { flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.xs },
+  sourceChoice: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingVertical: spacing.sm, paddingHorizontal: spacing.md, backgroundColor: colors.background.surface },
+  sourceChoiceSelected: { backgroundColor: colors.brand.primary, borderColor: colors.brand.primary },
+  sourceChoiceText: { color: colors.text.primary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.medium },
+  sourceChoiceTextSelected: { color: colors.text.inverse },
+  surveyToggle: { gap: spacing.xs },
+  surveyBody: { gap: spacing.md },
+  surveyStep: { color: colors.brand.primary, fontSize: typography.fontSize.md, fontFamily: typography.fontFamily.bold, textAlign: "right", paddingTop: spacing.sm },
+  surveyInputsRow: { flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm },
+  surveyInputCell: { flex: 1, minWidth: 110, gap: 5 },
+  surveyTimeInput: { minHeight: 44, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.sm, color: colors.text.primary, backgroundColor: colors.background.surface, textAlign: "center" },
+  surveySourceRow: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  surveySourceName: { flex: 1, color: colors.text.primary, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.medium, textAlign: "right" },
+  surveyMinutesInput: { width: 100, minHeight: 42, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, color: colors.text.primary, textAlign: "center", backgroundColor: colors.background.surface },
+  surveyEntry: { gap: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
+  surveyEntryHeader: { flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm },
+  surveyReorder: { flexDirection: "row", gap: 4 },
+  reorderButton: { width: 32, height: 32, borderRadius: radius.sm, backgroundColor: colors.background.subtle, alignItems: "center", justifyContent: "center" },
+  reorderText: { color: colors.brand.primary, fontSize: typography.fontSize.md, fontFamily: typography.fontFamily.bold },
+  surveyEntryInfo: { flex: 1, alignItems: "flex-end", gap: 4 },
+  surveyActual: { color: colors.brand.primary, fontSize: typography.fontSize.md, fontFamily: typography.fontFamily.bold, minHeight: 44, textAlignVertical: "center" },
+  surveyActions: { flexDirection: "row-reverse", gap: spacing.sm },
+  surveySaveButton: { flex: 1, backgroundColor: colors.brand.teal, minHeight: 48, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
+  surveySubmitButton: { flex: 1, backgroundColor: "#27815D", minHeight: 48, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
+  usagePeriods: { flexDirection: "row-reverse", gap: spacing.xs },
+  usagePeriodButton: { flex: 1, padding: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, alignItems: "center" },
+  usagePeriodButtonSelected: { backgroundColor: colors.brand.primary, borderColor: colors.brand.primary },
+  usagePeriodText: { color: colors.text.primary, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.medium },
+  usagePeriodTextSelected: { color: colors.text.inverse },
+  usageRow: { gap: 4, paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.background.subtle, alignItems: "flex-end" },
+  usageMinutes: { color: colors.brand.primary, fontSize: typography.fontSize.lg, fontFamily: typography.fontFamily.bold, fontVariant: ["tabular-nums"] },
   activeCard: { backgroundColor: colors.brand.navy, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.md },
   activeHeader: { flexDirection: "row-reverse", justifyContent: "space-between", alignItems: "center", gap: spacing.sm },
   activeEyebrow: { color: "#B7DDE4", fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.medium },
