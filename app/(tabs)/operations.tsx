@@ -515,6 +515,7 @@ function OperationsScreenContent() {
           totalSeconds: Number(row.total_seconds ?? 0),
         })),
       ));
+      await loadDailyWorkReport(date);
     } catch (loadError) {
       console.error("daily work survey seed failed", loadError);
       setError("تعذر تحميل الجدول أو سجلات التشغيل لهذا التاريخ.");
