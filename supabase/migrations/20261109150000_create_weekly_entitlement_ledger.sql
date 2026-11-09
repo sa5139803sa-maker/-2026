@@ -1987,6 +1987,27 @@ BEGIN
   END LOOP;
 
   IF p_submit THEN
+    -- Provision every effective weekly cycle for the report date before
+    -- validating completeness. This keeps the report invariant independent
+    -- of whether today's daily queue was opened earlier.
+    FOR v_weekly_schedule IN
+      SELECT ws.*
+      FROM public.weekly_schedules ws
+      WHERE ws.organization_id = v_org_id
+        AND ws.pump_id = p_pump_id
+        AND ws.status = 'active'
+        AND v_work_date >= ws.effective_from
+        AND (ws.effective_to IS NULL OR v_work_date <= ws.effective_to)
+      ORDER BY ws.id
+    LOOP
+      v_cycle_start := v_work_date - (
+        (extract(isodow FROM v_work_date)::integer - v_weekly_schedule.week_starts_on + 7) % 7
+      );
+      PERFORM water_management_private.ensure_weekly_entitlement_cycle(
+        v_weekly_schedule.id, v_org_id, p_pump_id, v_cycle_start, v_user_id
+      );
+    END LOOP;
+
     IF EXISTS (
       SELECT 1
       FROM public.weekly_schedules ws
