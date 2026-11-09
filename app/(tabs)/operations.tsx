@@ -14,6 +14,7 @@ import { SectionTitle, StatusBadge } from "@/components/UI";
 import { Card, RoleGate } from "@/components/ui";
 import { colors, radius, spacing, typography } from "@/constants/theme";
 import { useAuth } from "@/lib/auth";
+import { allocateWholeMinutesByLargestRemainder } from "@/lib/power-usage-rules";
 import {
   pumpOperationsRepository,
   type OperationPump as Pump,
@@ -140,6 +141,7 @@ function OperationsScreenContent() {
   const [powerUsageLoading, setPowerUsageLoading] = useState(false);
   const [powerUsageError, setPowerUsageError] = useState<string | null>(null);
   const [surveyOpen, setSurveyOpen] = useState(false);
+  const [surveyStep, setSurveyStep] = useState<1 | 2>(1);
   const [surveyLoading, setSurveyLoading] = useState(false);
   const [surveySaving, setSurveySaving] = useState(false);
   const [surveyDate, setSurveyDate] = useState(localOperationDate());
@@ -459,6 +461,7 @@ function OperationsScreenContent() {
       return;
     }
     setSurveyLoading(true);
+    setSurveyStep(1);
     try {
       const [scheduleResult, operationsResult, usageResult] = await Promise.all([
         pumpOperationsRepository.listDailyScheduleEntries(organizationId, selectedPumpId, date),
@@ -478,14 +481,11 @@ function OperationsScreenContent() {
       }
       const usage = (usageResult.data ?? []) as PowerUsageRow[];
       const automatic = usage.filter((row) => row.data_source === "automatic");
-      setSourceMinutes(Object.fromEntries(
-        powerSources.map((source) => [
-          source.id,
-          String(Math.floor(
-            automatic.filter((row) => row.power_source_id === source.id)
-              .reduce((sum, row) => sum + Number(row.total_seconds ?? 0), 0) / 60,
-          ) || ""),
-        ]),
+      setSourceMinutes(allocateWholeMinutesByLargestRemainder(
+        automatic.map((row) => ({
+          sourceId: row.power_source_id,
+          totalSeconds: Number(row.total_seconds ?? 0),
+        })),
       ));
     } catch (loadError) {
       console.error("daily work survey seed failed", loadError);
@@ -555,6 +555,7 @@ function OperationsScreenContent() {
       setNotice(submit ? "تم اعتماد تقرير العمل اليومي." : "تم حفظ مسودة تقرير العمل اليومي.");
       if (submit) {
         setSurveyOpen(false);
+        setSurveyStep(1);
         await loadPowerUsage();
       }
     } catch (saveError) {
@@ -794,6 +795,7 @@ function OperationsScreenContent() {
           <Card style={styles.card}>
             <Pressable onPress={() => {
               if (!surveyOpen) {
+                setSurveyStep(1);
                 const day = localOperationDate();
                 setSurveyDate(day);
                 setWorkStartTime("");
@@ -812,101 +814,152 @@ function OperationsScreenContent() {
             {surveyOpen ? (
               surveyLoading ? <ActivityIndicator color={colors.brand.teal} /> : (
                 <View style={styles.surveyBody}>
-                  <Text style={styles.surveyStep}>الخطوة 1 — وقت العمل ومصادر الكهرباء</Text>
-                  <Text style={styles.fieldLabel}>تاريخ العمل (YYYY-MM-DD)</Text>
-                  <View style={styles.surveyInputsRow}>
-                    <TextInput value={surveyDate} onChangeText={setSurveyDate} style={[styles.durationInput, { flex: 1 }]}
-                      autoCapitalize="none" placeholder="2026-11-09" />
-                    <Pressable onPress={() => void reloadSurveySeed(surveyDate)} style={styles.reorderButton}>
-                      <Text style={styles.reorderText}>تحميل التاريخ</Text>
-                    </Pressable>
-                  </View>
-                  <View style={styles.surveyInputsRow}>
-                    <View style={styles.surveyInputCell}>
-                      <Text style={styles.fieldLabel}>بداية العمل</Text>
-                      <TextInput value={workStartTime} onChangeText={setWorkStartTime} style={styles.surveyTimeInput}
-                        placeholder="07:00" keyboardType="numbers-and-punctuation" />
-                    </View>
-                    <View style={styles.surveyInputCell}>
-                      <Text style={styles.fieldLabel}>نهاية العمل</Text>
-                      <TextInput value={workEndTime} onChangeText={setWorkEndTime} style={styles.surveyTimeInput}
-                        placeholder="15:00" keyboardType="numbers-and-punctuation" />
-                    </View>
-                    <View style={styles.surveyInputCell}>
-                      <Text style={styles.fieldLabel}>التوقفات بالدقائق</Text>
-                      <TextInput value={stoppageMinutes} onChangeText={setStoppageMinutes} style={styles.surveyTimeInput}
-                        keyboardType="number-pad" placeholder="0" />
-                    </View>
-                  </View>
-                  <Text style={styles.fieldLabel}>إجمالي دقائق كل مصدر (تشمل المسجل آليًا)</Text>
-                  {powerSources.map((source) => (
-                    <View key={source.id} style={styles.surveySourceRow}>
-                      <Text style={styles.surveySourceName}>{source.name}</Text>
-                      <TextInput value={sourceMinutes[source.id] ?? ""} onChangeText={(value) =>
-                        setSourceMinutes((current) => ({ ...current, [source.id]: value }))
-                      } style={styles.surveyMinutesInput} keyboardType="number-pad" placeholder="الدقائق" />
-                    </View>
-                  ))}
-                  <Text style={styles.surveyStep}>الخطوة 2 — تنفيذ الجدول اليومي</Text>
-                  <Text style={styles.empty}>المسجل آليًا لا تعِد إدخاله. أدخل فقط الدقائق التي نُفذت خارج التطبيق.</Text>
-                  {surveyEntries.length === 0 ? (
-                    <Text style={styles.empty}>لا توجد حصص أسبوعية في الجدول لهذا اليوم. يمكن حفظ تقرير المصادر، وسيظل الجدول فارغًا.</Text>
-                  ) : surveyEntries.map((entry, index) => {
-                    const subscriber = entry.subscribers;
-                    const automaticMinutes = Math.floor(
-                      surveyOperations.filter((operation) =>
-                        operation.status === "completed" && operation.subscriber_id === entry.subscriber_id,
-                      ).reduce((sum, operation) => sum + (operation.actual_seconds ?? 0), 0) / 60,
-                    );
-                    return (
-                      <View key={entry.id} style={styles.surveyEntry}>
-                        <View style={styles.surveyEntryHeader}>
-                          <View style={styles.surveyReorder}>
-                            <Pressable disabled={index === 0} onPress={() => setSurveyEntries((current) => {
-                              const next = [...current]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next;
-                            })} style={styles.reorderButton}><Text style={styles.reorderText}>↑</Text></Pressable>
-                            <Pressable disabled={index === surveyEntries.length - 1} onPress={() => setSurveyEntries((current) => {
-                              const next = [...current]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; return next;
-                            })} style={styles.reorderButton}><Text style={styles.reorderText}>↓</Text></Pressable>
-                          </View>
-                          <View style={styles.surveyEntryInfo}>
-                            <Text style={styles.queueName}>{subscriber?.full_name ?? "مشترك"}</Text>
-                            <Text style={styles.queueMeta}>المقرر {entry.planned_minutes} د · المسجل آليًا {automaticMinutes} د</Text>
-                          </View>
+                  {surveyStep === 1 ? (
+                    <>
+                      <Text style={styles.surveyStep}>الخطوة 1 من 2 — وقت العمل ومصادر الكهرباء</Text>
+                      <Text style={styles.fieldLabel}>تاريخ العمل (YYYY-MM-DD)</Text>
+                      <View style={styles.surveyInputsRow}>
+                        <TextInput value={surveyDate} onChangeText={setSurveyDate} style={[styles.durationInput, { flex: 1 }]}
+                          autoCapitalize="none" placeholder="2026-11-09" />
+                        <Pressable onPress={() => void reloadSurveySeed(surveyDate)} style={styles.reorderButton}>
+                          <Text style={styles.reorderText}>تحميل التاريخ</Text>
+                        </Pressable>
+                      </View>
+                      <View style={styles.surveyInputsRow}>
+                        <View style={styles.surveyInputCell}>
+                          <Text style={styles.fieldLabel}>بداية العمل</Text>
+                          <TextInput value={workStartTime} onChangeText={setWorkStartTime} style={styles.surveyTimeInput}
+                            placeholder="07:00" keyboardType="numbers-and-punctuation" />
                         </View>
-                        <View style={styles.surveyInputsRow}>
-                          <View style={styles.surveyInputCell}>
-                            <Text style={styles.fieldLabel}>المنفذ خارج التطبيق</Text>
-                            <TextInput value={surveyManualMinutes[entry.id] ?? ""} onChangeText={(value) =>
-                              setSurveyManualMinutes((current) => ({ ...current, [entry.id]: value }))
-                            } style={styles.surveyTimeInput} keyboardType="number-pad" placeholder="0" />
-                          </View>
-                          <View style={styles.surveyInputCell}>
-                            <Text style={styles.fieldLabel}>الإجمالي الفعلي</Text>
-                            <Text style={styles.surveyActual}>
-                              {automaticMinutes + (Number(surveyManualMinutes[entry.id] || 0) || 0)} دقيقة
-                            </Text>
-                          </View>
-                          <View style={styles.surveyInputCell}>
-                            <Text style={styles.fieldLabel}>دقائق إضافية خارج الحصة</Text>
-                            <TextInput value={surveyExtraMinutes[entry.id] ?? ""} onChangeText={(value) =>
-                              setSurveyExtraMinutes((current) => ({ ...current, [entry.id]: value }))
-                            } style={styles.surveyTimeInput} keyboardType="number-pad" placeholder="0" />
-                          </View>
+                        <View style={styles.surveyInputCell}>
+                          <Text style={styles.fieldLabel}>نهاية العمل</Text>
+                          <TextInput value={workEndTime} onChangeText={setWorkEndTime} style={styles.surveyTimeInput}
+                            placeholder="15:00" keyboardType="numbers-and-punctuation" />
+                        </View>
+                        <View style={styles.surveyInputCell}>
+                          <Text style={styles.fieldLabel}>التوقفات بالدقائق</Text>
+                          <TextInput value={stoppageMinutes} onChangeText={setStoppageMinutes} style={styles.surveyTimeInput}
+                            keyboardType="number-pad" placeholder="0" />
                         </View>
                       </View>
-                    );
-                  })}
-                  <View style={styles.surveyActions}>
-                    <Pressable disabled={surveySaving || Boolean(activeOperation)} onPress={() => void saveDailySurvey(false)}
-                      style={[styles.surveySaveButton, (surveySaving || Boolean(activeOperation)) && styles.disabled]}>
-                      <Text style={styles.actionText}>حفظ مسودة</Text>
-                    </Pressable>
-                    <Pressable disabled={surveySaving || Boolean(activeOperation)} onPress={() => void saveDailySurvey(true)}
-                      style={[styles.surveySubmitButton, (surveySaving || Boolean(activeOperation)) && styles.disabled]}>
-                      <Text style={styles.actionText}>إرسال التقرير واعتماده</Text>
-                    </Pressable>
-                  </View>
+                      <Text style={styles.fieldLabel}>إجمالي دقائق كل مصدر كهرباء (يشمل التشغيل المسجل آليًا)</Text>
+                      {powerSources.map((source) => (
+                        <View key={source.id} style={styles.surveySourceRow}>
+                          <Text style={styles.surveySourceName}>{source.name}</Text>
+                          <TextInput value={sourceMinutes[source.id] ?? ""} onChangeText={(value) =>
+                            setSourceMinutes((current) => ({ ...current, [source.id]: value }))
+                          } style={styles.surveyMinutesInput} keyboardType="number-pad" placeholder="الدقائق" />
+                        </View>
+                      ))}
+                      <Text style={styles.historyMeta}>
+                        يجب أن يساوي مجموع دقائق المصادر مدة العمل بعد خصم التوقفات. عُبئت الدقائق المسجلة في التطبيق تلقائيًا ويمكنك تصحيحها.
+                      </Text>
+                      <View style={styles.surveyActions}>
+                        <Pressable
+                          disabled={surveyLoading || Boolean(activeOperation)}
+                          onPress={() => {
+                            try {
+                              const startIso = hebrewLocalToIso(surveyDate, workStartTime);
+                              const endIso = hebrewLocalToIso(surveyDate, workEndTime);
+                              const elapsedMinutes = Math.floor((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000);
+                              const stops = Number(stoppageMinutes);
+                              if (elapsedMinutes <= 0 || !Number.isInteger(stops) || stops < 0 || stops > elapsedMinutes) {
+                                throw new Error("تحقق من وقت البداية والنهاية ومجموع التوقفات.");
+                              }
+                              const invalidSourceMinutes = Object.values(sourceMinutes).some((value) =>
+                                value.trim() !== "" && (!Number.isInteger(Number(value)) || Number(value) < 0),
+                              );
+                              if (invalidSourceMinutes) {
+                                throw new Error("أدخل أعدادًا صحيحة وغير سالبة لدقائق مصادر الكهرباء.");
+                              }
+                              const enteredSourceMinutes = Object.values(sourceMinutes)
+                                .reduce((sum, value) => sum + (value.trim() === "" ? 0 : Number(value)), 0);
+                              const expectedMinutes = elapsedMinutes - stops;
+                              if (enteredSourceMinutes !== expectedMinutes) {
+                                throw new Error(`مجموع دقائق المصادر ${enteredSourceMinutes}، بينما مدة العمل بعد التوقفات ${expectedMinutes} دقيقة.`);
+                              }
+                              setError(null);
+                              setSurveyStep(2);
+                            } catch (validationError) {
+                              setError(validationError instanceof Error ? validationError.message : "تحقق من بيانات وقت العمل والطاقة.");
+                            }
+                          }}
+                          style={[styles.surveySubmitButton, (surveyLoading || Boolean(activeOperation)) && styles.disabled]}
+                        >
+                          <Text style={styles.actionText}>التالي: جدول تعبئة المشتركين</Text>
+                        </Pressable>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.surveyStep}>الخطوة 2 من 2 — مراجعة وتنفيذ جدول اليوم</Text>
+                      <Text style={styles.historyMeta}>
+                        {surveyDate} · {workStartTime} إلى {workEndTime} · التوقفات {stoppageMinutes} دقيقة
+                      </Text>
+                      <Pressable onPress={() => setSurveyStep(1)} style={styles.refresh}>
+                        <Text style={styles.refreshText}>العودة لتعديل الوقت ومصادر الكهرباء</Text>
+                      </Pressable>
+                      <Text style={styles.empty}>الجدول الافتراضي لهذا اليوم. يمكنك تغيير الترتيب. لا تُعد إدخال الدقائق المسجلة آليًا؛ أدخل فقط ما نُفذ خارج التطبيق، مع السماح بالتعبئة الجزئية.</Text>
+                      {surveyEntries.length === 0 ? (
+                        <Text style={styles.empty}>لا توجد حصص أسبوعية في الجدول لهذا اليوم. يمكن حفظ تقرير المصادر، وسيظل الجدول فارغًا.</Text>
+                      ) : surveyEntries.map((entry, index) => {
+                        const subscriber = entry.subscribers;
+                        const automaticMinutes = Math.floor(
+                          surveyOperations.filter((operation) =>
+                            operation.status === "completed" && operation.subscriber_id === entry.subscriber_id,
+                          ).reduce((sum, operation) => sum + (operation.actual_seconds ?? 0), 0) / 60,
+                        );
+                        return (
+                          <View key={entry.id} style={styles.surveyEntry}>
+                            <View style={styles.surveyEntryHeader}>
+                              <View style={styles.surveyReorder}>
+                                <Pressable disabled={index === 0} onPress={() => setSurveyEntries((current) => {
+                                  const next = [...current]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next;
+                                })} style={styles.reorderButton}><Text style={styles.reorderText}>↑</Text></Pressable>
+                                <Pressable disabled={index === surveyEntries.length - 1} onPress={() => setSurveyEntries((current) => {
+                                  const next = [...current]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; return next;
+                                })} style={styles.reorderButton}><Text style={styles.reorderText}>↓</Text></Pressable>
+                              </View>
+                              <View style={styles.surveyEntryInfo}>
+                                <Text style={styles.queueName}>{subscriber?.full_name ?? "مشترك"}</Text>
+                                <Text style={styles.queueMeta}>المقرر {entry.planned_minutes} د · المسجل آليًا {automaticMinutes} د</Text>
+                              </View>
+                            </View>
+                            <View style={styles.surveyInputsRow}>
+                              <View style={styles.surveyInputCell}>
+                                <Text style={styles.fieldLabel}>المنفذ خارج التطبيق</Text>
+                                <TextInput value={surveyManualMinutes[entry.id] ?? ""} onChangeText={(value) =>
+                                  setSurveyManualMinutes((current) => ({ ...current, [entry.id]: value }))
+                                } style={styles.surveyTimeInput} keyboardType="number-pad" placeholder="0" />
+                              </View>
+                              <View style={styles.surveyInputCell}>
+                                <Text style={styles.fieldLabel}>الإجمالي الفعلي</Text>
+                                <Text style={styles.surveyActual}>
+                                  {automaticMinutes + (Number(surveyManualMinutes[entry.id] || 0) || 0)} دقيقة
+                                </Text>
+                              </View>
+                              <View style={styles.surveyInputCell}>
+                                <Text style={styles.fieldLabel}>دقائق إضافية خارج الحصة</Text>
+                                <TextInput value={surveyExtraMinutes[entry.id] ?? ""} onChangeText={(value) =>
+                                  setSurveyExtraMinutes((current) => ({ ...current, [entry.id]: value }))
+                                } style={styles.surveyTimeInput} keyboardType="number-pad" placeholder="0" />
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+                      <View style={styles.surveyActions}>
+                        <Pressable disabled={surveySaving || Boolean(activeOperation)} onPress={() => void saveDailySurvey(false)}
+                          style={[styles.surveySaveButton, (surveySaving || Boolean(activeOperation)) && styles.disabled]}>
+                          <Text style={styles.actionText}>حفظ مسودة</Text>
+                        </Pressable>
+                        <Pressable disabled={surveySaving || Boolean(activeOperation)} onPress={() => void saveDailySurvey(true)}
+                          style={[styles.surveySubmitButton, (surveySaving || Boolean(activeOperation)) && styles.disabled]}>
+                          <Text style={styles.actionText}>إرسال التقرير واعتماده</Text>
+                        </Pressable>
+                      </View>
+                    </>
+                  )}
                 </View>
               )
             ) : null}
