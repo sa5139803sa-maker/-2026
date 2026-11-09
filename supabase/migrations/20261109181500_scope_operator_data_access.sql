@@ -121,7 +121,13 @@ BEGIN
     AND s.organization_id = NEW.organization_id
     AND s.pump_id = NEW.pump_id;
 
-  IF NOT FOUND OR NEW.subscriber_operator_id IS NULL THEN
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Operation subscriber does not belong to the same organization and pump'
+      USING ERRCODE = '23503';
+  END IF;
+
+  IF NEW.subscriber_operator_id IS NULL
+     AND water_management_private.current_user_role() = 'operator'::public.app_role THEN
     RAISE EXCEPTION 'Registered operation requires an assigned subscriber operator'
       USING ERRCODE = '23503';
   END IF;
