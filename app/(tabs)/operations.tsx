@@ -151,6 +151,7 @@ function OperationsScreenContent() {
   const [reportOperators, setReportOperators] = useState<{ id: string; display_name: string }[]>([]);
   const [selectedReportOperatorId, setSelectedReportOperatorId] = useState("");
   const [sharedEnergySubmitted, setSharedEnergySubmitted] = useState(false);
+  const [sharedEnergyReadOnly, setSharedEnergyReadOnly] = useState(false);
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [operations, setOperations] = useState<Operation[]>([]);
   const [dailyQueue, setDailyQueue] = useState<DailyQueue | null>(null);
@@ -989,6 +990,7 @@ function OperationsScreenContent() {
         }));
       const entries = [...scheduledEntries, ...reassignedEntries];
       const energyReport = energyResult.data as {
+        created_by: string;
         work_started_at: string; work_ended_at: string; stoppage_minutes: number;
         status: "draft" | "submitted";
         sourceTotals: { power_source_id: string; minutes: number }[];
@@ -1005,7 +1007,14 @@ function OperationsScreenContent() {
         .filter((item) => item.weekly_entitlement_allocation_id && allocationIds.has(item.weekly_entitlement_allocation_id)));
       setSurveyManualMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
       setSurveyExtraMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
-      setSharedEnergySubmitted(energyReport?.status === "submitted");
+      const energyIsSubmitted = energyReport?.status === "submitted";
+      const energyDraftBelongsToAnotherOperator = Boolean(
+        profile?.role === "operator"
+        && energyReport
+        && energyReport.created_by !== profile.id,
+      );
+      setSharedEnergySubmitted(energyIsSubmitted);
+      setSharedEnergyReadOnly(energyIsSubmitted || energyDraftBelongsToAnotherOperator);
 
       if (energyReport) {
         setWorkStartTime(localTimeInput(energyReport.work_started_at));
@@ -1098,7 +1107,7 @@ function OperationsScreenContent() {
         console.error("daily work report save failed", saveError);
         if (saveError.code === "23514") throw new Error("بيانات التقرير لا تطابق الجدول أو مجموع دقائق الطاقة.");
         if (saveError.code === "42501") throw new Error("ليس لديك صلاحية إرسال تقرير هذا الغطاس.");
-        if (saveError.code === "55000") throw new Error("يوجد تشغيل لم يُنهَ بعد، أو أن التقرير سبق اعتماده.");
+        if (saveError.code === "55000") throw new Error("يوجد تشغيل لم يُنهَ بعد، أو أن الطاقة المشتركة معتمدة أو محفوظة كمسودة بواسطة مشغّل آخر بقيم مختلفة.");
         throw new Error("تعذر حفظ تقرير العمل اليومي. تحقق من الاتصال والبيانات.");
       }
       setNotice(submit ? "تم اعتماد تقرير العمل اليومي." : "تم حفظ مسودة تقرير العمل اليومي.");
@@ -1809,7 +1818,7 @@ function OperationsScreenContent() {
                         <View style={styles.surveyInputCell}>
                           <Text style={styles.fieldLabel}>بداية العمل</Text>
                           <TextInput value={workStartTime} onChangeText={setWorkStartTime} style={styles.surveyTimeInput}
-                            editable={!sharedEnergySubmitted} placeholder="07:00" keyboardType="numbers-and-punctuation" />
+                            editable={!sharedEnergyReadOnly} placeholder="07:00" keyboardType="numbers-and-punctuation" />
                         </View>
                         <View style={styles.surveyInputCell}>
                           <Text style={styles.fieldLabel}>نهاية العمل</Text>
@@ -1836,8 +1845,10 @@ function OperationsScreenContent() {
                       ))}
                       <Text style={styles.historyMeta}>
                         {sharedEnergySubmitted
-                          ? "تم اعتماد توزيع طاقة الغطاس لهذا اليوم، ويُستخدم نفسه في تقارير جميع المشغّلين ولا يمكن تغييره من هذه الشاشة."
-                          : "توزيع طاقة واحد مشترك للغطاس في هذا اليوم. يجب أن يساوي مجموع دقائق المصادر مدة العمل بعد خصم التوقفات."}
+                          ? "تم اعتماد توزيع طاقة الغطاس لهذا اليوم، ويُستخدم نفسه في تقارير جميع المشغّلين ولا يمكن تغييره."
+                          : sharedEnergyReadOnly
+                            ? "هذه مسودة طاقة مشتركة أنشأها مشغّل آخر. يمكنك استخدام الأرقام نفسها في تقريرك، ويستطيع منشئ المسودة أو المدير تعديلها."
+                            : "توزيع طاقة واحد مشترك للغطاس في هذا اليوم. يجب أن يساوي مجموع دقائق المصادر مدة العمل بعد خصم التوقفات."}
                       </Text>
                       <View style={styles.surveyActions}>
                         <Pressable
