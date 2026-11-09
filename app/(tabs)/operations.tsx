@@ -682,11 +682,13 @@ function OperationsScreenContent() {
       setError(friendlyError(startError));
     } else {
       stopHandoverAlert(dailyQueue.auto_advance_token);
-      setNotice(!notificationsGranted
-        ? "بدأت التعبئة، لكن إذن إشعارات Android غير مفعّل؛ فعّله لإظهار العداد المستمر."
-        : !persistentCounterStarted && Platform.OS === "android"
-          ? "بدأت التعبئة، لكن تعذر تشغيل عداد الإشعارات المستمر. حاول تحديث الشاشة أو تحقق من إعدادات Android."
-          : `بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي، وسيظهر عداد الوقت المتبقي في إشعارات Android.`);
+      setNotice(Platform.OS !== "android"
+        ? `بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي.`
+        : !notificationsGranted
+          ? "بدأت التعبئة، لكن إذن إشعارات Android غير مفعّل؛ فعّله لإظهار العداد المستمر."
+          : !persistentCounterStarted
+            ? "بدأت التعبئة، لكن تعذر تشغيل عداد الإشعارات المستمر. حاول تحديث الشاشة أو تحقق من إعدادات Android."
+            : `بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي، وسيظهر عداد الوقت المتبقي في إشعارات Android.`);
       await loadPumpData();
     }
     setBusy(false);
