@@ -290,9 +290,10 @@ function WeeklyScheduleScreenContent() {
 
   const startNewVersion = () => {
     let nextStart = nextCycleStart(dateInHebron(), weekStartsOn);
-    if (selectedVersion?.effective_from) {
-      const afterSelectedVersion = shiftDate(selectedVersion.effective_from, 7);
-      if (nextStart < afterSelectedVersion) nextStart = afterSelectedVersion;
+    const baselineEffectiveFrom = activeVersion?.effective_from ?? selectedVersion?.effective_from;
+    if (baselineEffectiveFrom) {
+      const afterActiveVersion = shiftDate(baselineEffectiveFrom, 7);
+      if (nextStart < afterActiveVersion) nextStart = afterActiveVersion;
     }
     setSelectedVersion(null);
     setSelectedScheduleId(null);
