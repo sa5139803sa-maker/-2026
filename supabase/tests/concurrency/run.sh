@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "\${DATABASE_URL:?DATABASE_URL is required}"
+: "${DATABASE_URL:?DATABASE_URL is required}"
 
 readonly ORG_ID="26000000-0000-4000-8000-000000000001"
 readonly PUMP_ID="26000000-0000-4000-8000-000000000002"
