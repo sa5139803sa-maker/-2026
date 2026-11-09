@@ -233,7 +233,9 @@ function OperationsScreenContent() {
     setBusy(false);
   };
 
-  const runAction = async (action: "pause_pump_operation" | "resume_pump_operation" | "complete_pump_operation") => {
+  const runAction = useCallback(async (
+    action: "pause_pump_operation" | "resume_pump_operation" | "complete_pump_operation",
+  ) => {
     if (!activeOperation || busy) return;
     setBusy(true);
     setError(null);
@@ -246,13 +248,27 @@ function OperationsScreenContent() {
       const messages = {
         pause_pump_operation: "تم إيقاف المؤقت مؤقتًا.",
         resume_pump_operation: "تم استئناف التشغيل.",
-        complete_pump_operation: "تم إنهاء التعبئة وحفظ مدتها الفعلية.",
+        complete_pump_operation: "انتهت مدة التعبئة، وتم حفظ زمنها الفعلي.",
       };
       setNotice(messages[action]);
       await loadPumpData();
     }
     setBusy(false);
-  };
+  }, [activeOperation, busy, loadPumpData]);
+
+  const autoCompletedOperationId = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !activeOperation ||
+      activeOperation.status !== "running" ||
+      remainingSeconds > 0 ||
+      busy ||
+      autoCompletedOperationId.current === activeOperation.id
+    ) return;
+
+    autoCompletedOperationId.current = activeOperation.id;
+    void runAction("complete_pump_operation");
+  }, [activeOperation, remainingSeconds, busy, runAction]);
 
   const activeStatus = activeOperation?.status === "paused" ? "متوقف مؤقتًا" : "قيد التشغيل";
 
