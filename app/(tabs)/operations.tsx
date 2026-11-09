@@ -1823,12 +1823,12 @@ function OperationsScreenContent() {
                         <View style={styles.surveyInputCell}>
                           <Text style={styles.fieldLabel}>نهاية العمل</Text>
                           <TextInput value={workEndTime} onChangeText={setWorkEndTime} style={styles.surveyTimeInput}
-                            editable={!sharedEnergySubmitted} placeholder="15:00" keyboardType="numbers-and-punctuation" />
+                            editable={!sharedEnergyReadOnly} placeholder="15:00" keyboardType="numbers-and-punctuation" />
                         </View>
                         <View style={styles.surveyInputCell}>
                           <Text style={styles.fieldLabel}>التوقفات بالدقائق</Text>
                           <TextInput value={stoppageMinutes} onChangeText={setStoppageMinutes} style={styles.surveyTimeInput}
-                            editable={!sharedEnergySubmitted} keyboardType="number-pad" placeholder="0" />
+                            editable={!sharedEnergyReadOnly} keyboardType="number-pad" placeholder="0" />
                         </View>
                       </View>
                       <Text style={styles.fieldLabel}>إجمالي دقائق كل مصدر كهرباء (يشمل التشغيل المسجل آليًا)</Text>
@@ -1839,7 +1839,7 @@ function OperationsScreenContent() {
                           </Text>
                           <TextInput value={sourceMinutes[source.id] ?? ""} onChangeText={(value) =>
                             setSourceMinutes((current) => ({ ...current, [source.id]: value }))
-                          } style={styles.surveyMinutesInput} editable={!sharedEnergySubmitted}
+                          } style={styles.surveyMinutesInput} editable={!sharedEnergyReadOnly}
                             keyboardType="number-pad" placeholder="الدقائق" />
                         </View>
                       ))}
