@@ -56,6 +56,11 @@ export async function stopPersistentPumpTimerNotification() {
 
 export async function pausePersistentPumpTimerNotification(operation: PumpOperation) {
   if (Platform.OS !== "android") return;
+  const permission = await Notifications.getPermissionsAsync();
+  if (!permission.granted) {
+    await stopPersistentPumpTimerNotification();
+    return;
+  }
   const pausedAt = Date.now();
   const snapshot = getPersistentTimerSnapshot({
     ...operation,
@@ -72,6 +77,11 @@ export async function pausePersistentPumpTimerNotification(operation: PumpOperat
 
 export async function resumePersistentPumpTimerNotification(operation: PumpOperation) {
   if (Platform.OS !== "android") return;
+  const permission = await Notifications.getPermissionsAsync();
+  if (!permission.granted) {
+    await stopPersistentPumpTimerNotification();
+    return;
+  }
   const resumedAt = Date.now();
   const pausedAt = operation.paused_at ? Date.parse(operation.paused_at) : Number.NaN;
   if (!Number.isFinite(pausedAt) || pausedAt > resumedAt) {
