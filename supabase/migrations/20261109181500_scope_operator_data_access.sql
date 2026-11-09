@@ -960,3 +960,100 @@ REVOKE ALL ON FUNCTION public.get_weekly_entitlement_transfer_options(uuid, date
   FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_weekly_entitlement_transfer_options(uuid, date)
   TO authenticated;
+
+
+-- Cancelling an auto-advance changes the handoff to a specific operator's
+-- waiting turn. Only the manager or that target item's owner may cancel it.
+CREATE OR REPLACE FUNCTION water_management_private.cancel_daily_queue_auto_advance_internal(
+  p_queue_id uuid,
+  p_auto_advance_token uuid,
+  p_reason text DEFAULT NULL
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $cancel_daily_queue_auto_advance_scoped$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_organization_id uuid := water_management_private.current_user_organization_id();
+  v_role public.app_role := water_management_private.current_user_role();
+  v_queue public.daily_queues%ROWTYPE;
+  v_target public.queue_items%ROWTYPE;
+  v_now timestamptz := clock_timestamp();
+  v_reason text := NULLIF(btrim(COALESCE(p_reason, '')), '');
+BEGIN
+  IF v_user_id IS NULL OR v_organization_id IS NULL
+     OR v_role NOT IN ('manager'::public.app_role, 'operator'::public.app_role) THEN
+    RAISE EXCEPTION 'Not authorized to cancel queue auto-advance' USING ERRCODE = '42501';
+  END IF;
+  IF v_reason IS NOT NULL AND char_length(v_reason) > 240 THEN
+    RAISE EXCEPTION 'Cancellation reason must not exceed 240 characters' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT q.* INTO v_queue
+  FROM public.daily_queues q
+  WHERE q.id = p_queue_id
+    AND q.organization_id = v_organization_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Daily queue not found or not accessible' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_role = 'operator'::public.app_role AND NOT EXISTS (
+    SELECT 1 FROM public.pump_assignments pa
+    WHERE pa.organization_id = v_organization_id
+      AND pa.pump_id = v_queue.pump_id
+      AND pa.user_id = v_user_id
+      AND pa.assignment_role = 'operator'::public.app_role
+  ) THEN
+    RAISE EXCEPTION 'Operator is not assigned to this pump' USING ERRCODE = '42501';
+  END IF;
+
+  IF p_auto_advance_token IS NULL
+     OR v_queue.auto_advance_token IS DISTINCT FROM p_auto_advance_token
+     OR v_queue.auto_advance_queue_item_id IS NULL THEN
+    RAISE EXCEPTION 'Auto-advance was already consumed or replaced' USING ERRCODE = 'P0002';
+  END IF;
+
+  SELECT qi.* INTO v_target
+  FROM public.queue_items qi
+  WHERE qi.id = v_queue.auto_advance_queue_item_id
+    AND qi.daily_queue_id = p_queue_id
+    AND qi.organization_id = v_organization_id
+    AND qi.pump_id = v_queue.pump_id
+  FOR UPDATE;
+  IF NOT FOUND OR v_target.status <> 'queued' THEN
+    RAISE EXCEPTION 'Auto-advance target is no longer waiting' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_role = 'operator'::public.app_role
+     AND v_target.assigned_operator_id IS DISTINCT FROM v_user_id THEN
+    RAISE EXCEPTION 'Only the target operator or manager may cancel this handoff'
+      USING ERRCODE = '42501';
+  END IF;
+
+  UPDATE public.daily_queues
+  SET auto_advance_queue_item_id = NULL,
+      auto_advance_at = NULL,
+      auto_advance_token = NULL,
+      auto_advance_cancelled_at = v_now,
+      queue_version = queue_version + 1,
+      updated_at = v_now
+  WHERE id = p_queue_id;
+
+  PERFORM water_management_private.append_queue_item_event(
+    p_queue_id, v_queue.auto_advance_queue_item_id, v_organization_id, v_queue.pump_id,
+    'auto_advance_cancelled', v_user_id, v_reason,
+    jsonb_build_object('cancelled_at', v_now, 'previous_token_consumed', true)
+  );
+
+  RETURN true;
+END;
+$cancel_daily_queue_auto_advance_scoped$;
+ALTER FUNCTION water_management_private.cancel_daily_queue_auto_advance_internal(uuid, uuid, text)
+  OWNER TO postgres;
+REVOKE ALL ON FUNCTION water_management_private.cancel_daily_queue_auto_advance_internal(uuid, uuid, text)
+  FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION water_management_private.cancel_daily_queue_auto_advance_internal(uuid, uuid, text)
+  TO authenticated;
