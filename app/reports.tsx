@@ -111,7 +111,7 @@ export default function ReportsScreen() {
       }
       let result;
       if (profile?.role === "manager") {
-        result = await pumpOperationsRepository.listPumpOperators(organizationId, selectedPumpId);
+        result = await pumpOperationsRepository.listPumpOperators(organizationId, selectedPumpId, workDate);
       } else if (profile?.role === "supervisor") {
         result = await pumpOperationsRepository.listDailyReportOperators(organizationId, selectedPumpId, workDate);
       } else {
