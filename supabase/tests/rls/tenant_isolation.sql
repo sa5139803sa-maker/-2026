@@ -422,6 +422,16 @@ SELECT public.assign_subscriber_operator(
 );
 RESET ROLE;
 
+-- Establish the organization A subscriber owner before the RLS read matrix.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+SELECT public.assign_subscriber_operator(
+  '30000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000002',
+  'تهيئة مسؤول المشترك في اختبار المؤسسة أ'
+);
+RESET ROLE;
+
 INSERT INTO public.branches (id, organization_id, pump_id, name, code, sort_order) VALUES
   ('40000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000001', 'تفرع أ 1', 'A-1', 0),
   ('40000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000002', 'تفرع أ 2', 'A-2', 0),
@@ -2199,11 +2209,11 @@ BEGIN
     'تعيين المشغّل المسؤول الأول'
   );
 
-  IF (v_result->>'changed')::boolean IS DISTINCT FROM true
+  IF (v_result->>'changed')::boolean IS DISTINCT FROM false
      OR (SELECT operator_id FROM public.subscribers
          WHERE id = '30000000-0000-4000-8000-000000000001')
         <> '10000000-0000-4000-8000-000000000002'::uuid THEN
-    RAISE EXCEPTION 'Manager could not assign the subscriber to the first operator';
+    RAISE EXCEPTION 'Repeated assignment to the current operator must be idempotent';
   END IF;
 END;
 $subscriber_operator_initial_assignment$;
