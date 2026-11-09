@@ -1150,7 +1150,10 @@ ALTER FUNCTION water_management_private.save_daily_work_report_internal(
 ) OWNER TO postgres;
 REVOKE ALL ON FUNCTION water_management_private.save_daily_work_report_internal(
   uuid, uuid, timestamptz, timestamptz, integer, jsonb, jsonb, boolean, uuid
-) FROM PUBLIC, anon, authenticated, service_role;
+) FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION water_management_private.save_daily_work_report_internal(
+  uuid, uuid, timestamptz, timestamptz, integer, jsonb, jsonb, boolean, uuid
+) TO authenticated;
 
 -- Close the obsolete private eight-argument implementation. The public
 -- compatibility overload below is operator-self only and delegates to v2.
@@ -1499,7 +1502,9 @@ $get_daily_work_report_allocations_internal$;
 ALTER FUNCTION water_management_private.get_daily_work_report_allocations_internal(uuid, date)
   OWNER TO postgres;
 REVOKE ALL ON FUNCTION water_management_private.get_daily_work_report_allocations_internal(uuid, date)
-  FROM PUBLIC, anon, authenticated, service_role;
+  FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION water_management_private.get_daily_work_report_allocations_internal(uuid, date)
+  TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.get_daily_work_report_allocations(
   p_pump_id uuid,
