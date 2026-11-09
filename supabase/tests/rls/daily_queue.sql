@@ -297,6 +297,9 @@ BEGIN
   FROM public.daily_queues
   WHERE id = v_queue_id;
 
+  -- Global queue reordering is a manager action; switch only the JWT identity
+  -- for these manager operations, then restore the operator for the fill lifecycle.
+  PERFORM set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
   BEGIN
     PERFORM public.reorder_daily_queue(
       v_queue_id,
@@ -307,22 +310,26 @@ BEGIN
   EXCEPTION WHEN invalid_parameter_value THEN
     v_rejected := true;
   END;
+  PERFORM set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
   IF NOT v_rejected THEN
     RAISE EXCEPTION 'Consecutive items from the same branch must require an override reason';
   END IF;
 
+  PERFORM set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
   v_result := public.reorder_daily_queue(
     v_queue_id,
     v_version,
     ARRAY[v_weekly_item_id, v_additional_item_id, v_guest_item_id]::uuid[],
     'الحفاظ على ترتيب تعبئة خاص بطلب المشترك'
   );
+  PERFORM set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
   IF (v_result->>'branch_conflict_count')::integer <> 1
      OR (v_result->>'queue_version')::integer <> v_version + 1 THEN
     RAISE EXCEPTION 'Branch override or optimistic queue version was not recorded';
   END IF;
 
   v_rejected := false;
+  PERFORM set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
   BEGIN
     PERFORM public.reorder_daily_queue(
       v_queue_id,
@@ -333,6 +340,7 @@ BEGIN
   EXCEPTION WHEN serialization_failure THEN
     v_rejected := true;
   END;
+  PERFORM set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
   IF NOT v_rejected THEN
     RAISE EXCEPTION 'Stale queue version was accepted';
   END IF;
@@ -392,12 +400,14 @@ BEGIN
   FROM public.daily_queues
   WHERE id = v_queue_id;
 
+  PERFORM set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
   v_result := public.reorder_daily_queue(
     v_queue_id,
     v_version,
     ARRAY[v_additional_item_id, v_guest_item_id]::uuid[],
     NULL
   );
+  PERFORM set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
   SELECT auto_advance_queue_item_id, auto_advance_token
   INTO v_next_item_id, v_token
   FROM public.daily_queues
