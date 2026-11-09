@@ -810,7 +810,7 @@ BEGIN
     'مسودة اختبار مدير',
     DATE '2026-11-02',
     DATE '2026-12-31',
-    1,
+    1::smallint,
     jsonb_build_array(jsonb_build_object(
       'subscriber_id', '30000000-0000-4000-8000-000000000001',
       'weekly_quota_minutes', 35,
@@ -851,7 +851,7 @@ BEGIN
     'مسودة اختبار مدير معدلة',
     DATE '2026-11-02',
     DATE '2027-01-31',
-    1,
+    1::smallint,
     jsonb_build_array(jsonb_build_object(
       'subscriber_id', '30000000-0000-4000-8000-000000000001',
       'weekly_quota_minutes', 35,
