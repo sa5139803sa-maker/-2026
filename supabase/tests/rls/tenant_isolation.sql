@@ -850,6 +850,134 @@ BEGIN
 END;
 $manager_weekly_schedule_write$;
 
+DO $weekly_schedule_activation$
+DECLARE
+  v_today date := (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date;
+  v_cycle_start date;
+  v_next_cycle_start date;
+  v_current_schedule_id uuid;
+  v_future_schedule_id uuid;
+  v_previous_quota integer;
+  v_invalid_rejected boolean := false;
+  v_rejected boolean := false;
+BEGIN
+  v_cycle_start := v_today - (extract(isodow FROM v_today)::integer - 1);
+  v_next_cycle_start := v_cycle_start + 7;
+  v_previous_quota := (SELECT weekly_quota_minutes FROM public.subscribers
+    WHERE id='30000000-0000-4000-8000-000000000002');
+
+  BEGIN
+    PERFORM public.save_weekly_schedule_draft(
+      NULL,
+      '20000000-0000-4000-8000-000000000002',
+      'جدول غير متوازن',
+      v_cycle_start,
+      NULL,
+      1,
+      jsonb_build_array(jsonb_build_object(
+        'subscriber_id','30000000-0000-4000-8000-000000000002',
+        'weekly_quota_minutes',55,
+        'default_weekday',3,
+        'allocations',jsonb_build_array(
+          jsonb_build_object('weekday',3,'planned_minutes',54)
+        )
+      ))
+    );
+  EXCEPTION WHEN invalid_parameter_value THEN
+    v_invalid_rejected := true;
+  END;
+  IF NOT v_invalid_rejected THEN
+    RAISE EXCEPTION 'A draft with a weekday allocation sum different from the weekly quota was accepted';
+  END IF;
+
+  v_current_schedule_id := public.save_weekly_schedule_draft(
+    NULL,
+    '20000000-0000-4000-8000-000000000002',
+    'جدول مشترك ب 2 الحالي',
+    v_cycle_start,
+    NULL,
+    1,
+    jsonb_build_array(jsonb_build_object(
+      'subscriber_id','30000000-0000-4000-8000-000000000002',
+      'weekly_quota_minutes',55,
+      'default_weekday',3,
+      'allocations',jsonb_build_array(
+        jsonb_build_object('weekday',3,'planned_minutes',25),
+        jsonb_build_object('weekday',5,'planned_minutes',30)
+      )
+    ))
+  );
+
+  IF (SELECT weekly_quota_minutes FROM public.subscribers
+      WHERE id='30000000-0000-4000-8000-000000000002') IS DISTINCT FROM v_previous_quota THEN
+    RAISE EXCEPTION 'A saved draft changed the subscriber's current quota before activation';
+  END IF;
+
+  PERFORM public.activate_weekly_schedule(v_current_schedule_id);
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.weekly_schedules
+    WHERE id=v_current_schedule_id AND status='active'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.subscribers
+    WHERE id='30000000-0000-4000-8000-000000000002'
+      AND weekly_quota_minutes=55 AND default_weekday=3
+  ) THEN
+    RAISE EXCEPTION 'Activating the current-cycle schedule did not set the in-force subscriber quota';
+  END IF;
+
+  v_future_schedule_id := public.save_weekly_schedule_draft(
+    NULL,
+    '20000000-0000-4000-8000-000000000002',
+    'جدول مشترك ب 2 القادم',
+    v_next_cycle_start,
+    NULL,
+    1,
+    jsonb_build_array(jsonb_build_object(
+      'subscriber_id','30000000-0000-4000-8000-000000000002',
+      'weekly_quota_minutes',70,
+      'default_weekday',2,
+      'allocations',jsonb_build_array(
+        jsonb_build_object('weekday',2,'planned_minutes',40),
+        jsonb_build_object('weekday',6,'planned_minutes',30)
+      )
+    ))
+  );
+
+  PERFORM public.activate_weekly_schedule(v_future_schedule_id);
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.weekly_schedules
+    WHERE id=v_current_schedule_id
+      AND status='archived'
+      AND effective_to=v_next_cycle_start - 1
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.weekly_schedule_subscribers
+    WHERE weekly_schedule_id=v_current_schedule_id
+      AND subscriber_id='30000000-0000-4000-8000-000000000002'
+      AND weekly_quota_minutes=55
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.weekly_schedules
+    WHERE id=v_future_schedule_id AND status='active'
+  ) THEN
+    RAISE EXCEPTION 'Weekly rotation did not archive the prior version and preserve its quota snapshot';
+  END IF;
+
+  IF (SELECT weekly_quota_minutes FROM public.subscribers
+      WHERE id='30000000-0000-4000-8000-000000000002') <> 55 THEN
+    RAISE EXCEPTION 'Activating a future schedule prematurely changed the current weekly subscriber quota';
+  END IF;
+
+  SELECT count(*) INTO v_previous_quota
+  FROM public.weekly_schedule_events
+  WHERE weekly_schedule_id IN (v_current_schedule_id, v_future_schedule_id)
+    AND event_type IN ('draft_created','activated','archived');
+  IF v_previous_quota <> 5 THEN
+    RAISE EXCEPTION 'Weekly schedule audit events were not recorded for draft creation and rotation';
+  END IF;
+END;
+$weekly_schedule_activation$;
+
 DO $manager_a_negative$
 DECLARE v_rejected boolean;
 BEGIN
