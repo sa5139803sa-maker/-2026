@@ -21,7 +21,7 @@ DECLARE
   v_before_minutes integer;
   v_after_minutes integer;
   v_event_sequence bigint;
-  v_now timestamptz := clock_timestamp();
+  v_now timestamptz;
 BEGIN
   IF v_user_id IS NULL
      OR v_organization_id IS NULL
@@ -51,6 +51,9 @@ BEGIN
     RAISE EXCEPTION 'Only a running or paused operation can be extended'
       USING ERRCODE = 'P0002';
   END IF;
+
+  -- Stamp the event after acquiring the row lock so event time follows its sequence.
+  v_now := clock_timestamp();
 
   IF v_role = 'operator'::public.app_role
      AND (
