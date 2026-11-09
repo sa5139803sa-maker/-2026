@@ -206,16 +206,39 @@ SECURITY DEFINER
 SET search_path = ''
 AS $record_subscriber_operator_assignment_hardened$
 DECLARE
+  v_previous_name text;
   v_new_name text;
+  v_reason text;
   v_actor_id uuid := auth.uid();
 BEGIN
-  IF TG_OP <> 'INSERT' OR NEW.operator_id IS NULL THEN
+  IF NEW.operator_id IS NULL
+     OR (TG_OP = 'UPDATE' AND NEW.operator_id IS NOT DISTINCT FROM OLD.operator_id) THEN
     RETURN NEW;
   END IF;
 
   IF v_actor_id IS NULL THEN
     RAISE EXCEPTION 'An authenticated actor is required to record subscriber assignment'
       USING ERRCODE = '42501';
+  END IF;
+
+  IF TG_OP = 'UPDATE' THEN
+    -- This GUC is only consumed after the BEFORE trigger has verified that
+    -- current_user is postgres (the guarded SECURITY DEFINER RPC owner).
+    -- A client may set it, but cannot pass the row-change guard.
+    v_reason := NULLIF(btrim(COALESCE(
+      current_setting('water_management.subscriber_operator_reason', true), ''
+    )), '');
+    IF v_reason IS NULL THEN
+      RAISE EXCEPTION 'A server-authored reassignment reason is required'
+        USING ERRCODE = '22023';
+    END IF;
+
+    IF OLD.operator_id IS NOT NULL THEN
+      SELECT p.display_name INTO v_previous_name
+      FROM public.profiles p WHERE p.id = OLD.operator_id;
+    END IF;
+  ELSE
+    v_reason := 'إسناد عند إنشاء المشترك';
   END IF;
 
   SELECT p.display_name INTO v_new_name
@@ -230,9 +253,10 @@ BEGIN
     new_operator_id, new_operator_name, actor_id, reason
   ) VALUES (
     NEW.id, NEW.organization_id, NEW.pump_id,
-    NULL, NULL,
+    CASE WHEN TG_OP = 'UPDATE' THEN OLD.operator_id ELSE NULL END,
+    v_previous_name,
     NEW.operator_id, COALESCE(v_new_name, 'مشغّل غير معروف'),
-    v_actor_id, 'إسناد عند إنشاء المشترك'
+    v_actor_id, v_reason
   );
 
   RETURN NEW;
