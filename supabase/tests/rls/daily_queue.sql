@@ -979,3 +979,60 @@ BEGIN
   END IF;
 END;
 $daily_queue_acl$;
+
+DO $weekly_entitlement_acl$
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.weekly_entitlement_cycles'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.weekly_entitlement_allocations'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.weekly_entitlement_events'::regclass) THEN
+    RAISE EXCEPTION 'RLS must be enabled on every weekly entitlement table';
+  END IF;
+
+  IF pg_catalog.has_table_privilege('anon', 'public.weekly_entitlement_cycles', 'SELECT')
+     OR pg_catalog.has_table_privilege('anon', 'public.weekly_entitlement_allocations', 'SELECT')
+     OR pg_catalog.has_table_privilege('anon', 'public.weekly_entitlement_events', 'SELECT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.weekly_entitlement_cycles', 'INSERT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.weekly_entitlement_cycles', 'UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.weekly_entitlement_allocations', 'INSERT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.weekly_entitlement_allocations', 'UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.weekly_entitlement_allocations', 'DELETE')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.weekly_entitlement_events', 'INSERT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.weekly_entitlement_events', 'UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.weekly_entitlement_events', 'DELETE') THEN
+    RAISE EXCEPTION 'Weekly entitlement writes must remain private RPC/trigger-only';
+  END IF;
+
+  IF pg_catalog.has_function_privilege(
+       'authenticated',
+       'water_management_private.ensure_weekly_entitlement_cycle(uuid,uuid,uuid,date,uuid)',
+       'EXECUTE'
+     )
+     OR pg_catalog.has_function_privilege(
+       'authenticated',
+       'water_management_private.expire_due_weekly_entitlement_cycles(uuid,uuid,date,uuid)',
+       'EXECUTE'
+     )
+     OR pg_catalog.has_function_privilege(
+       'anon',
+       'public.transfer_weekly_entitlement_minutes(uuid,date,integer,text)',
+       'EXECUTE'
+     )
+     OR pg_catalog.has_function_privilege(
+       'anon',
+       'public.get_weekly_entitlement_transfer_options(uuid,date)',
+       'EXECUTE'
+     )
+     OR NOT pg_catalog.has_function_privilege(
+       'authenticated',
+       'public.transfer_weekly_entitlement_minutes(uuid,date,integer,text)',
+       'EXECUTE'
+     )
+     OR NOT pg_catalog.has_function_privilege(
+       'authenticated',
+       'public.get_weekly_entitlement_transfer_options(uuid,date)',
+       'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION 'Weekly entitlement helper/RPC execution grants are not correctly restricted';
+  END IF;
+END;
+$weekly_entitlement_acl$;
