@@ -540,20 +540,14 @@ RESET ROLE;
 
 -- A weekly allocation moved to a day with no template entry must still appear
 -- in the daily report and reconcile against that same weekly cycle.
-SET LOCAL ROLE authenticated;
-SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
-DO $weekly_entitlement_reassigned_report$
+-- The fixture transfer is prepared by the migration-test owner; the report itself
+-- is then submitted under the assigned operator role and its RLS grants.
+DO $weekly_entitlement_reassigned_allocation_fixture$
 DECLARE
-  v_today date := (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date;
-  v_cycle_start date;
-  v_target_date date;
   v_cycle_id uuid;
+  v_cycle_start date;
   v_source_allocation_id uuid;
   v_target_allocation_id uuid;
-  v_source_id uuid;
-  v_report public.daily_work_reports%ROWTYPE;
-  v_started_at timestamptz;
-  v_ended_at timestamptz;
 BEGIN
   SELECT c.id, c.cycle_start
   INTO v_cycle_id, v_cycle_start
@@ -561,14 +555,11 @@ BEGIN
   WHERE c.weekly_schedule_id = '50000000-0000-4000-8000-000000000001'
     AND c.subscriber_id = '30000000-0000-4000-8000-000000000001';
 
-  v_target_date := v_cycle_start + 2;
-
   SELECT a.id INTO v_source_allocation_id
   FROM public.weekly_entitlement_allocations a
   WHERE a.weekly_entitlement_cycle_id = v_cycle_id
     AND a.allocation_date = v_cycle_start + 1
-    AND a.available_minutes >= 5
-  FOR UPDATE;
+    AND a.available_minutes >= 5;
 
   IF v_source_allocation_id IS NULL THEN
     RAISE EXCEPTION 'Expected source-day remaining entitlement for reassigned report test';
@@ -588,10 +579,28 @@ BEGIN
     v_cycle_id, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     '20000000-0000-4000-8000-000000000001',
     '30000000-0000-4000-8000-000000000001',
-    v_target_date, NULL, 0, 5, 0
+    v_cycle_start + 2, NULL, 0, 5, 0
   )
   RETURNING id INTO v_target_allocation_id;
 
+  PERFORM set_config('test.reassigned_cycle_id', v_cycle_id::text, true);
+  PERFORM set_config('test.reassigned_target_date', (v_cycle_start + 2)::text, true);
+  PERFORM set_config('test.reassigned_allocation_id', v_target_allocation_id::text, true);
+END;
+$weekly_entitlement_reassigned_allocation_fixture$;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $weekly_entitlement_reassigned_report$
+DECLARE
+  v_target_date date := current_setting('test.reassigned_target_date')::date;
+  v_cycle_id uuid := current_setting('test.reassigned_cycle_id')::uuid;
+  v_target_allocation_id uuid := current_setting('test.reassigned_allocation_id')::uuid;
+  v_source_id uuid;
+  v_report public.daily_work_reports%ROWTYPE;
+  v_started_at timestamptz;
+  v_ended_at timestamptz;
+BEGIN
   SELECT id INTO v_source_id
   FROM public.pump_power_sources
   WHERE pump_id = '20000000-0000-4000-8000-000000000001'
