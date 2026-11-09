@@ -2763,13 +2763,19 @@ BEGIN
     AND r.operator_id = auth.uid();
 
   SELECT count(*)::integer INTO v_source_totals
-  FROM public.daily_work_source_totals t
-  JOIN public.daily_work_reports r
-    ON r.id = t.daily_work_report_id
-   AND r.organization_id = t.organization_id
-   AND r.pump_id = t.pump_id
-  WHERE r.pump_id = '20000000-0000-4000-8000-000000000001'
-    AND r.operator_id = auth.uid();
+  FROM public.daily_pump_energy_source_totals totals
+  JOIN public.daily_pump_energy_reports energy
+    ON energy.id = totals.daily_pump_energy_report_id
+   AND energy.organization_id = totals.organization_id
+   AND energy.pump_id = totals.pump_id
+  WHERE energy.pump_id = '20000000-0000-4000-8000-000000000001'
+    AND EXISTS (
+      SELECT 1 FROM public.daily_work_reports r
+      WHERE r.organization_id = energy.organization_id
+        AND r.pump_id = energy.pump_id
+        AND r.work_date = energy.work_date
+        AND r.operator_id = auth.uid()
+    );
 
   SELECT work_date INTO v_report_date
   FROM public.daily_work_reports
@@ -3225,8 +3231,11 @@ BEGIN
   IF NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_reports'::regclass)
      OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_source_totals'::regclass)
      OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_report_items'::regclass)
-     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_report_events'::regclass) THEN
-    RAISE EXCEPTION 'RLS must be enabled on all daily work report tables';
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_report_events'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_pump_energy_reports'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_pump_energy_source_totals'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_pump_energy_report_events'::regclass) THEN
+    RAISE EXCEPTION 'RLS must be enabled on all daily work and shared pump energy report tables';
   END IF;
   IF pg_catalog.has_table_privilege('anon','public.daily_work_reports','SELECT')
      OR pg_catalog.has_table_privilege('authenticated','public.daily_work_reports','INSERT')
@@ -3235,8 +3244,20 @@ BEGIN
      OR pg_catalog.has_table_privilege('authenticated','public.daily_work_report_items','DELETE')
      OR pg_catalog.has_table_privilege('authenticated','public.daily_work_report_events','INSERT')
      OR pg_catalog.has_table_privilege('authenticated','public.daily_work_report_events','UPDATE')
-     OR pg_catalog.has_table_privilege('authenticated','public.daily_work_report_events','DELETE') THEN
-    RAISE EXCEPTION 'Daily work report write privileges are too broad';
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_work_report_events','DELETE')
+     OR pg_catalog.has_table_privilege('anon','public.daily_pump_energy_reports','SELECT')
+     OR pg_catalog.has_table_privilege('anon','public.daily_pump_energy_source_totals','SELECT')
+     OR pg_catalog.has_table_privilege('anon','public.daily_pump_energy_report_events','SELECT')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_pump_energy_reports','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_pump_energy_reports','UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_pump_energy_reports','DELETE')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_pump_energy_source_totals','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_pump_energy_source_totals','UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_pump_energy_source_totals','DELETE')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_pump_energy_report_events','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_pump_energy_report_events','UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_pump_energy_report_events','DELETE') THEN
+    RAISE EXCEPTION 'Daily work or shared energy report write privileges are too broad';
   END IF;
 END;
 $daily_work_report_acl$;
@@ -3497,10 +3518,19 @@ BEGIN
     SELECT 1 FROM public.daily_work_source_totals
     WHERE pump_id='20000000-0000-4000-8000-000000000003'
   ) OR EXISTS (
+    SELECT 1 FROM public.daily_pump_energy_reports
+    WHERE pump_id='20000000-0000-4000-8000-000000000003'
+  ) OR EXISTS (
+    SELECT 1 FROM public.daily_pump_energy_source_totals
+    WHERE pump_id='20000000-0000-4000-8000-000000000003'
+  ) OR EXISTS (
+    SELECT 1 FROM public.daily_pump_energy_report_events
+    WHERE pump_id='20000000-0000-4000-8000-000000000003'
+  ) OR EXISTS (
     SELECT 1 FROM public.pump_power_sources
     WHERE pump_id='20000000-0000-4000-8000-000000000003'
   ) THEN
-    RAISE EXCEPTION 'Pump teardown must remove its daily report children before its power sources';
+    RAISE EXCEPTION 'Pump teardown must remove daily work and shared energy report children before its power sources';
   END IF;
 END;
 $daily_report_pump_teardown$;
