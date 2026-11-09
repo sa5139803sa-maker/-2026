@@ -1,6 +1,9 @@
 -- Extend an active filling session without creating a second queue item.
 -- Every extension changes the current target and appends an immutable audit event.
 ALTER TABLE public.pump_operation_events
+  DROP CONSTRAINT pump_operation_events_event_type_check;
+
+ALTER TABLE public.pump_operation_events
   ADD CONSTRAINT pump_operation_events_event_type_check
   CHECK (event_type IN ('started', 'paused', 'resumed', 'completed', 'time_extended'));
 
