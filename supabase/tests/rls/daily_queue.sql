@@ -742,6 +742,144 @@ END;
 $weekly_entitlement_reassigned_report$;
 RESET ROLE;
 
+-- A prior seven-day cycle is closed on demand, and every unused minute expires
+-- rather than becoming part of the next week's transferable balance.
+DO $weekly_entitlement_expiry$
+DECLARE
+  v_today date := (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date;
+  v_cycle_start date;
+  v_old_cycle_start date;
+  v_old_cycle_id uuid;
+  v_old_allocation_id uuid;
+  v_actor_id uuid := '10000000-0000-4000-8000-000000000002';
+  v_rejected boolean := false;
+BEGIN
+  SELECT weekly_cycle_start INTO v_cycle_start
+  FROM public.daily_queues
+  WHERE id = current_setting('test.daily_queue_id')::uuid;
+  v_old_cycle_start := v_cycle_start - 7;
+
+  PERFORM water_management_private.ensure_weekly_entitlement_cycle(
+    '50000000-0000-4000-8000-000000000001',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '20000000-0000-4000-8000-000000000001',
+    v_old_cycle_start,
+    v_actor_id
+  );
+
+  PERFORM water_management_private.expire_due_weekly_entitlement_cycles(
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '20000000-0000-4000-8000-000000000001',
+    v_today,
+    v_actor_id
+  );
+
+  SELECT id INTO v_old_cycle_id
+  FROM public.weekly_entitlement_cycles
+  WHERE weekly_schedule_id = '50000000-0000-4000-8000-000000000001'
+    AND subscriber_id = '30000000-0000-4000-8000-000000000001'
+    AND cycle_start = v_old_cycle_start;
+
+  SELECT id INTO v_old_allocation_id
+  FROM public.weekly_entitlement_allocations
+  WHERE weekly_entitlement_cycle_id = v_old_cycle_id
+    AND allocation_date = v_old_cycle_start + 1;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.weekly_entitlement_cycles
+    WHERE id = v_old_cycle_id
+      AND status = 'expired'
+      AND consumed_minutes = 0
+      AND expired_minutes = quota_minutes
+      AND remaining_minutes = 0
+      AND expired_at IS NOT NULL
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.weekly_entitlement_events
+    WHERE weekly_entitlement_cycle_id = v_old_cycle_id
+      AND event_type = 'cycle_expired'
+      AND minutes = 45
+      AND actor_id = v_actor_id
+  ) THEN
+    RAISE EXCEPTION 'Unused weekly minutes were not expired and recorded at cycle close';
+  END IF;
+
+  PERFORM set_config('test.expired_cycle_id', v_old_cycle_id::text, true);
+  PERFORM set_config('test.expired_allocation_id', v_old_allocation_id::text, true);
+END;
+$weekly_entitlement_expiry$;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $weekly_entitlement_expired_transfer_denied$
+DECLARE
+  v_rejected boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.transfer_weekly_entitlement_minutes(
+      current_setting('test.expired_allocation_id')::uuid,
+      (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date,
+      1,
+      'محاولة نقل رصيد من دورة أسبوعية منتهية'
+    );
+  EXCEPTION WHEN invalid_parameter_value THEN
+    v_rejected := true;
+  END;
+
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'A previous week's expired balance was transferable into the current cycle';
+  END IF;
+END;
+$weekly_entitlement_expired_transfer_denied$;
+
+DO $weekly_entitlement_direct_write_denied$
+DECLARE
+  v_allocation_id uuid;
+  v_rejected boolean := false;
+BEGIN
+  SELECT id INTO v_allocation_id
+  FROM public.weekly_entitlement_allocations
+  WHERE weekly_entitlement_cycle_id = (
+    SELECT id FROM public.weekly_entitlement_cycles
+    WHERE weekly_schedule_id = '50000000-0000-4000-8000-000000000001'
+      AND cycle_start = (SELECT weekly_cycle_start FROM public.daily_queues
+                         WHERE id = current_setting('test.daily_queue_id')::uuid)
+      AND subscriber_id = '30000000-0000-4000-8000-000000000001'
+  )
+  ORDER BY allocation_date
+  LIMIT 1;
+
+  BEGIN
+    UPDATE public.weekly_entitlement_allocations
+    SET allocated_minutes = allocated_minutes + 1
+    WHERE id = v_allocation_id;
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Authenticated client directly modified weekly entitlement allocation minutes';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    UPDATE public.weekly_entitlement_cycles
+    SET quota_minutes = quota_minutes + 1
+    WHERE id = (
+      SELECT weekly_entitlement_cycle_id
+      FROM public.weekly_entitlement_allocations
+      WHERE id = v_allocation_id
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Authenticated client directly changed the weekly quota cycle';
+  END IF;
+END;
+$weekly_entitlement_direct_write_denied$;
+RESET ROLE;
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
 DO $supervisor_queue_read$
@@ -754,7 +892,19 @@ BEGIN
   FROM public.daily_queues WHERE id = v_queue_id;
   SELECT count(*) INTO v_item_count
   FROM public.queue_items WHERE daily_queue_id = v_queue_id;
-  IF v_queue_count <> 1 OR v_item_count <> 3 THEN
+  IF v_queue_count <> 1 OR v_item_count <> 3
+     OR NOT EXISTS (
+       SELECT 1 FROM public.weekly_entitlement_cycles
+       WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+         AND cycle_start = (SELECT weekly_cycle_start FROM public.daily_queues WHERE id = v_queue_id)
+         AND subscriber_id = '30000000-0000-4000-8000-000000000001'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM public.weekly_entitlement_allocations
+       WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+         AND allocation_date = (SELECT queue_date FROM public.daily_queues WHERE id = v_queue_id)
+         AND subscriber_id = '30000000-0000-4000-8000-000000000001'
+     ) THEN
     RAISE EXCEPTION 'Assigned supervisor must read the daily queue and its items';
   END IF;
 END;
@@ -768,7 +918,15 @@ DECLARE
   v_queue_id uuid := current_setting('test.daily_queue_id')::uuid;
 BEGIN
   IF EXISTS (SELECT 1 FROM public.daily_queues WHERE id = v_queue_id)
-     OR EXISTS (SELECT 1 FROM public.queue_items WHERE daily_queue_id = v_queue_id) THEN
+     OR EXISTS (SELECT 1 FROM public.queue_items WHERE daily_queue_id = v_queue_id)
+     OR EXISTS (
+       SELECT 1 FROM public.weekly_entitlement_cycles
+       WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+     )
+     OR EXISTS (
+       SELECT 1 FROM public.weekly_entitlement_allocations
+       WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+     ) THEN
     RAISE EXCEPTION 'Collector must not inherit queue access from collection assignment';
   END IF;
 END;
@@ -782,8 +940,16 @@ DECLARE
   v_queue_id uuid := current_setting('test.daily_queue_id')::uuid;
 BEGIN
   IF EXISTS (SELECT 1 FROM public.daily_queues WHERE id = v_queue_id)
-     OR EXISTS (SELECT 1 FROM public.queue_items WHERE daily_queue_id = v_queue_id) THEN
-    RAISE EXCEPTION 'Queue items leaked across organizations';
+     OR EXISTS (SELECT 1 FROM public.queue_items WHERE daily_queue_id = v_queue_id)
+     OR EXISTS (
+       SELECT 1 FROM public.weekly_entitlement_cycles
+       WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+     )
+     OR EXISTS (
+       SELECT 1 FROM public.weekly_entitlement_allocations
+       WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+     ) THEN
+    RAISE EXCEPTION 'Queue items or weekly entitlement balances leaked across organizations';
   END IF;
 END;
 $other_tenant_queue_denied$;
