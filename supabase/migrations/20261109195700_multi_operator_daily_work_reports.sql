@@ -206,18 +206,9 @@ COMMENT ON TABLE public.daily_work_source_totals IS
 
 -- Weekly entitlements are the authoritative daily allocation. A moved quota
 -- has no schedule_entry_id and is identified by its allocation row instead.
-ALTER TABLE public.daily_work_report_items
-  ADD COLUMN weekly_entitlement_allocation_id uuid;
-
-ALTER TABLE public.daily_work_report_items
-  ADD CONSTRAINT daily_work_report_items_allocation_scope_fkey
-  FOREIGN KEY (weekly_entitlement_allocation_id, organization_id, pump_id, subscriber_id)
-  REFERENCES public.weekly_entitlement_allocations (id, organization_id, pump_id, subscriber_id)
-  ON DELETE RESTRICT;
-
-CREATE UNIQUE INDEX daily_work_report_items_allocation_uidx
-  ON public.daily_work_report_items (daily_work_report_id, weekly_entitlement_allocation_id)
-  WHERE weekly_entitlement_allocation_id IS NOT NULL;
+-- The weekly entitlement ledger migration already introduced the allocation
+-- column, tenant-scoped FK, partial unique index and row preparation trigger.
+-- This migration tightens report semantics without duplicating that schema.
 
 ALTER TABLE public.daily_work_report_items
   DROP CONSTRAINT daily_work_report_items_type_check,
@@ -779,13 +770,6 @@ BEGIN
       AND ws.status IN ('active', 'archived')
       AND v_work_date >= ws.effective_from
       AND (ws.effective_to IS NULL OR v_work_date <= ws.effective_to)
-      AND EXISTS (
-        SELECT 1 FROM public.schedule_entries entry
-        WHERE entry.weekly_schedule_id = ws.id
-          AND entry.organization_id = v_org_id
-          AND entry.pump_id = p_pump_id
-          AND entry.weekday = extract(isodow FROM v_work_date)::integer
-      )
     ORDER BY ws.effective_from DESC, ws.id
   LOOP
     v_cycle_start := v_work_date - (
@@ -935,12 +919,13 @@ BEGIN
 
       SELECT floor(COALESCE(sum(op.actual_seconds), 0) / 60)::integer
       INTO v_app_minutes
-      FROM public.pump_operations op
-      WHERE op.organization_id = v_org_id
-        AND op.pump_id = p_pump_id
-        AND op.operation_date = v_work_date
-        AND op.subscriber_id = v_subscriber_id
-        AND op.subscriber_operator_id = p_target_operator_id
+      FROM public.queue_items qi
+      JOIN public.pump_operations op
+        ON op.id = qi.operation_id
+       AND op.organization_id = qi.organization_id
+       AND op.pump_id = qi.pump_id
+      WHERE qi.weekly_entitlement_allocation_id = v_allocation_id
+        AND qi.status = 'completed'
         AND op.status = 'completed';
 
     ELSIF v_entry_type = 'weekly_reassigned' THEN
@@ -979,12 +964,13 @@ BEGIN
 
       SELECT floor(COALESCE(sum(op.actual_seconds), 0) / 60)::integer
       INTO v_app_minutes
-      FROM public.pump_operations op
-      WHERE op.organization_id = v_org_id
-        AND op.pump_id = p_pump_id
-        AND op.operation_date = v_work_date
-        AND op.subscriber_id = v_subscriber_id
-        AND op.subscriber_operator_id = p_target_operator_id
+      FROM public.queue_items qi
+      JOIN public.pump_operations op
+        ON op.id = qi.operation_id
+       AND op.organization_id = qi.organization_id
+       AND op.pump_id = qi.pump_id
+      WHERE qi.weekly_entitlement_allocation_id = v_allocation_id
+        AND qi.status = 'completed'
         AND op.status = 'completed';
 
     ELSIF v_entry_type = 'additional_registered' THEN
@@ -1013,15 +999,7 @@ BEGIN
           USING ERRCODE = '42501';
       END IF;
 
-      SELECT floor(COALESCE(sum(op.actual_seconds), 0) / 60)::integer
-      INTO v_app_minutes
-      FROM public.pump_operations op
-      WHERE op.organization_id = v_org_id
-        AND op.pump_id = p_pump_id
-        AND op.operation_date = v_work_date
-        AND op.subscriber_id = v_subscriber_id
-        AND op.subscriber_operator_id = p_target_operator_id
-        AND op.status = 'completed';
+      v_app_minutes := 0;
 
       v_external_name := NULL;
 
