@@ -1871,6 +1871,10 @@ $tenant_a_cannot_see_tenant_b_operation$;
 RESET ROLE;
 
 -- Operation event and session rows are removed before the test deletes pumps with RESTRICT FKs.
+DELETE FROM public.daily_work_report_events;
+DELETE FROM public.daily_work_report_items;
+DELETE FROM public.daily_work_source_totals;
+DELETE FROM public.daily_work_reports;
 DELETE FROM public.pump_operation_power_segments;
 DELETE FROM public.pump_operation_events;
 DELETE FROM public.pump_operations;
