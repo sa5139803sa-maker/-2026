@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { CheckCircle2, Clock3, Droplets, Pause, Play, RefreshCw, Waves } from "lucide-react-native";
+import { CheckCircle2, Clock3, Droplets, Pause, Play, Plus, RefreshCw, Waves } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { loadAlertSettings, type AlertSettings } from "@/lib/alerts/settings";
 import { playAlertSound, stopAlertSound } from "@/lib/alerts/audio";
@@ -118,7 +118,7 @@ function friendlyError(error: { code?: string; message?: string }) {
   if (error.code === "23505") return "يوجد تشغيل قائم بالفعل على هذا الغطاس.";
   if (error.code === "42501") return "ليس لديك صلاحية التشغيل على هذا الغطاس.";
   if (error.code === "P0002") return "تغيّرت حالة العملية. حدّث الشاشة وحاول مجددًا.";
-  if (error.code === "22023") return "تحقق من بيانات المشترك ومدة التعبئة.";
+  if (error.code === "22023") return "تحقق من عدد الدقائق، وألا يتجاوز إجمالي مدة التعبئة 24 ساعة.";
   return "تعذر تنفيذ العملية. تحقق من الاتصال ثم أعد المحاولة.";
 }
 
@@ -177,6 +177,7 @@ function OperationsScreenContent() {
   const minuteAlertPlayedForOperation = useRef<string | null>(null);
   const [alertSettings, setAlertSettings] = useState<AlertSettings | null>(null);
   const [pauseReason, setPauseReason] = useState("");
+  const [extensionMinutes, setExtensionMinutes] = useState("5");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -532,6 +533,36 @@ function OperationsScreenContent() {
       setError("تعذر أرشفة مصدر الكهرباء.");
     } else {
       setNotice("تمت أرشفة المصدر، وحُفظت سجلاته السابقة.");
+      await loadPumpData();
+    }
+    setBusy(false);
+  };
+
+  const extendActiveOperation = async () => {
+    if (!activeOperation || busy) return;
+    const addedMinutes = Number(extensionMinutes);
+    if (!Number.isInteger(addedMinutes) || addedMinutes < 1 || addedMinutes > 1440) {
+      setError("أدخل عددًا صحيحًا موجبًا من الدقائق.");
+      return;
+    }
+    if (activeOperation.planned_minutes + addedMinutes > 1440) {
+      setError("لا يمكن أن تتجاوز مدة التعبئة الإجمالية 1440 دقيقة (24 ساعة).");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const { error: extensionError } = await pumpOperationsRepository.extendTime(
+      activeOperation.id,
+      addedMinutes,
+    );
+    if (extensionError) {
+      console.error("pump operation time extension failed", extensionError);
+      setError(friendlyError(extensionError));
+    } else {
+      setNotice(`تمت إضافة ${addedMinutes} دقيقة إلى التعبئة الحالية، وسُجلت الزيادة في سجل العملية.`);
+      setExtensionMinutes("5");
       await loadPumpData();
     }
     setBusy(false);
@@ -964,6 +995,29 @@ function OperationsScreenContent() {
                   مصدر الطاقة: {powerSources.find((source) => source.id === (activeOperation.current_power_source_id ?? activeOperation.last_power_source_id))?.name ?? "غير محدد"}
                 </Text>
                 {activeOperation.pause_reason ? <Text style={styles.detailText}>سبب التوقف: {activeOperation.pause_reason}</Text> : null}
+              </View>
+              <View style={styles.extensionBlock}>
+                <Text style={styles.fieldLabel}>إضافة دقائق إلى التعبئة الحالية</Text>
+                <View style={styles.extensionRow}>
+                  <TextInput
+                    value={extensionMinutes}
+                    onChangeText={setExtensionMinutes}
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    placeholder="5"
+                    style={styles.extensionInput}
+                    accessibilityLabel="عدد الدقائق الإضافية"
+                  />
+                  <Pressable
+                    disabled={busy || !/^\\d+$/.test(extensionMinutes) || Number(extensionMinutes) < 1}
+                    onPress={() => void extendActiveOperation()}
+                    style={[styles.extensionButton, (busy || !/^\\d+$/.test(extensionMinutes) || Number(extensionMinutes) < 1) && styles.disabled]}
+                  >
+                    <Plus size={17} color="#fff" />
+                    <Text style={styles.actionText}>إضافة الوقت</Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.detailText}>تُضاف المدة إلى الجلسة نفسها دون إنشاء دور جديد، ويُحفظ كل تمديد في سجل التدقيق. الحد الإجمالي 24 ساعة.</Text>
               </View>
               {activeOperation.status === "paused" ? (
                 <View style={styles.sourceSelector}>
@@ -1614,6 +1668,10 @@ const styles = StyleSheet.create({
   progressFill: { height: "100%", backgroundColor: colors.brand.aqua, borderRadius: 5 },
   timerMeta: { color: "#C3D4DC", fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular },
   activeDetails: { flexDirection: "row-reverse", flexWrap: "wrap", justifyContent: "space-between", gap: spacing.sm },
+  extensionBlock: { gap: spacing.xs, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: "#31586B" },
+  extensionRow: { flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm },
+  extensionInput: { width: 94, minHeight: 46, borderWidth: 1, borderColor: "#55788A", borderRadius: radius.md, paddingHorizontal: spacing.md, color: colors.text.inverse, backgroundColor: "#24485A", textAlign: "center", fontSize: typography.fontSize.md },
+  extensionButton: { flex: 1, minHeight: 46, borderRadius: radius.md, backgroundColor: colors.brand.teal, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: spacing.xs },
   detailText: { color: "#C3D4DC", fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular },
   actionRow: { flexDirection: "row-reverse", gap: spacing.sm },
   actionButton: { flex: 1, minHeight: 56, borderRadius: radius.md, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: spacing.xs },
