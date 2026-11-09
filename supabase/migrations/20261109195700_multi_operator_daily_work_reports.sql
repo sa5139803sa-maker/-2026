@@ -408,7 +408,7 @@ BEGIN
   NEW.assigned_operator_id := v_report.operator_id;
   RETURN NEW;
 END;
-$guard_daily_work_report_item_owner$;
+$guard_daily_work_report_item_owner_multi$;
 
 ALTER FUNCTION water_management_private.guard_daily_work_report_item_owner() OWNER TO postgres;
 REVOKE ALL ON FUNCTION water_management_private.guard_daily_work_report_item_owner()
