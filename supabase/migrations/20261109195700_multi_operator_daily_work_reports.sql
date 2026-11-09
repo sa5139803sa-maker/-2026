@@ -1727,3 +1727,108 @@ $delete_pump_daily_work_reports_multi$;
 ALTER FUNCTION water_management_private.delete_pump_daily_work_reports() OWNER TO postgres;
 REVOKE ALL ON FUNCTION water_management_private.delete_pump_daily_work_reports()
   FROM PUBLIC, anon, authenticated, service_role;
+
+
+-- Return only the operator IDs and display names needed by the report selector.
+-- This avoids broadening profiles SELECT RLS beyond the caller's own profile.
+CREATE OR REPLACE FUNCTION water_management_private.get_daily_report_operators_internal(
+  p_pump_id uuid,
+  p_work_date date,
+  p_only_existing_reports boolean
+)
+RETURNS TABLE (
+  id uuid,
+  display_name text
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $get_daily_report_operators_internal$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_org_id uuid := water_management_private.current_user_organization_id();
+  v_role public.app_role := water_management_private.current_user_role();
+BEGIN
+  IF v_user_id IS NULL OR v_org_id IS NULL
+     OR v_role NOT IN ('manager'::public.app_role, 'supervisor'::public.app_role) THEN
+    RAISE EXCEPTION 'Not authorized to list daily report operators'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF p_pump_id IS NULL OR p_work_date IS NULL
+     OR p_only_existing_reports IS NULL THEN
+    RAISE EXCEPTION 'Pump, work date, and report filter are required'
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF v_role = 'supervisor'::public.app_role THEN
+    IF NOT p_only_existing_reports
+       OR NOT water_management_private.can_read_supervisor_pump_scope(v_org_id, p_pump_id) THEN
+      RAISE EXCEPTION 'Supervisor may list only operators with reports on an assigned pump'
+        USING ERRCODE = '42501';
+    END IF;
+  ELSIF NOT EXISTS (
+    SELECT 1 FROM public.pumps pump
+    WHERE pump.id = p_pump_id
+      AND pump.organization_id = v_org_id
+  ) THEN
+    RAISE EXCEPTION 'Pump is not accessible'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT profile.id, profile.display_name
+  FROM public.pump_assignments pa
+  JOIN public.profiles profile
+    ON profile.id = pa.user_id
+   AND profile.organization_id = pa.organization_id
+   AND profile.role = 'operator'::public.app_role
+  WHERE pa.organization_id = v_org_id
+    AND pa.pump_id = p_pump_id
+    AND pa.assignment_role = 'operator'::public.app_role
+    AND (
+      NOT p_only_existing_reports
+      OR EXISTS (
+        SELECT 1 FROM public.daily_work_reports report
+        WHERE report.organization_id = v_org_id
+          AND report.pump_id = p_pump_id
+          AND report.work_date = p_work_date
+          AND report.operator_id = profile.id
+      )
+    )
+  ORDER BY profile.display_name, profile.id;
+END;
+$get_daily_report_operators_internal$;
+
+ALTER FUNCTION water_management_private.get_daily_report_operators_internal(uuid, date, boolean)
+  OWNER TO postgres;
+REVOKE ALL ON FUNCTION water_management_private.get_daily_report_operators_internal(uuid, date, boolean)
+  FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION water_management_private.get_daily_report_operators_internal(uuid, date, boolean)
+  TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.get_daily_report_operators(
+  p_pump_id uuid,
+  p_work_date date,
+  p_only_existing_reports boolean
+)
+RETURNS TABLE (
+  id uuid,
+  display_name text
+)
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = ''
+AS $get_daily_report_operators$
+  SELECT *
+  FROM water_management_private.get_daily_report_operators_internal(
+    p_pump_id, p_work_date, p_only_existing_reports
+  )
+$get_daily_report_operators$;
+
+REVOKE ALL ON FUNCTION public.get_daily_report_operators(uuid, date, boolean)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_daily_report_operators(uuid, date, boolean)
+  TO authenticated;
