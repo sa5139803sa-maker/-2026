@@ -1047,7 +1047,7 @@ BEGIN
      OR pg_catalog.has_function_privilege('anon', 'public.add_daily_queue_item(uuid,text,uuid,text,integer)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.defer_daily_queue_item(uuid,uuid,integer,text)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.cancel_daily_queue_item(uuid,uuid,integer,text)', 'EXECUTE')
-     OR pg_catalog.has_function_privilege('authenticated', 'water_management_private.manage_daily_queue_item_internal(uuid,uuid,integer,text,text)', 'EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated', 'water_management_private.manage_daily_queue_item_internal(uuid,uuid,integer,text,text)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.defer_daily_queue_item(uuid,uuid,integer,text)', 'EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated', 'public.cancel_daily_queue_item(uuid,uuid,integer,text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'Queue item action RPC grants are not correctly restricted';
