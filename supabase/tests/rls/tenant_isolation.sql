@@ -1517,6 +1517,10 @@ BEGIN
      OR pg_catalog.has_function_privilege('anon','public.get_daily_work_report_allocations(uuid,date)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','public.get_daily_report_operators(uuid,date,boolean)','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','public.get_daily_report_operators(uuid,date,boolean)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','public.get_daily_work_report_actors(uuid,uuid[])','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','public.get_daily_work_report_actors(uuid,uuid[])','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','water_management_private.get_daily_work_report_actors_internal(uuid,uuid[])','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','water_management_private.get_daily_work_report_actors_internal(uuid,uuid[])','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','water_management_private.get_daily_report_operators_internal(uuid,date,boolean)','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','water_management_private.get_daily_report_operators_internal(uuid,date,boolean)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','public.prepare_daily_work_report(uuid,date)','EXECUTE')
@@ -2389,6 +2393,28 @@ BEGIN
     RAISE EXCEPTION 'Manager did not create distinct operator reports with manager audit identity';
   END IF;
 
+  SELECT count(*)::integer INTO v_operator_count
+  FROM public.get_daily_work_report_actors(
+    v_first.id,
+    ARRAY[
+      '10000000-0000-4000-8000-000000000001'::uuid,
+      '10000000-0000-4000-8000-000000000003'::uuid,
+      '10000000-0000-4000-8000-000000000006'::uuid
+    ]
+  );
+  IF v_operator_count <> 1 OR NOT EXISTS (
+    SELECT 1 FROM public.get_daily_work_report_actors(
+      v_first.id,
+      ARRAY[
+        '10000000-0000-4000-8000-000000000001'::uuid,
+        '10000000-0000-4000-8000-000000000003'::uuid,
+        '10000000-0000-4000-8000-000000000006'::uuid
+      ]
+    ) WHERE id = auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'Report actor RPC exposed names not associated with the report audit trail';
+  END IF;
+
   IF (SELECT count(*) FROM public.daily_work_reports
       WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
         AND pump_id = '20000000-0000-4000-8000-000000000001'
@@ -2640,12 +2666,38 @@ SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005
 DO $supervisor_daily_report_operator_selector$
 DECLARE
   v_count integer;
+  v_actor_count integer;
+  v_report_id uuid;
   v_rejected boolean := false;
 BEGIN
   SELECT count(*)::integer INTO v_count
   FROM public.get_daily_report_operators(
     '20000000-0000-4000-8000-000000000001', DATE '2026-01-20', true
   );
+
+  SELECT id INTO v_report_id
+  FROM public.daily_work_reports
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+    AND work_date = DATE '2026-01-20'
+    AND operator_id = '10000000-0000-4000-8000-000000000002';
+
+  SELECT count(*)::integer INTO v_actor_count
+  FROM public.get_daily_work_report_actors(
+    v_report_id,
+    ARRAY[
+      '10000000-0000-4000-8000-000000000001'::uuid,
+      '10000000-0000-4000-8000-000000000006'::uuid
+    ]
+  );
+
+  IF v_report_id IS NULL OR v_actor_count <> 1
+     OR NOT EXISTS (
+       SELECT 1 FROM public.get_daily_work_report_actors(
+         v_report_id, ARRAY['10000000-0000-4000-8000-000000000001'::uuid]
+       ) WHERE id = '10000000-0000-4000-8000-000000000001'
+     ) THEN
+    RAISE EXCEPTION 'Supervisor could not resolve report audit actor while unrelated profile name stayed hidden';
+  END IF;
 
   IF v_count <> 2
      OR EXISTS (
