@@ -175,8 +175,9 @@ export default function ReportsScreen() {
           console.error("daily work report actor names load failed", actorsResult.error);
           setActorNames({});
         } else {
+          const actorRows = (actorsResult.data ?? []) as { id: string; display_name: string }[];
           setActorNames(Object.fromEntries(
-            (actorsResult.data ?? []).map((actor) => [actor.id, actor.display_name]),
+            actorRows.map((actor) => [actor.id, actor.display_name]),
           ));
         }
       } else {
