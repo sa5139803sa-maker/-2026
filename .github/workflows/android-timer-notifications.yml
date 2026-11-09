@@ -1,0 +1,54 @@
+name: Android timer notification validation
+
+on:
+  push:
+    branches:
+      - feature/android-timer-alerts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-native-build:
+    name: Android config, tests, and debug build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-public-anon-key
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          package-manager-cache: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: TypeScript check
+        run: npm run typecheck
+
+      - name: Validate Expo config
+        run: npx expo config --type public
+
+      - name: Generate Android native project
+        run: npx expo prebuild --platform android --no-install --clean
+
+      - name: Assemble Android debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug
