@@ -237,6 +237,8 @@ CREATE POLICY weekly_entitlement_cycles_select_assigned
   FOR SELECT TO authenticated
   USING (
     organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role())
+      IN ('manager'::public.app_role, 'operator'::public.app_role, 'supervisor'::public.app_role)
     AND (SELECT water_management_private.can_read_subscriber_scope(
       organization_id, pump_id, subscriber_id
     ))
@@ -248,6 +250,8 @@ CREATE POLICY weekly_entitlement_allocations_select_assigned
   FOR SELECT TO authenticated
   USING (
     organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role())
+      IN ('manager'::public.app_role, 'operator'::public.app_role, 'supervisor'::public.app_role)
     AND (SELECT water_management_private.can_read_subscriber_scope(
       organization_id, pump_id, subscriber_id
     ))
@@ -259,6 +263,8 @@ CREATE POLICY weekly_entitlement_events_select_assigned
   FOR SELECT TO authenticated
   USING (
     organization_id = (SELECT water_management_private.current_user_organization_id())
+    AND (SELECT water_management_private.current_user_role())
+      IN ('manager'::public.app_role, 'operator'::public.app_role, 'supervisor'::public.app_role)
     AND (SELECT water_management_private.can_read_subscriber_scope(
       organization_id, pump_id, subscriber_id
     ))
