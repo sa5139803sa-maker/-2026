@@ -614,7 +614,7 @@ $$;
 REVOKE ALL ON FUNCTION public.generate_daily_queue(uuid, date) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.generate_daily_queue(uuid, date) TO authenticated;
 
-CREATE OR REPLACE FUNCTION public.reorder_daily_queue(
+CREATE OR REPLACE FUNCTION water_management_private.reorder_daily_queue_internal(
   p_queue_id uuid,
   p_expected_version integer,
   p_order uuid[],
@@ -622,7 +622,7 @@ CREATE OR REPLACE FUNCTION public.reorder_daily_queue(
 )
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = ''
 AS $reorder_daily_queue$
 DECLARE
@@ -816,6 +816,26 @@ BEGIN
   );
 END;
 $reorder_daily_queue$;
+REVOKE ALL ON FUNCTION water_management_private.reorder_daily_queue_internal(uuid, integer, uuid[], text)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION water_management_private.reorder_daily_queue_internal(uuid, integer, uuid[], text)
+  TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.reorder_daily_queue(
+  p_queue_id uuid,
+  p_expected_version integer,
+  p_order uuid[],
+  p_override_reason text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE sql
+SECURITY INVOKER
+SET search_path = ''
+AS $
+  SELECT water_management_private.reorder_daily_queue_internal(
+    p_queue_id, p_expected_version, p_order, p_override_reason
+  )
+$;
 REVOKE ALL ON FUNCTION public.reorder_daily_queue(uuid, integer, uuid[], text)
   FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.reorder_daily_queue(uuid, integer, uuid[], text)
@@ -996,14 +1016,14 @@ REVOKE ALL ON FUNCTION public.start_next_daily_queue_item(uuid, uuid, uuid, uuid
 GRANT EXECUTE ON FUNCTION public.start_next_daily_queue_item(uuid, uuid, uuid, uuid)
   TO authenticated;
 
-CREATE OR REPLACE FUNCTION public.cancel_daily_queue_auto_advance(
+CREATE OR REPLACE FUNCTION water_management_private.cancel_daily_queue_auto_advance_internal(
   p_queue_id uuid,
   p_auto_advance_token uuid,
   p_reason text DEFAULT NULL
 )
 RETURNS boolean
 LANGUAGE plpgsql
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = ''
 AS $cancel_daily_queue_auto_advance$
 DECLARE
@@ -1063,6 +1083,25 @@ BEGIN
   RETURN true;
 END;
 $cancel_daily_queue_auto_advance$;
+REVOKE ALL ON FUNCTION water_management_private.cancel_daily_queue_auto_advance_internal(uuid, uuid, text)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION water_management_private.cancel_daily_queue_auto_advance_internal(uuid, uuid, text)
+  TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.cancel_daily_queue_auto_advance(
+  p_queue_id uuid,
+  p_auto_advance_token uuid,
+  p_reason text DEFAULT NULL
+)
+RETURNS boolean
+LANGUAGE sql
+SECURITY INVOKER
+SET search_path = ''
+AS $
+  SELECT water_management_private.cancel_daily_queue_auto_advance_internal(
+    p_queue_id, p_auto_advance_token, p_reason
+  )
+$;
 REVOKE ALL ON FUNCTION public.cancel_daily_queue_auto_advance(uuid, uuid, text)
   FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.cancel_daily_queue_auto_advance(uuid, uuid, text)
