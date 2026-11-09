@@ -19,7 +19,8 @@ ALTER TABLE public.queue_item_events
     'auto_advance_scheduled',
     'auto_advance_retargeted',
     'auto_advance_cancelled',
-    'queue_closed'
+    'queue_closed',
+    'weekly_minutes_transferred'
   ));
 
 CREATE OR REPLACE FUNCTION water_management_private.manage_daily_queue_item_internal(
