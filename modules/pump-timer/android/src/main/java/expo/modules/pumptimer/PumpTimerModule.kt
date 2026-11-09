@@ -31,14 +31,15 @@ class PumpTimerModule : Module() {
       )
     }
 
-    AsyncFunction("stopTimer") {
+    AsyncFunction("stopTimer") { operationId: String ->
+      require(operationId.isNotBlank()) { "A pump operation ID is required to stop its timer." }
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
-      // Clear sticky-restart state, then stop directly without starting a background service.
-      context.getSharedPreferences(PumpTimerForegroundService.PREFERENCES, Context.MODE_PRIVATE)
-        .edit()
-        .clear()
-        .apply()
-      context.stopService(Intent(context, PumpTimerForegroundService::class.java))
+      val preferences = context.getSharedPreferences(PumpTimerForegroundService.PREFERENCES, Context.MODE_PRIVATE)
+      val activeOperationId = preferences.getString(PumpTimerForegroundService.EXTRA_OPERATION_ID, null)
+      if (activeOperationId == operationId) {
+        preferences.edit().clear().apply()
+        context.stopService(Intent(context, PumpTimerForegroundService::class.java))
+      }
     }
   }
 

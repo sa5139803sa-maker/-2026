@@ -82,6 +82,11 @@ class PumpTimerForegroundService : Service() {
         startAsForeground(buildPausedNotification(remaining))
       }
       ACTION_STOP -> {
+        val requestedOperationId = intent.getStringExtra(EXTRA_OPERATION_ID).orEmpty()
+        val activeOperationId = preferences().getString(EXTRA_OPERATION_ID, null).orEmpty()
+        if (requestedOperationId.isNotBlank() && requestedOperationId != activeOperationId) {
+          return START_STICKY
+        }
         cancelExpiryCheck()
         stopServiceAndClearState(startId)
         return START_NOT_STICKY

@@ -7,7 +7,7 @@ import { getPersistentTimerSnapshot } from "@/lib/alerts/timing-rules";
 type PumpTimerNativeModule = {
   startTimer(operationId: string, endAtEpochMs: number): Promise<void>;
   pauseTimer(operationId: string, remainingMs: number): Promise<void>;
-  stopTimer(): Promise<void>;
+  stopTimer(operationId: string): Promise<void>;
 };
 
 let nativeModule: PumpTimerNativeModule | null = null;
@@ -118,7 +118,15 @@ export async function syncPersistentPumpTimerNotification(
       && (operation.status === "running" || operation.status === "paused"),
     );
     if (!active) {
-      await native.stopTimer();
+      // Do not clear a different pump's foreground timer when this pump has
+      // no active operation. Remove only a timer whose matching operation
+      // is now marked completed in this pump's successfully loaded data.
+      const completed = operations.filter((operation) =>
+        operation.pump_id === pumpId && operation.status === "completed",
+      );
+      for (const operation of completed) {
+        await native.stopTimer(operation.id);
+      }
       return;
     }
     const snapshot = getPersistentTimerSnapshot(active, Date.now());
