@@ -217,6 +217,8 @@ water-management/
 | المراجعة والأجهزة | audit_logs, device_sessions |
 | المرفقات | attachments |
 
+**حالة تنفيذ الجداول والطابور (2026-11-09):** مخطط Supabase الحالي لا يحتوي جدول `branches` أو `weekly_schedules` أو `schedule_entries` أو `schedule_exceptions` أو `daily_queues` أو `queue_items`، كما أن `subscribers.branch_id` غير موجود بعد. أُعد تصميم هندسي أولي لهذه الوحدة في `docs/DAILY_QUEUE_DESIGN_AR.md` وأضيفت خوارزمية ترتيب مستقلة في `lib/daily-queue-rules.ts`؛ لم تُنشأ migrations ولم تُربط الخوارزمية بشاشة التشغيل بعد.
+
 **ملاحظة تسمية تحتاج حسمًا عند تصميم المخطط النهائي:** ورد الاسمان `user_pump_assignments` و`pump_assignments` في موضعين من الوثيقة. يجب تحديد ما إذا كانا كيانين مختلفين أو اسمين لنفس العلاقة قبل اعتماد migrations النهائية.
 
 ### 6.1 العلاقات الرئيسية
