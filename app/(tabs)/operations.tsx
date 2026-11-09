@@ -13,7 +13,11 @@ import {
 } from "react-native";
 import { CheckCircle2, Clock3, Droplets, Pause, Play, Plus, RefreshCw, Waves } from "lucide-react-native";
 import { loadAlertSettings, type AlertSettings } from "@/lib/alerts/settings";
-import { syncPersistentPumpTimerNotification } from "@/lib/alerts/persistent-timer";
+import {
+  startPersistentPumpTimerNotification,
+  stopPersistentPumpTimerNotification,
+  syncPersistentPumpTimerNotification,
+} from "@/lib/alerts/persistent-timer";
 import {
   cancelHandoverNotification,
   cancelOperationTimerNotifications,
@@ -634,12 +638,21 @@ function OperationsScreenContent() {
     setError(null);
     setNotice(null);
     let notificationsGranted = true;
+    let persistentCounterStarted = false;
     if (Platform.OS === "android") {
       try {
         notificationsGranted = await requestAndroidNotificationPermission();
+        if (notificationsGranted) {
+          // Promote the service while this user action is still foregrounded.
+          // The subsequent server refresh corrects this provisional end time.
+          persistentCounterStarted = await startPersistentPumpTimerNotification(
+            item.id,
+            item.planned_minutes,
+          );
+        }
       } catch (permissionError) {
         notificationsGranted = false;
-        console.warn("Android notification permission request failed.", permissionError);
+        console.warn("Android notification setup failed before starting the pump operation.", permissionError);
       }
     }
     const { error: startError } = await pumpOperationsRepository.startDailyQueueItem(
@@ -649,12 +662,21 @@ function OperationsScreenContent() {
     );
     if (startError) {
       console.error("daily queue item start failed", startError);
+      if (persistentCounterStarted) {
+        try {
+          await stopPersistentPumpTimerNotification();
+        } catch (stopError) {
+          console.warn("Could not stop provisional Android timer after server start failed.", stopError);
+        }
+      }
       setError(friendlyError(startError));
     } else {
       stopHandoverAlert(dailyQueue.auto_advance_token);
-      setNotice(notificationsGranted
-        ? `بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي، وسيظهر عداد الوقت المتبقي في إشعارات Android.`
-        : "بدأت التعبئة، لكن إذن إشعارات Android غير مفعّل؛ لن يظهر العداد المستمر أو تنبيهات شاشة القفل حتى تفعيله.");
+      setNotice(!notificationsGranted
+        ? "بدأت التعبئة، لكن إذن إشعارات Android غير مفعّل؛ فعّله لإظهار العداد المستمر."
+        : !persistentCounterStarted && Platform.OS === "android"
+          ? "بدأت التعبئة، لكن تعذر تشغيل عداد الإشعارات المستمر. حاول تحديث الشاشة أو تحقق من إعدادات Android."
+          : `بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي، وسيظهر عداد الوقت المتبقي في إشعارات Android.`);
       await loadPumpData();
     }
     setBusy(false);
