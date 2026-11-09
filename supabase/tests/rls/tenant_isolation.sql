@@ -60,6 +60,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109075000_add_monotonic_event_sequence_to_pump_operation_ledger.sql
 \ir ../../migrations/20261109076000_index_pump_operation_events_foreign_keys.sql
 \ir ../../migrations/20261109077000_route_pump_operation_creation_through_guarded_rpc.sql
+\ir ../../migrations/20261109081000_create_pump_branches.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -400,6 +401,18 @@ INSERT INTO public.subscribers (id, organization_id, pump_id, full_name, phone) 
   ('30000000-0000-4000-8000-000000000003', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL, 'مشترك أ دون غطاس', '+970599111113'),
   ('30000000-0000-4000-8000-000000000004', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003', 'مشترك ب 1', '+970599111114');
 
+INSERT INTO public.branches (id, organization_id, pump_id, name, code, sort_order) VALUES
+  ('40000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000001', 'تفرع أ 1', 'A-1', 0),
+  ('40000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000002', 'تفرع أ 2', 'A-2', 0),
+  ('40000000-0000-4000-8000-000000000003', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003', 'تفرع ب 1', 'B-1', 0);
+
+UPDATE public.subscribers SET branch_id = '40000000-0000-4000-8000-000000000001'
+WHERE id = '30000000-0000-4000-8000-000000000001';
+UPDATE public.subscribers SET branch_id = '40000000-0000-4000-8000-000000000002'
+WHERE id = '30000000-0000-4000-8000-000000000002';
+UPDATE public.subscribers SET branch_id = '40000000-0000-4000-8000-000000000003'
+WHERE id = '30000000-0000-4000-8000-000000000004';
+
 DO $subscriber_number_global$
 DECLARE v_count bigint; v_distinct bigint; v_bad bigint;
 BEGIN
@@ -480,10 +493,40 @@ $$;
 REVOKE ALL ON FUNCTION test_support.assert_scope(text, bigint, bigint, bigint, bigint, bigint) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION test_support.assert_scope(text, bigint, bigint, bigint, bigint, bigint) TO authenticated;
 
+DO $branch_table_acl$
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid = 'public.branches'::regclass) THEN
+    RAISE EXCEPTION 'RLS is not enabled on public.branches';
+  END IF;
+  IF pg_catalog.has_table_privilege('anon', 'public.branches', 'SELECT')
+     OR pg_catalog.has_table_privilege('anon', 'public.branches', 'INSERT')
+     OR pg_catalog.has_table_privilege('anon', 'public.branches', 'UPDATE')
+     OR pg_catalog.has_table_privilege('anon', 'public.branches', 'DELETE') THEN
+    RAISE EXCEPTION 'Anonymous access was granted to public.branches';
+  END IF;
+  IF NOT pg_catalog.has_table_privilege('authenticated', 'public.branches', 'SELECT')
+     OR NOT pg_catalog.has_table_privilege('authenticated', 'public.branches', 'INSERT')
+     OR NOT pg_catalog.has_table_privilege('authenticated', 'public.branches', 'UPDATE')
+     OR NOT pg_catalog.has_table_privilege('authenticated', 'public.branches', 'DELETE') THEN
+    RAISE EXCEPTION 'Authenticated Data API grants on public.branches are incomplete';
+  END IF;
+END;
+$branch_table_acl$;
+
 -- Manager A has organization-wide management visibility and can update their own pump.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
 SELECT test_support.assert_scope('manager A', 1, 2, 3, 3, 5);
+DO $manager_branch_scope$
+BEGIN
+  IF (SELECT count(*) FROM public.branches) <> 2 THEN
+    RAISE EXCEPTION 'Manager A must read all branches within organization A only';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.branches WHERE organization_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb') THEN
+    RAISE EXCEPTION 'Manager A read a branch from organization B';
+  END IF;
+END;
+$manager_branch_scope$;
 DO $subscriber_number_immutable$
 DECLARE v_rejected boolean := false;
 BEGIN
@@ -511,6 +554,16 @@ BEGIN
   IF v_rows <> 1 THEN RAISE EXCEPTION 'Manager could not update an organization pump'; END IF;
   UPDATE public.pumps SET status = 'active'
   WHERE id = '20000000-0000-4000-8000-000000000001';
+
+  INSERT INTO public.branches (id, organization_id, pump_id, name, code, sort_order)
+  VALUES ('40000000-0000-4000-8000-000000000004',
+          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          '20000000-0000-4000-8000-000000000001', 'تفرع مؤقت', 'TEMP', 9);
+  UPDATE public.branches SET name = 'تفرع مؤقت معدل'
+  WHERE id = '40000000-0000-4000-8000-000000000004';
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows <> 1 THEN RAISE EXCEPTION 'Manager could not update a branch in their organization'; END IF;
+  DELETE FROM public.branches WHERE id = '40000000-0000-4000-8000-000000000004';
 
   INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
   VALUES ('20000000-0000-4000-8000-000000000002',
@@ -552,6 +605,31 @@ BEGIN
   EXCEPTION WHEN foreign_key_violation THEN v_rejected := true;
   END;
   IF NOT v_rejected THEN RAISE EXCEPTION 'Cross-organization subscriber UPDATE was not rejected'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    INSERT INTO public.branches (organization_id, pump_id, name, code)
+    VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            '20000000-0000-4000-8000-000000000003', 'تفرع عابر', 'CROSS');
+  EXCEPTION WHEN foreign_key_violation THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Cross-organization branch INSERT was not rejected'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    UPDATE public.subscribers SET branch_id = '40000000-0000-4000-8000-000000000001'
+    WHERE id = '30000000-0000-4000-8000-000000000002';
+  EXCEPTION WHEN foreign_key_violation THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Subscriber was assigned to a branch belonging to another pump'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    UPDATE public.subscribers SET branch_id = '40000000-0000-4000-8000-000000000001'
+    WHERE id = '30000000-0000-4000-8000-000000000003';
+  EXCEPTION WHEN check_violation THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Subscriber without a pump was assigned to a branch'; END IF;
 
   v_rejected := false;
   BEGIN
@@ -612,6 +690,77 @@ BEGIN
   IF NOT v_rejected THEN RAISE EXCEPTION 'Client-side organization reassignment was not rejected'; END IF;
 END;
 $manager_a_negative$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $operator_branch_scope$
+DECLARE v_rows bigint; v_rejected boolean := false;
+BEGIN
+  IF (SELECT count(*) FROM public.branches) <> 1
+     OR NOT EXISTS (SELECT 1 FROM public.branches WHERE id = '40000000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Operator A must read only the branch on the assigned pump';
+  END IF;
+  UPDATE public.branches SET name = 'تعديل ممنوع'
+  WHERE id = '40000000-0000-4000-8000-000000000001';
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows <> 0 THEN RAISE EXCEPTION 'Operator updated a branch'; END IF;
+  BEGIN
+    INSERT INTO public.branches (organization_id, pump_id, name)
+    VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            '20000000-0000-4000-8000-000000000001', 'فرع من المشغل');
+  EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Operator inserted a branch without manager permission'; END IF;
+END;
+$operator_branch_scope$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000004', true);
+DO $collector_branch_scope$
+BEGIN
+  IF (SELECT count(*) FROM public.branches) <> 1
+     OR NOT EXISTS (SELECT 1 FROM public.branches WHERE id = '40000000-0000-4000-8000-000000000002') THEN
+    RAISE EXCEPTION 'Collector A must read only the branch on the assigned pump';
+  END IF;
+END;
+$collector_branch_scope$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
+DO $supervisor_branch_scope$
+BEGIN
+  IF (SELECT count(*) FROM public.branches) <> 1
+     OR NOT EXISTS (SELECT 1 FROM public.branches WHERE id = '40000000-0000-4000-8000-000000000001') THEN
+    RAISE EXCEPTION 'Supervisor A must read only the branch on the assigned pump';
+  END IF;
+END;
+$supervisor_branch_scope$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000007', true);
+DO $tenant_b_branch_scope$
+BEGIN
+  IF (SELECT count(*) FROM public.branches) <> 1
+     OR NOT EXISTS (SELECT 1 FROM public.branches WHERE id = '40000000-0000-4000-8000-000000000003') THEN
+    RAISE EXCEPTION 'Tenant B operator must read only its own assigned-pump branch';
+  END IF;
+END;
+$tenant_b_branch_scope$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DO $tenant_a_branch_scope$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.branches WHERE id = '40000000-0000-4000-8000-000000000003') THEN
+    RAISE EXCEPTION 'Tenant A manager read a branch from tenant B';
+  END IF;
+END;
+$tenant_a_branch_scope$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
@@ -1412,6 +1561,9 @@ BEGIN
   ) OR EXISTS (
     SELECT 1 FROM public.pump_assignments
     WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  ) OR EXISTS (
+    SELECT 1 FROM public.branches
+    WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   ) THEN
     RAISE EXCEPTION 'Deleting an organization did not cascade its tenant-owned records';
   END IF;
@@ -1479,6 +1631,16 @@ BEGIN
     RAISE EXCEPTION 'Invalid index definition for subscribers (pump_id, organization_id)';
   END IF;
 
+  v_index := to_regclass('public.branches_pump_tenant_idx');
+  IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(pump_id, organization_id)' THEN
+    RAISE EXCEPTION 'Missing covering index for branches pump tenant foreign key';
+  END IF;
+
+  v_index := to_regclass('public.subscribers_branch_tenant_idx');
+  IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(branch_id, organization_id, pump_id)' THEN
+    RAISE EXCEPTION 'Missing covering index for subscribers branch tenant foreign key';
+  END IF;
+
   v_index := to_regclass('public.pump_operation_events_actor_id_idx');
   IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(actor_id)' THEN
     RAISE EXCEPTION 'Missing covering index for pump_operation_events.actor_id';
@@ -1491,6 +1653,22 @@ BEGIN
   END IF;
 END;
 $tenant_fk_indexes$;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DELETE FROM public.branches WHERE id = '40000000-0000-4000-8000-000000000002';
+RESET ROLE;
+DO $branch_delete_behavior$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.subscribers
+    WHERE id = '30000000-0000-4000-8000-000000000002'
+      AND (branch_id IS NOT NULL OR pump_id <> '20000000-0000-4000-8000-000000000002')
+  ) THEN
+    RAISE EXCEPTION 'Deleting a branch must clear only branch_id and preserve subscriber pump_id';
+  END IF;
+END;
+$branch_delete_behavior$;
 
 SET CONSTRAINTS ALL IMMEDIATE;
 ROLLBACK;
