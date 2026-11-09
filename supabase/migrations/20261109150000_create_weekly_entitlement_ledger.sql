@@ -1060,9 +1060,9 @@ BEGIN
   END IF;
 
   IF p_minutes IS NULL OR p_minutes NOT BETWEEN 1 AND 1440
-     OR p_target_date IS DISTINCT FROM v_today
+     OR p_target_date IS NULL OR p_target_date < v_today
      OR char_length(btrim(COALESCE(p_reason, ''))) NOT BETWEEN 2 AND 240 THEN
-    RAISE EXCEPTION 'Transfer target must be today, minutes must be positive, and a reason is required'
+    RAISE EXCEPTION 'Transfer target must be today or a future day, minutes must be positive, and a reason is required'
       USING ERRCODE = '22023';
   END IF;
 
@@ -1136,9 +1136,8 @@ BEGIN
 
   IF NOT FOUND OR v_cycle.status <> 'open'
      OR p_target_date NOT BETWEEN v_cycle.cycle_start AND v_cycle.cycle_end
-     OR v_source.allocation_date NOT BETWEEN v_cycle.cycle_start AND v_cycle.cycle_end
-     OR p_target_date < v_cycle.cycle_start
-     OR p_target_date > v_cycle.cycle_end THEN
+     OR p_target_date < v_today
+     OR v_source.allocation_date NOT BETWEEN v_cycle.cycle_start AND v_cycle.cycle_end THEN
     RAISE EXCEPTION 'Transfer must remain inside the same open weekly entitlement cycle'
       USING ERRCODE = '22023';
   END IF;
@@ -1491,8 +1490,8 @@ BEGIN
     RAISE EXCEPTION 'Not authorized to read weekly transfer options'
       USING ERRCODE = '42501';
   END IF;
-  IF p_pump_id IS NULL OR p_target_date IS DISTINCT FROM v_today THEN
-    RAISE EXCEPTION 'Weekly transfer options are available only for the current local date'
+  IF p_pump_id IS NULL OR p_target_date IS NULL OR p_target_date < v_today THEN
+    RAISE EXCEPTION 'Weekly transfer options are available for today or a future day only'
       USING ERRCODE = '22023';
   END IF;
   IF v_role = 'operator'::public.app_role AND NOT EXISTS (
@@ -1523,6 +1522,10 @@ BEGIN
   v_cycle_start := p_target_date - (
     (extract(isodow FROM p_target_date)::integer - v_schedule.week_starts_on + 7) % 7
   );
+  IF p_target_date > v_cycle_start + 6 THEN
+    RAISE EXCEPTION 'Transfer target is outside the seven-day weekly cycle'
+      USING ERRCODE = '22023';
+  END IF;
 
   PERFORM water_management_private.ensure_weekly_entitlement_cycle(
     v_schedule.id, v_organization_id, p_pump_id,
