@@ -90,13 +90,39 @@ SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001
 DO $queue_reject_unassigned_subscriber$
 DECLARE
   v_queue_id uuid := current_setting('test.daily_queue_id')::uuid;
+  v_unassigned_subscriber_id uuid := '30000000-0000-4000-8000-000000000005';
   v_rejected boolean := false;
 BEGIN
+  -- Use a dedicated active subscriber on this exact pump, with no operator.
+  -- The previous fixture used a subscriber from another pump, so the RPC
+  -- rejected it before reaching the missing-responsible-operator guard.
+  INSERT INTO public.subscribers (
+    id, organization_id, pump_id, full_name, phone
+  ) VALUES (
+    v_unassigned_subscriber_id,
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '20000000-0000-4000-8000-000000000001',
+    'مشترك بلا مسؤول لاختبار الطابور',
+    '0599111115'
+  );
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.subscribers
+    WHERE id = v_unassigned_subscriber_id
+      AND organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      AND pump_id = '20000000-0000-4000-8000-000000000001'
+      AND is_active
+      AND operator_id IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Unassigned-subscriber fixture is not active on the target pump';
+  END IF;
+
   BEGIN
     PERFORM public.add_daily_queue_item(
       v_queue_id,
       'additional_registered',
-      '30000000-0000-4000-8000-000000000002',
+      v_unassigned_subscriber_id,
       NULL,
       5
     );
@@ -111,10 +137,14 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM public.queue_items
     WHERE daily_queue_id = v_queue_id
-      AND subscriber_id = '30000000-0000-4000-8000-000000000002'
+      AND subscriber_id = v_unassigned_subscriber_id
   ) THEN
     RAISE EXCEPTION 'Unassigned registered subscriber queue row persisted after rejection';
   END IF;
+
+  -- Keep later RLS fixtures independent from this focused negative test.
+  DELETE FROM public.subscribers
+  WHERE id = v_unassigned_subscriber_id;
 END;
 $queue_reject_unassigned_subscriber$;
 RESET ROLE;
