@@ -2312,6 +2312,41 @@ END;
 $subscriber_operator_direct_update_denied$;
 RESET ROLE;
 
+-- A former owner cannot start a registered subscriber after reassignment.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $subscriber_operator_wrong_executor$
+DECLARE
+  v_rejected boolean := false;
+  v_source_id uuid;
+BEGIN
+  SELECT id INTO v_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+    AND organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    AND is_active
+  ORDER BY created_at
+  LIMIT 1;
+
+  BEGIN
+    PERFORM public.start_pump_operation(
+      '20000000-0000-4000-8000-000000000001',
+      '30000000-0000-4000-8000-000000000001',
+      NULL,
+      5,
+      v_source_id
+    );
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'A former subscriber operator started an operation after reassignment';
+  END IF;
+END;
+$subscriber_operator_wrong_executor$;
+RESET ROLE;
+
 DO $subscriber_operator_active_operation_fixture$
 DECLARE
   v_operation_id uuid;
