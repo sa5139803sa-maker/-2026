@@ -422,6 +422,62 @@ BEGIN
     RAISE EXCEPTION 'Reordering the waiting tail changed completed history or failed to retarget the auto-advance token';
   END IF;
 
+  -- Deferring the current auto-advance target moves it to the tail and
+  -- atomically retargets the one-use token to the next waiting item.
+  SELECT queue_version INTO v_version
+  FROM public.daily_queues WHERE id = v_queue_id;
+  v_previous_token := v_token;
+  v_result := public.defer_daily_queue_item(
+    v_queue_id, v_additional_item_id, v_version,
+    'تأجيل الدور إلى نهاية طابور اليوم'
+  );
+  SELECT auto_advance_queue_item_id, auto_advance_token
+  INTO v_next_item_id, v_token
+  FROM public.daily_queues WHERE id = v_queue_id;
+
+  IF v_next_item_id IS DISTINCT FROM v_guest_item_id
+     OR v_token IS NULL OR v_token = v_previous_token
+     OR (SELECT sort_order FROM public.queue_items WHERE id = v_guest_item_id) <> 1
+     OR (SELECT sort_order FROM public.queue_items WHERE id = v_additional_item_id) <> 2
+     OR NOT EXISTS (
+       SELECT 1 FROM public.queue_item_events
+       WHERE daily_queue_id = v_queue_id
+         AND queue_item_id = v_additional_item_id
+         AND event_type = 'item_deferred'
+         AND actor_id = auth.uid()
+         AND reason = 'تأجيل الدور إلى نهاية طابور اليوم'
+     ) THEN
+    RAISE EXCEPTION 'Deferring a waiting item did not move it to the tail and retarget auto-advance with an audit event';
+  END IF;
+
+  -- Cancellation preserves the item row and audit reason, and never starts
+  -- or consumes an entitlement for the cancelled queue entry.
+  SELECT queue_version INTO v_version
+  FROM public.daily_queues WHERE id = v_queue_id;
+  PERFORM public.cancel_daily_queue_item(
+    v_queue_id, v_additional_item_id, v_version,
+    'إلغاء الدور بناءً على طلب المستفيد'
+  );
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.queue_items
+    WHERE id = v_additional_item_id
+      AND status = 'cancelled'
+      AND operation_id IS NULL
+      AND started_at IS NULL
+      AND completed_at IS NULL
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.queue_item_events
+    WHERE daily_queue_id = v_queue_id
+      AND queue_item_id = v_additional_item_id
+      AND event_type = 'item_cancelled'
+      AND actor_id = auth.uid()
+      AND reason = 'إلغاء الدور بناءً على طلب المستفيد'
+  ) OR (SELECT auto_advance_queue_item_id FROM public.daily_queues WHERE id = v_queue_id)
+       IS DISTINCT FROM v_guest_item_id THEN
+    RAISE EXCEPTION 'Cancelling a waiting item did not preserve history or the remaining auto-advance target';
+  END IF;
+
   v_rejected := false;
   BEGIN
     PERFORM public.start_next_daily_queue_item(
@@ -459,30 +515,15 @@ BEGIN
     RAISE EXCEPTION 'A cancelled auto-advance token was accepted';
   END IF;
 
-  v_operation := public.start_daily_queue_item(v_queue_id, v_additional_item_id, v_source_id);
-  PERFORM public.complete_pump_operation(v_operation.id);
-
-  SELECT auto_advance_queue_item_id, auto_advance_token
-  INTO v_next_item_id, v_token
-  FROM public.daily_queues
-  WHERE id = v_queue_id;
-  IF v_next_item_id IS DISTINCT FROM v_guest_item_id OR v_token IS NULL THEN
-    RAISE EXCEPTION 'Second completion did not schedule the next queued item';
-  END IF;
-
-  PERFORM pg_sleep(3.1);
-  v_operation := public.start_next_daily_queue_item(
-    v_queue_id, v_guest_item_id, v_token, v_source_id
-  );
+  v_operation := public.start_daily_queue_item(v_queue_id, v_guest_item_id, v_source_id);
   IF NOT EXISTS (
     SELECT 1 FROM public.queue_items
     WHERE id = v_guest_item_id
       AND status = 'running'
       AND operation_id = v_operation.id
   ) THEN
-    RAISE EXCEPTION 'Due auto-advance did not start the expected queue item';
+    RAISE EXCEPTION 'The remaining waiting item could not start after the deferred item was cancelled';
   END IF;
-
   PERFORM public.complete_pump_operation(v_operation.id);
 
   IF NOT EXISTS (
@@ -497,8 +538,8 @@ BEGIN
   FROM public.queue_item_events
   WHERE daily_queue_id = v_queue_id
     AND event_type = 'auto_advance_scheduled';
-  IF v_count <> 2 THEN
-    RAISE EXCEPTION 'Queue event ledger did not record both persisted auto-advance schedules';
+  IF v_count <> 1 THEN
+    RAISE EXCEPTION 'Queue event ledger did not record the persisted auto-advance schedule';
   END IF;
 
   SELECT count(*) INTO v_count
