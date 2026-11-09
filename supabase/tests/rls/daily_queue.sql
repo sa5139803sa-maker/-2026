@@ -163,6 +163,75 @@ RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $weekly_entitlement_future_day_transfer$
+DECLARE
+  v_queue_id uuid := current_setting('test.daily_queue_id')::uuid;
+  v_today date := (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date;
+  v_future_date date := v_today + 3;
+  v_cycle_start date;
+  v_cycle_id uuid;
+  v_source_id uuid;
+  v_target_id uuid;
+  v_options record;
+  v_result jsonb;
+BEGIN
+  SELECT weekly_cycle_start INTO v_cycle_start
+  FROM public.daily_queues WHERE id = v_queue_id;
+  IF v_future_date > v_cycle_start + 6 THEN
+    RAISE EXCEPTION 'Test future target is outside the current weekly cycle';
+  END IF;
+
+  SELECT a.id, a.weekly_entitlement_cycle_id INTO v_source_id, v_cycle_id
+  FROM public.weekly_entitlement_allocations a
+  WHERE a.subscriber_id = '30000000-0000-4000-8000-000000000001'
+    AND a.allocation_date = v_today + 1
+    AND a.available_minutes >= 2
+    AND a.weekly_entitlement_cycle_id IN (
+      SELECT c.id FROM public.weekly_entitlement_cycles c
+      WHERE c.weekly_schedule_id = '50000000-0000-4000-8000-000000000001'
+        AND c.cycle_start = v_cycle_start
+    );
+
+  IF v_source_id IS NULL THEN
+    RAISE EXCEPTION 'Future-day transfer test source allocation is unavailable';
+  END IF;
+
+  SELECT * INTO v_options
+  FROM public.get_weekly_entitlement_transfer_options(
+    '20000000-0000-4000-8000-000000000001',
+    v_future_date
+  )
+  WHERE allocation_id = v_source_id;
+
+  IF v_options.allocation_id IS NULL
+     OR v_options.available_minutes < 2
+     OR v_options.cycle_end < v_future_date THEN
+    RAISE EXCEPTION 'Future target transfer options did not return the current-cycle source allocation';
+  END IF;
+
+  v_result := public.transfer_weekly_entitlement_minutes(
+    v_source_id, v_future_date, 2,
+    'اختبار نقل دقيقتين إلى يوم قادم داخل الدورة'
+  );
+
+  SELECT id INTO v_target_id
+  FROM public.weekly_entitlement_allocations
+  WHERE weekly_entitlement_cycle_id = v_cycle_id
+    AND allocation_date = v_future_date;
+
+  IF (SELECT allocated_minutes FROM public.weekly_entitlement_allocations WHERE id = v_source_id) <> 8
+     OR (SELECT allocated_minutes FROM public.weekly_entitlement_allocations WHERE id = v_target_id) <> 2
+     OR (v_result->>'transferred_minutes')::integer <> 2
+     OR (SELECT sum(allocated_minutes) FROM public.weekly_entitlement_allocations
+         WHERE weekly_entitlement_cycle_id = v_cycle_id) <> 45 THEN
+    RAISE EXCEPTION 'Future-day transfer changed the weekly total or failed to move the requested minutes';
+  END IF;
+END;
+$weekly_entitlement_future_day_transfer$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
 DO $queue_item_fixtures$
 DECLARE
   v_queue_id uuid := current_setting('test.daily_queue_id')::uuid;
