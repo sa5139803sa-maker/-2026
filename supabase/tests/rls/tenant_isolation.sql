@@ -1837,6 +1837,25 @@ RESET ROLE;
 
 DO $daily_work_report_acl$
 BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_trigger
+    WHERE tgname='delete_pump_daily_work_reports'
+      AND tgrelid='public.pumps'::regclass
+      AND NOT tgisinternal
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname='water_management_private'
+      AND p.proname='delete_pump_daily_work_reports'
+      AND p.prosecdef
+      AND p.proconfig @> ARRAY['search_path=""']
+  ) OR pg_catalog.has_function_privilege(
+    'authenticated','water_management_private.delete_pump_daily_work_reports()','EXECUTE'
+  ) OR pg_catalog.has_function_privilege(
+    'anon','water_management_private.delete_pump_daily_work_reports()','EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'Daily report teardown must be trigger-only private SECURITY DEFINER';
+  END IF;
   IF NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_reports'::regclass)
      OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_source_totals'::regclass)
      OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_report_items'::regclass)
@@ -1871,10 +1890,14 @@ $tenant_a_cannot_see_tenant_b_operation$;
 RESET ROLE;
 
 -- Operation event and session rows are removed before the test deletes pumps with RESTRICT FKs.
-DELETE FROM public.daily_work_report_events;
-DELETE FROM public.daily_work_report_items;
-DELETE FROM public.daily_work_source_totals;
-DELETE FROM public.daily_work_reports;
+DELETE FROM public.daily_work_report_events
+WHERE pump_id <> '20000000-0000-4000-8000-000000000003';
+DELETE FROM public.daily_work_report_items
+WHERE pump_id <> '20000000-0000-4000-8000-000000000003';
+DELETE FROM public.daily_work_source_totals
+WHERE pump_id <> '20000000-0000-4000-8000-000000000003';
+DELETE FROM public.daily_work_reports
+WHERE pump_id <> '20000000-0000-4000-8000-000000000003';
 DELETE FROM public.pump_operation_power_segments;
 DELETE FROM public.pump_operation_events;
 DELETE FROM public.pump_operations;
@@ -2078,10 +2101,24 @@ WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 DELETE FROM public.daily_work_source_totals
 WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
   AND pump_id='20000000-0000-4000-8000-000000000003';
-DELETE FROM public.daily_work_reports
-WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
-  AND pump_id='20000000-0000-4000-8000-000000000003';
 DELETE FROM public.pumps WHERE id = '20000000-0000-4000-8000-000000000003';
+DO $daily_report_pump_teardown$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.daily_work_reports
+    WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      AND pump_id='20000000-0000-4000-8000-000000000003'
+  ) OR EXISTS (
+    SELECT 1 FROM public.daily_work_source_totals
+    WHERE pump_id='20000000-0000-4000-8000-000000000003'
+  ) OR EXISTS (
+    SELECT 1 FROM public.pump_power_sources
+    WHERE pump_id='20000000-0000-4000-8000-000000000003'
+  ) THEN
+    RAISE EXCEPTION 'Pump teardown must remove its daily report children before its power sources';
+  END IF;
+END;
+$daily_report_pump_teardown$;
 DO $delete_behavior$
 BEGIN
   IF NOT EXISTS (
