@@ -93,7 +93,7 @@ CREATE POLICY weekly_schedule_subscribers_select_assigned
           AND pa.pump_id = weekly_schedule_subscribers.pump_id
           AND pa.user_id = (SELECT auth.uid())
           AND pa.assignment_role = (SELECT water_management_private.current_user_role())
-          AND pa.assignment_role IN ('operator'::public.app_role, 'supervisor'::public.app_role)
+          AND pa.assignment_role IN ('operator'::public.app_role, 'supervisor'::public.app_role, 'collector'::public.app_role)
       )
     )
   );
@@ -111,7 +111,7 @@ CREATE POLICY weekly_schedule_events_select_assigned
           AND pa.pump_id = weekly_schedule_events.pump_id
           AND pa.user_id = (SELECT auth.uid())
           AND pa.assignment_role = (SELECT water_management_private.current_user_role())
-          AND pa.assignment_role IN ('operator'::public.app_role, 'supervisor'::public.app_role)
+          AND pa.assignment_role IN ('operator'::public.app_role, 'supervisor'::public.app_role, 'collector'::public.app_role)
       )
     )
   );
