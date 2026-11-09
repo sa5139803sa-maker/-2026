@@ -8,9 +8,16 @@ import {
   pumpOperationsRepository,
   type DailyWorkReportDetails,
   type OperationPump,
+  type PowerUsageRow,
 } from "@/lib/repositories/pump-operations";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+function shiftDate(date: string, days: number) {
+  const [year, month, day] = date.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}-${String(shifted.getUTCDate()).padStart(2, "0")}`;
+}
 
 function formatLocalTime(value: string) {
   return new Intl.DateTimeFormat("ar", {
@@ -57,15 +64,20 @@ export default function ReportsScreen() {
   const [selectedPumpId, setSelectedPumpId] = useState("");
   const [workDate, setWorkDate] = useState(() => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Hebron" }));
   const [report, setReport] = useState<DailyWorkReportDetails | null>(null);
+  const [powerPeriod, setPowerPeriod] = useState<"day" | "week" | "month">("day");
+  const [powerRows, setPowerRows] = useState<PowerUsageRow[]>([]);
+  const [powerLoading, setPowerLoading] = useState(false);
+  const [powerError, setPowerError] = useState<string | null>(null);
   const [pumpsLoading, setPumpsLoading] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const canViewReports = profile?.role === "manager" || profile?.role === "operator" || profile?.role === "supervisor";
 
   useEffect(() => {
     let cancelled = false;
     const loadPumps = async () => {
-      if (!organizationId) {
+      if (!organizationId || !canViewReports) {
         setPumpsLoading(false);
         return;
       }
@@ -84,10 +96,10 @@ export default function ReportsScreen() {
     };
     void loadPumps();
     return () => { cancelled = true; };
-  }, [organizationId]);
+  }, [canViewReports, organizationId]);
 
   const loadReport = useCallback(async () => {
-    if (!organizationId || !selectedPumpId || !datePattern.test(workDate)) {
+    if (!canViewReports || !organizationId || !selectedPumpId || !datePattern.test(workDate)) {
       setReport(null);
       return;
     }
@@ -108,11 +120,55 @@ export default function ReportsScreen() {
       setNotice(data ? "تم تحميل تفاصيل تقرير اليوم." : "لا يوجد تقرير محفوظ لهذا الغطاس في التاريخ المحدد.");
     }
     setReportLoading(false);
-  }, [organizationId, selectedPumpId, workDate]);
+  }, [canViewReports, organizationId, selectedPumpId, workDate]);
 
   useEffect(() => {
     void loadReport();
   }, [loadReport]);
+
+  const loadPowerUsage = useCallback(async () => {
+    if (!canViewReports || !organizationId || !selectedPumpId || !datePattern.test(workDate)) {
+      setPowerRows([]);
+      return;
+    }
+    setPowerLoading(true);
+    setPowerError(null);
+    try {
+      let from = workDate;
+      if (powerPeriod === "month") {
+        from = `${workDate.slice(0, 7)}-01`;
+      } else if (powerPeriod === "week") {
+        const scheduleResult = await pumpOperationsRepository.getScheduleWeekStartsOn(
+          organizationId,
+          selectedPumpId,
+          workDate,
+        );
+        if (scheduleResult.error) throw scheduleResult.error;
+        const weekStartsOn = Number(scheduleResult.data?.week_starts_on ?? 1);
+        const isoWeekday = new Date(`${workDate}T12:00:00Z`).getUTCDay() || 7;
+        from = shiftDate(workDate, -((isoWeekday - weekStartsOn + 7) % 7));
+      }
+      const result = await pumpOperationsRepository.getPowerUsage(
+        from,
+        workDate,
+        powerPeriod,
+        selectedPumpId,
+      );
+      if (result.error) throw result.error;
+      const rows = (result.data ?? []) as PowerUsageRow[];
+      setPowerRows(rows.filter((row) => row.period_start === from));
+    } catch (loadError) {
+      console.error("power usage report load failed", loadError);
+      setPowerRows([]);
+      setPowerError("تعذر تحميل ملخص استهلاك الكهرباء لهذه الفترة.");
+    } finally {
+      setPowerLoading(false);
+    }
+  }, [canViewReports, organizationId, powerPeriod, selectedPumpId, workDate]);
+
+  useEffect(() => {
+    void loadPowerUsage();
+  }, [loadPowerUsage]);
 
   const durationMinutes = useMemo(() => {
     if (!report) return 0;
@@ -125,6 +181,38 @@ export default function ReportsScreen() {
     () => report?.sourceTotals.reduce((sum, source) => sum + source.minutes, 0) ?? 0,
     [report],
   );
+  const groupedPowerUsage = useMemo(() => {
+    const grouped = new Map<string, {
+      id: string;
+      name: string;
+      seconds: number;
+      sources: Set<PowerUsageRow["data_source"]>;
+    }>();
+    for (const row of powerRows) {
+      const current = grouped.get(row.power_source_id) ?? {
+        id: row.power_source_id,
+        name: row.power_source_name,
+        seconds: 0,
+        sources: new Set<PowerUsageRow["data_source"]>(),
+      };
+      current.seconds += Number(row.total_seconds ?? 0);
+      current.sources.add(row.data_source);
+      grouped.set(row.power_source_id, current);
+    }
+    return [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  }, [powerRows]);
+
+  if (!canViewReports) {
+    return (
+      <View style={styles.screen}>
+        <View style={styles.emptyCard}>
+          <FileText size={28} color={colors.text.secondary} />
+          <Text style={styles.emptyTitle}>التقارير غير متاحة لهذا الدور</Text>
+          <Text style={styles.muted}>يمكن لمدير المؤسسة والمشغّل والمشرف عرض تقارير الغواطس المصرح لهم بها.</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -174,6 +262,50 @@ export default function ReportsScreen() {
             <Text style={styles.refreshText}>عرض</Text>
           </Pressable>
         </View>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>استهلاك مصادر الكهرباء</Text>
+          <Text style={styles.sectionMeta}>حسب التاريخ المحدد</Text>
+        </View>
+        <View style={styles.periodTabs}>
+          {(["day", "week", "month"] as const).map((period) => (
+            <Pressable key={period} onPress={() => setPowerPeriod(period)}
+              style={[styles.periodTab, powerPeriod === period && styles.periodTabActive]}>
+              <Text style={[styles.periodTabText, powerPeriod === period && styles.periodTabTextActive]}>
+                {period === "day" ? "اليوم" : period === "week" ? "الأسبوع" : "الشهر"}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        {powerLoading ? <ActivityIndicator color={colors.brand.teal} /> : powerError ? (
+          <Text style={styles.error}>{powerError}</Text>
+        ) : groupedPowerUsage.length === 0 ? (
+          <Text style={styles.muted}>لا توجد دقائق مسجلة لمصادر الكهرباء في هذه الفترة.</Text>
+        ) : (
+          <>
+            {groupedPowerUsage.map((source) => (
+              <View key={source.id} style={styles.dataRow}>
+                <View style={styles.powerSourceInfo}>
+                  <Text style={styles.dataLabel}>{source.name}</Text>
+                  <Text style={styles.smallNote}>
+                    {source.sources.has("daily_survey") && source.sources.has("automatic")
+                      ? "يتضمن بيانات آلية واستبيانات معتمدة"
+                      : source.sources.has("daily_survey") ? "من استبيان يومي معتمد" : "من سجل التشغيل الآلي"}
+                  </Text>
+                </View>
+                <Text style={styles.dataValue}>{(source.seconds / 60).toFixed(2)} دقيقة</Text>
+              </View>
+            ))}
+            <View style={[styles.dataRow, styles.totalRow]}>
+              <Text style={styles.totalValue}>
+                {(groupedPowerUsage.reduce((sum, source) => sum + source.seconds, 0) / 60).toFixed(2)} دقيقة
+              </Text>
+              <Text style={styles.totalLabel}>إجمالي الفترة</Text>
+            </View>
+          </>
+        )}
       </View>
 
       {reportLoading ? (
@@ -329,6 +461,12 @@ const styles = StyleSheet.create({
   pumpChoiceText: { color: colors.text.primary, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.medium },
   pumpChoiceTextSelected: { color: colors.text.inverse },
   pumpChoiceCode: { color: colors.text.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular },
+  periodTabs: { flexDirection: "row-reverse", gap: spacing.xs },
+  periodTab: { flex: 1, minHeight: 40, justifyContent: "center", alignItems: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background.subtle },
+  periodTabActive: { backgroundColor: colors.brand.primary, borderColor: colors.brand.primary },
+  periodTabText: { color: colors.text.primary, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.medium },
+  periodTabTextActive: { color: colors.text.inverse },
+  powerSourceInfo: { flex: 1, alignItems: "flex-end", gap: 2 },
   dateRow: { flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm },
   dateInput: { flex: 1, minHeight: 44, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.sm, color: colors.text.primary, textAlign: "right", fontFamily: typography.fontFamily.regular },
   refreshButton: { flexDirection: "row-reverse", alignItems: "center", gap: 5, minHeight: 42, paddingHorizontal: spacing.sm, borderRadius: radius.md, backgroundColor: colors.background.subtle },
