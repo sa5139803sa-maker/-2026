@@ -2425,6 +2425,34 @@ BEGIN
     RAISE EXCEPTION 'Assigned operators must share the single pump energy report';
   END IF;
 
+  IF EXISTS (
+    SELECT 1 FROM public.daily_pump_energy_reports
+    WHERE organization_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+       OR pump_id = '20000000-0000-4000-8000-000000000003'
+  ) OR EXISTS (
+    SELECT 1
+    FROM public.daily_pump_energy_source_totals totals
+    JOIN public.daily_pump_energy_reports energy
+      ON energy.id = totals.daily_pump_energy_report_id
+     AND energy.organization_id = totals.organization_id
+     AND energy.pump_id = totals.pump_id
+    WHERE energy.organization_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+       OR energy.pump_id = '20000000-0000-4000-8000-000000000003'
+  ) THEN
+    RAISE EXCEPTION 'Tenant A operator can read tenant B shared energy rows';
+  END IF;
+
+  BEGIN
+    PERFORM 1
+    FROM public.get_daily_work_report_allocations(
+      '20000000-0000-4000-8000-000000000003',
+      DATE '2026-01-20'
+    );
+    RAISE EXCEPTION 'Tenant A operator read tenant B daily allocations';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+
   BEGIN
     PERFORM public.save_daily_work_report(
       '20000000-0000-4000-8000-000000000001',
