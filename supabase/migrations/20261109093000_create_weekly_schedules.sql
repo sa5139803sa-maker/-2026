@@ -16,7 +16,7 @@ ALTER TABLE public.subscribers
 COMMENT ON COLUMN public.subscribers.weekly_quota_minutes IS
   'Recurring weekly quota in minutes. The quota resets every weekly cycle; unused minutes expire and never roll over.';
 COMMENT ON COLUMN public.subscribers.default_weekday IS
-  'Preferred ISO weekday (1 Monday through 7 Sunday) used as the default scheduling day; a weekly quota may be split across multiple weekdays.';
+  'Preferred ISO weekday (1 Monday through 7 Sunday) used as the default scheduling day; allocations may be split across multiple weekdays.';
 -- Only draft schedules are editable through the client Data API. Publishing is
 -- intentionally reserved for a guarded server RPC added after conflict rules.
 
@@ -45,7 +45,9 @@ CREATE TABLE public.weekly_schedules (
     REFERENCES public.profiles (id)
     ON DELETE RESTRICT,
   CONSTRAINT weekly_schedules_effective_dates_check
-    CHECK (effective_to IS NULL OR effective_to >= effective_from)
+    CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  CONSTRAINT weekly_schedules_cycle_start_check
+    CHECK (extract(isodow FROM effective_from)::integer = week_starts_on)
 );
 
 -- A pump may have multiple drafts and archived versions, but at most one
@@ -75,6 +77,8 @@ CREATE TABLE public.schedule_entries (
     UNIQUE (id, organization_id, pump_id),
   CONSTRAINT schedule_entries_day_order_uidx
     UNIQUE (weekly_schedule_id, organization_id, pump_id, weekday, sort_order),
+  CONSTRAINT schedule_entries_subscriber_weekday_uidx
+    UNIQUE (weekly_schedule_id, subscriber_id, weekday),
   CONSTRAINT schedule_entries_schedule_scope_fkey
     FOREIGN KEY (weekly_schedule_id, organization_id, pump_id)
     REFERENCES public.weekly_schedules (id, organization_id, pump_id)
@@ -127,6 +131,8 @@ BEGIN
     WHERE s.id = NEW.subscriber_id
       AND s.organization_id = v_organization_id
       AND s.pump_id = v_pump_id
+      AND s.weekly_quota_minutes IS NOT NULL
+      AND s.default_weekday IS NOT NULL
   ) INTO v_subscriber_matches;
 
   IF NOT v_subscriber_matches THEN
@@ -150,6 +156,80 @@ CREATE TRIGGER prepare_schedule_entry_scope
   BEFORE INSERT OR UPDATE ON public.schedule_entries
   FOR EACH ROW
   EXECUTE FUNCTION water_management_private.prepare_schedule_entry_scope();
+
+
+-- A schedule can become active only when every allocation is fully balanced
+-- against that subscriber's recurring weekly quota. Unused minutes are not
+-- stored as a balance and therefore cannot roll into the following week.
+CREATE FUNCTION water_management_private.validate_weekly_schedule_quota()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $validate_weekly_schedule_quota$
+DECLARE
+  v_entry_count bigint;
+  v_bad_subscriber uuid;
+BEGIN
+  IF NEW.status <> 'active' OR
+     (TG_OP = 'UPDATE' AND OLD.status = 'active') THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT count(*) INTO v_entry_count
+  FROM public.schedule_entries e
+  WHERE e.weekly_schedule_id = NEW.id;
+
+  IF v_entry_count = 0 THEN
+    RAISE EXCEPTION 'A weekly schedule cannot be activated without any subscriber allocations'
+      USING ERRCODE = '23514';
+  END IF;
+
+  SELECT e.subscriber_id INTO v_bad_subscriber
+  FROM public.schedule_entries e
+  JOIN public.subscribers s
+    ON s.id = e.subscriber_id
+   AND s.organization_id = e.organization_id
+   AND s.pump_id = e.pump_id
+  WHERE e.weekly_schedule_id = NEW.id
+  GROUP BY e.subscriber_id, s.weekly_quota_minutes
+  HAVING s.weekly_quota_minutes IS NULL
+      OR sum(e.planned_minutes)::integer <> s.weekly_quota_minutes
+  LIMIT 1;
+
+  IF v_bad_subscriber IS NOT NULL THEN
+    RAISE EXCEPTION 'Allocated weekly minutes must exactly equal the subscriber weekly quota: %',
+      v_bad_subscriber
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.subscribers s
+    WHERE s.organization_id = NEW.organization_id
+      AND s.pump_id = NEW.pump_id
+      AND s.is_active
+      AND s.weekly_quota_minutes IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM public.schedule_entries e
+        WHERE e.weekly_schedule_id = NEW.id
+          AND e.subscriber_id = s.id
+      )
+  ) THEN
+    RAISE EXCEPTION 'Every active subscriber with a weekly quota must have allocations in the schedule'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$validate_weekly_schedule_quota$;
+
+REVOKE ALL ON FUNCTION water_management_private.validate_weekly_schedule_quota()
+  FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER validate_weekly_schedule_quota
+  BEFORE INSERT OR UPDATE OF status ON public.weekly_schedules
+  FOR EACH ROW
+  EXECUTE FUNCTION water_management_private.validate_weekly_schedule_quota();
 
 ALTER TABLE public.weekly_schedules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.schedule_entries ENABLE ROW LEVEL SECURITY;
@@ -312,9 +392,13 @@ COMMENT ON COLUMN public.weekly_schedules.effective_from IS
   'First local calendar date on which this schedule version may apply; activation is performed by a guarded server procedure.';
 COMMENT ON COLUMN public.weekly_schedules.week_starts_on IS
   'ISO weekday (1 Monday through 7 Sunday) that anchors the recurring seven-day quota cycle for this schedule.';
+COMMENT ON CONSTRAINT weekly_schedules_cycle_start_check ON public.weekly_schedules IS
+  'Each schedule version starts on the configured first weekday of its recurring weekly quota cycle.';
 COMMENT ON TABLE public.schedule_entries IS
   'Recurring weekly subscriber appointments; ISO weekday 1=Monday through 7=Sunday and one planned duration per appointment.';
 COMMENT ON COLUMN public.schedule_entries.weekday IS
-  'ISO weekday number: 1 Monday through 7 Sunday.';
+  'ISO weekday number: 1 Monday through 7 Sunday. Multiple weekdays may split a subscriber weekly quota.';
+COMMENT ON CONSTRAINT schedule_entries_subscriber_weekday_uidx ON public.schedule_entries IS
+  'One allocation per subscriber for each weekday; one subscriber may be split across multiple weekdays.';
 COMMENT ON COLUMN public.schedule_entries.planned_minutes IS
-  'Minutes allocated to this single weekday appointment. Across all entries for a subscriber in the published schedule, their sum must equal weekly_quota_minutes.';
+  'Minutes allocated to this single weekday appointment. All entries in a published schedule for the subscriber must sum exactly to weekly_quota_minutes; unused minutes expire at week end.';
