@@ -267,6 +267,13 @@ export const pumpOperationsRepository = {
       .order("display_name", { ascending: true });
   },
 
+  prepareDailyWorkReport(pumpId: string, workDate: string) {
+    return supabase.rpc("prepare_daily_work_report", {
+      p_pump_id: pumpId,
+      p_work_date: workDate,
+    });
+  },
+
   async listDailyReportOperators(organizationId: string, pumpId: string, workDate: string) {
     const reports = await supabase
       .from("daily_work_reports")
