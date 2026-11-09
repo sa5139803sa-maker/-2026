@@ -690,6 +690,8 @@ DECLARE
   v_subscriber_name text;
   v_subscriber_operator_id uuid;
   v_event_type text;
+  v_schedule record;
+  v_cycle_start date;
   v_energy_report public.daily_pump_energy_reports%ROWTYPE;
 BEGIN
   IF v_actor_id IS NULL OR v_org_id IS NULL
@@ -746,6 +748,34 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Pump is not accessible' USING ERRCODE = '42501';
   END IF;
+
+  -- Ensure every weekly entitlement that applies to this historical work date
+  -- exists before validating report completeness. This also serializes the
+  -- daily survey against queue generation and quota transfer on the pump row.
+  FOR v_schedule IN
+    SELECT ws.id, ws.week_starts_on
+    FROM public.weekly_schedules ws
+    WHERE ws.organization_id = v_org_id
+      AND ws.pump_id = p_pump_id
+      AND ws.status IN ('active', 'archived')
+      AND v_work_date >= ws.effective_from
+      AND (ws.effective_to IS NULL OR v_work_date <= ws.effective_to)
+      AND EXISTS (
+        SELECT 1 FROM public.schedule_entries entry
+        WHERE entry.weekly_schedule_id = ws.id
+          AND entry.organization_id = v_org_id
+          AND entry.pump_id = p_pump_id
+          AND entry.weekday = extract(isodow FROM v_work_date)::integer
+      )
+    ORDER BY ws.effective_from DESC, ws.id
+  LOOP
+    v_cycle_start := v_work_date - (
+      (extract(isodow FROM v_work_date)::integer - v_schedule.week_starts_on + 7) % 7
+    );
+    PERFORM water_management_private.ensure_weekly_entitlement_cycle(
+      v_schedule.id, v_org_id, p_pump_id, v_cycle_start, v_actor_id
+    );
+  END LOOP;
 
   v_energy_report := water_management_private.save_daily_pump_energy_report_internal(
     p_pump_id, p_work_started_at, p_work_ended_at,
