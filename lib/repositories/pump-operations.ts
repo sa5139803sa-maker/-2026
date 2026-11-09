@@ -270,26 +270,6 @@ export const pumpOperationsRepository = {
     });
   },
 
-  async listDailyReportOperators(organizationId: string, pumpId: string, workDate: string) {
-    const reports = await supabase
-      .from("daily_work_reports")
-      .select("operator_id")
-      .eq("organization_id", organizationId)
-      .eq("pump_id", pumpId)
-      .eq("work_date", workDate);
-
-    if (reports.error) return { data: null, error: reports.error };
-    const ids = [...new Set((reports.data ?? []).map((row) => row.operator_id))];
-    if (ids.length === 0) return { data: [], error: null };
-
-    return supabase
-      .from("profiles")
-      .select("id,display_name")
-      .eq("organization_id", organizationId)
-      .eq("role", "operator")
-      .in("id", ids)
-      .order("display_name", { ascending: true });
-  },
 
   listActiveSubscribers(organizationId: string, pumpId: string) {
     return supabase
