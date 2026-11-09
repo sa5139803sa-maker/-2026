@@ -1,5 +1,6 @@
 package expo.modules.pumptimer
 
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import expo.modules.kotlin.exception.Exceptions
@@ -32,8 +33,12 @@ class PumpTimerModule : Module() {
 
     AsyncFunction("stopTimer") {
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
-      // This is a stop command, not a new foreground-service start.
-      context.startService(serviceIntent(PumpTimerForegroundService.ACTION_STOP))
+      // Clear sticky-restart state, then stop directly without starting a background service.
+      context.getSharedPreferences(PumpTimerForegroundService.PREFERENCES, Context.MODE_PRIVATE)
+        .edit()
+        .clear()
+        .apply()
+      context.stopService(Intent(context, PumpTimerForegroundService::class.java))
     }
   }
 
