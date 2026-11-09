@@ -47,7 +47,9 @@ CREATE INDEX subscribers_branch_tenant_idx
 -- A pump deletion already clears subscribers.pump_id through the existing
 -- composite FK. Clear branch_id first so the branch-required-pump check remains
 -- valid regardless of the order in which PostgreSQL processes FK actions.
-SET ROLE water_management_authz;
+-- Keep this trigger function SECURITY INVOKER: the user deleting a pump
+-- must also be authorized to update the affected subscriber rows. The
+-- migration owner retains implicit EXECUTE for CREATE TRIGGER; client roles do not.
 CREATE FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -62,16 +64,14 @@ BEGIN
   RETURN OLD;
 END;
 $clear_subscriber_branches$;
-RESET ROLE;
 
-GRANT EXECUTE ON FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
-  TO CURRENT_USER;
+REVOKE ALL ON FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
+  FROM PUBLIC, anon, authenticated, service_role;
+
 CREATE TRIGGER clear_subscriber_branches_before_pump_delete
   BEFORE DELETE ON public.pumps
   FOR EACH ROW
   EXECUTE FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete();
-REVOKE EXECUTE ON FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
-  FROM CURRENT_USER, PUBLIC, anon, authenticated, service_role;
 
 ALTER TABLE public.branches ENABLE ROW LEVEL SECURITY;
 
