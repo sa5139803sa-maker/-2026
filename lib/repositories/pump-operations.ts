@@ -485,7 +485,7 @@ export const pumpOperationsRepository = {
     stoppageMinutes: number;
     sourceTotals: { power_source_id: string; minutes: number }[];
     items: {
-      entry_type: "weekly" | "additional_registered" | "additional_guest";
+      entry_type: "weekly" | "weekly_reassigned" | "additional_registered" | "additional_guest";
       schedule_entry_id?: string | null;
       subscriber_id?: string | null;
       external_beneficiary_name?: string | null;
