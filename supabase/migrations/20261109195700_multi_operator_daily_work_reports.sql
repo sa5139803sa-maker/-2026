@@ -1380,3 +1380,160 @@ REVOKE ALL ON FUNCTION water_management_private.get_pump_power_usage_internal(da
 -- The compatibility public wrapper is the only supported legacy call surface.
 COMMENT ON FUNCTION public.save_daily_work_report(uuid, uuid, timestamptz, timestamptz, integer, jsonb, jsonb, boolean, uuid) IS
   'Creates/updates one workload report for the selected operator and one shared pump energy survey per pump/date.';
+
+
+-- Return the correct operator ownership for the requested work date, not the
+-- subscriber's mutable current operator_id. This powers the historical report UI
+-- after a subscriber has moved to a different operator.
+CREATE OR REPLACE FUNCTION water_management_private.get_daily_work_report_allocations_internal(
+  p_pump_id uuid,
+  p_work_date date
+)
+RETURNS TABLE (
+  id uuid,
+  subscriber_id uuid,
+  allocation_date date,
+  source_schedule_entry_id uuid,
+  original_minutes integer,
+  allocated_minutes integer,
+  consumed_minutes integer,
+  available_minutes integer,
+  weekday smallint,
+  sort_order integer,
+  full_name text,
+  subscriber_number integer,
+  branch_id uuid,
+  operator_id uuid
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $get_daily_work_report_allocations_internal$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_org_id uuid := water_management_private.current_user_organization_id();
+  v_role public.app_role := water_management_private.current_user_role();
+BEGIN
+  IF v_user_id IS NULL OR v_org_id IS NULL
+     OR v_role NOT IN (
+       'manager'::public.app_role,
+       'operator'::public.app_role,
+       'supervisor'::public.app_role
+     ) THEN
+    RAISE EXCEPTION 'Not authorized to read daily report allocations'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF p_pump_id IS NULL OR p_work_date IS NULL THEN
+    RAISE EXCEPTION 'Pump and work date are required'
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF v_role <> 'manager'::public.app_role AND NOT EXISTS (
+    SELECT 1
+    FROM public.pump_assignments pa
+    WHERE pa.organization_id = v_org_id
+      AND pa.pump_id = p_pump_id
+      AND pa.user_id = v_user_id
+      AND pa.assignment_role = v_role
+  ) THEN
+    RAISE EXCEPTION 'User is not assigned to this pump'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.pumps p
+    WHERE p.id = p_pump_id
+      AND p.organization_id = v_org_id
+  ) THEN
+    RAISE EXCEPTION 'Pump is not accessible'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    a.id,
+    a.subscriber_id,
+    a.allocation_date,
+    a.source_schedule_entry_id,
+    a.original_minutes,
+    a.allocated_minutes,
+    a.consumed_minutes,
+    a.available_minutes,
+    COALESCE(e.weekday, extract(isodow FROM p_work_date)::smallint)::smallint,
+    COALESCE(e.sort_order, 2147483647)::integer,
+    s.full_name,
+    s.subscriber_number,
+    s.branch_id,
+    water_management_private.subscriber_operator_for_work_date(
+      s.id, s.organization_id, s.pump_id, p_work_date
+    ) AS operator_id
+  FROM public.weekly_entitlement_allocations a
+  JOIN public.subscribers s
+    ON s.id = a.subscriber_id
+   AND s.organization_id = a.organization_id
+   AND s.pump_id = a.pump_id
+  LEFT JOIN public.schedule_entries e
+    ON e.id = a.source_schedule_entry_id
+   AND e.organization_id = a.organization_id
+   AND e.pump_id = a.pump_id
+   AND e.subscriber_id = a.subscriber_id
+  WHERE a.organization_id = v_org_id
+    AND a.pump_id = p_pump_id
+    AND a.allocation_date = p_work_date
+    AND a.allocated_minutes > 0
+    AND (
+      v_role <> 'operator'::public.app_role
+      OR water_management_private.subscriber_operator_for_work_date(
+        s.id, s.organization_id, s.pump_id, p_work_date
+      ) = v_user_id
+    )
+  ORDER BY
+    COALESCE(e.sort_order, 2147483647),
+    s.subscriber_number,
+    a.id;
+END;
+$get_daily_work_report_allocations_internal$;
+
+ALTER FUNCTION water_management_private.get_daily_work_report_allocations_internal(uuid, date)
+  OWNER TO postgres;
+REVOKE ALL ON FUNCTION water_management_private.get_daily_work_report_allocations_internal(uuid, date)
+  FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.get_daily_work_report_allocations(
+  p_pump_id uuid,
+  p_work_date date
+)
+RETURNS TABLE (
+  id uuid,
+  subscriber_id uuid,
+  allocation_date date,
+  source_schedule_entry_id uuid,
+  original_minutes integer,
+  allocated_minutes integer,
+  consumed_minutes integer,
+  available_minutes integer,
+  weekday smallint,
+  sort_order integer,
+  full_name text,
+  subscriber_number integer,
+  branch_id uuid,
+  operator_id uuid
+)
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = ''
+AS $get_daily_work_report_allocations$
+  SELECT *
+  FROM water_management_private.get_daily_work_report_allocations_internal(
+    p_pump_id, p_work_date
+  )
+$get_daily_work_report_allocations$;
+
+REVOKE ALL ON FUNCTION public.get_daily_work_report_allocations(uuid, date)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_daily_work_report_allocations(uuid, date)
+  TO authenticated;
+
