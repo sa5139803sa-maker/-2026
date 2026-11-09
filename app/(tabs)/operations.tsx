@@ -558,7 +558,6 @@ function OperationsScreenContent() {
       setError("يمكن بدء أول عنصر منتظر فقط. أعد ترتيب الطابور أولًا عند الحاجة.");
       return;
     }
-    stopHandoverAlert(dailyQueue.auto_advance_token);
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -571,6 +570,7 @@ function OperationsScreenContent() {
       console.error("daily queue item start failed", startError);
       setError(friendlyError(startError));
     } else {
+      stopHandoverAlert(dailyQueue.auto_advance_token);
       setNotice(`بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي.`);
       await loadPumpData();
     }
@@ -654,7 +654,6 @@ function OperationsScreenContent() {
 
   const cancelAutoAdvance = async () => {
     if (!dailyQueue?.auto_advance_token || busy) return;
-    stopHandoverAlert(dailyQueue.auto_advance_token);
     setBusy(true);
     setError(null);
     const { error: cancelError } = await pumpOperationsRepository.cancelDailyQueueAutoAdvance(
@@ -666,6 +665,7 @@ function OperationsScreenContent() {
       console.error("daily queue auto-advance cancellation failed", cancelError);
       setError(friendlyError(cancelError));
     } else {
+      stopHandoverAlert(dailyQueue.auto_advance_token);
       setNotice("تم إلغاء بدء الدور التالي تلقائيًا. يمكنك بدءه يدويًا.");
       await loadPumpData();
     }
