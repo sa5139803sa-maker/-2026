@@ -1171,16 +1171,26 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- Revalidate ownership inside the SECURITY DEFINER implementation after
+  -- the pump lock. The invoker wrapper also checks RLS, but this closes the
+  -- reassignment race between that check and entry into this function.
   SELECT s.* INTO v_subscriber
   FROM public.subscribers s
   WHERE s.id = v_source.subscriber_id
     AND s.organization_id = v_organization_id
     AND s.pump_id = v_source.pump_id
-    AND s.is_active;
+    AND s.is_active
+  FOR KEY SHARE;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Weekly entitlement subscriber is not active on this pump'
       USING ERRCODE = '23503';
+  END IF;
+
+  IF v_role = 'operator'::public.app_role
+     AND v_subscriber.operator_id IS DISTINCT FROM v_user_id THEN
+    RAISE EXCEPTION 'Weekly entitlement subscriber is assigned to another operator'
+      USING ERRCODE = '42501';
   END IF;
 
   IF v_target_queue_id IS NOT NULL THEN
