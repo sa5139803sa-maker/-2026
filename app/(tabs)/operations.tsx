@@ -161,6 +161,8 @@ function OperationsScreenContent() {
   const [operations, setOperations] = useState<Operation[]>([]);
   const [dailyQueue, setDailyQueue] = useState<DailyQueue | null>(null);
   const [dailyQueueError, setDailyQueueError] = useState<string | null>(null);
+  const [operationLoadFailed, setOperationLoadFailed] = useState(false);
+  const [dailyQueueLoadFailed, setDailyQueueLoadFailed] = useState(false);
   const [queueAdditionOpen, setQueueAdditionOpen] = useState(false);
   const [queueAdditionType, setQueueAdditionType] = useState<"additional_registered" | "additional_guest" | "emergency">("emergency");
   const [queueAdditionSubscriberId, setQueueAdditionSubscriberId] = useState("");
@@ -305,6 +307,8 @@ function OperationsScreenContent() {
       setOperations([]);
       setDailyQueue(null);
       setDailyQueueError(null);
+      setOperationLoadFailed(false);
+      setDailyQueueLoadFailed(false);
       setDataPumpId(null);
       setRefreshing(false);
       return;
@@ -315,6 +319,8 @@ function OperationsScreenContent() {
     setOperations([]);
     setDailyQueue(null);
     setDailyQueueError(null);
+    setOperationLoadFailed(false);
+    setDailyQueueLoadFailed(false);
     setQueueAdditionOpen(false);
     setQueueAdditionSubscriberId("");
     setQueueAdditionName("");
@@ -335,12 +341,15 @@ function OperationsScreenContent() {
         setPowerSources([]);
         setDailyQueue(null);
         setDailyQueueError("تعذر تحميل طابور اليوم.");
+        setOperationLoadFailed(true);
+        setDailyQueueLoadFailed(true);
         setSelectedPowerSourceId("");
         setDataPumpId(selectedPumpId);
         setError("تعذر تحميل بيانات التشغيل أو مصادر الكهرباء. تحقق من تحديث قاعدة البيانات ثم حدّث الشاشة.");
       } else {
         const loadedOperations = (operationResult.data ?? []) as Operation[];
         const loadedSources = (sourceResult.data ?? []) as PumpPowerSource[];
+        setOperationLoadFailed(false);
         setSubscribers((subscriberResult.data ?? []) as Subscriber[]);
         setOperations(loadedOperations);
         setPowerSources(loadedSources);
@@ -359,11 +368,13 @@ function OperationsScreenContent() {
         if (requestId !== dataRequestSequence.current) return;
         if (queueResult.error) {
           console.error("daily queue load failed", queueResult.error);
+          setDailyQueueLoadFailed(true);
           setDailyQueue(null);
           setDailyQueueError(queueResult.error.code === "P0002"
             ? "لا يوجد جدول أسبوعي نشط لهذا الغطاس في تاريخ اليوم. يلزم اعتماد الجدول أولًا."
             : "تعذر تحميل طابور اليوم. تحقق من صلاحيات الجدول أو حدّث قاعدة البيانات.");
         } else {
+          setDailyQueueLoadFailed(false);
           setDailyQueue((queueResult.data ?? null) as DailyQueue | null);
           setDailyQueueError(queueResult.data ? null : "لا يوجد طابور يومي محفوظ لهذا التاريخ.");
         }
@@ -376,6 +387,8 @@ function OperationsScreenContent() {
         setOperations([]);
         setDailyQueue(null);
         setDailyQueueError("تعذر الاتصال بطابور اليوم.");
+        setOperationLoadFailed(true);
+        setDailyQueueLoadFailed(true);
         setDataPumpId(selectedPumpId);
         setError("انقطع الاتصال أثناء تحميل بيانات التشغيل. حاول التحديث.");
       }
@@ -472,7 +485,7 @@ function OperationsScreenContent() {
     : 0;
 
   useEffect(() => {
-    if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings || error) return;
+    if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings || operationLoadFailed) return;
     void syncPumpTimerNotifications(selectedPumpId, operations, alertSettings).catch((syncError) => {
       console.warn("Android pump timer notification sync failed.", syncError);
       setError("تعذرت جدولة تنبيهات المؤقت. تحقق من إذن الإشعارات والمنبّهات الدقيقة في Android.");
@@ -485,11 +498,11 @@ function OperationsScreenContent() {
     alertSettings?.minuteWarning.vibrate,
     alertSettings?.handover.enabled,
     alertSettings?.handover.vibrate,
-    error,
+    operationLoadFailed,
   ]);
 
   useEffect(() => {
-    if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings || error || dailyQueueError) return;
+    if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings || dailyQueueLoadFailed) return;
     void syncQueueHandoverNotification(selectedPumpId, dailyQueue, alertSettings).catch((syncError) => {
       console.warn("Android queue handover notification sync failed.", syncError);
       setError("تعذرت جدولة تنبيه الانتقال المحفوظ في الطابور.");
@@ -502,8 +515,7 @@ function OperationsScreenContent() {
     dailyQueue?.auto_advance_at,
     alertSettings?.handover.enabled,
     alertSettings?.handover.vibrate,
-    error,
-    dailyQueueError,
+    dailyQueueLoadFailed,
   ]);
 
   const addPowerSource = async () => {
@@ -571,6 +583,11 @@ function OperationsScreenContent() {
     } else {
       setNotice(`تمت إضافة ${addedMinutes} دقيقة إلى التعبئة الحالية، وسُجلت الزيادة في سجل العملية.`);
       setExtensionMinutes("5");
+      try {
+        await cancelOperationTimerNotifications(activeOperation.id);
+      } catch (cancelError) {
+        console.warn("Android operation notification cancellation after extension failed.", cancelError);
+      }
       await loadPumpData();
     }
     setBusy(false);
