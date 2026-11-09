@@ -61,6 +61,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109076000_index_pump_operation_events_foreign_keys.sql
 \ir ../../migrations/20261109077000_route_pump_operation_creation_through_guarded_rpc.sql
 \ir ../../migrations/20261109081000_create_pump_branches.sql
+\ir ../../migrations/20261109093000_create_weekly_schedules.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -413,6 +414,52 @@ WHERE id = '30000000-0000-4000-8000-000000000002';
 UPDATE public.subscribers SET branch_id = '40000000-0000-4000-8000-000000000003'
 WHERE id = '30000000-0000-4000-8000-000000000004';
 
+INSERT INTO public.weekly_schedules (
+  id, organization_id, pump_id, name, effective_from, effective_to, status, created_by
+) VALUES
+  ('50000000-0000-4000-8000-000000000001', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+   '20000000-0000-4000-8000-000000000001', 'جدول أ 1', '2026-01-01', NULL, 'draft',
+   '10000000-0000-4000-8000-000000000001'),
+  ('50000000-0000-4000-8000-000000000002', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+   '20000000-0000-4000-8000-000000000002', 'جدول أ 2', '2026-01-01', NULL, 'draft',
+   '10000000-0000-4000-8000-000000000001'),
+  ('50000000-0000-4000-8000-000000000003', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+   '20000000-0000-4000-8000-000000000003', 'جدول ب 1', '2026-01-01', NULL, 'active',
+   '10000000-0000-4000-8000-000000000006');
+
+INSERT INTO public.schedule_entries (
+  id, weekly_schedule_id, organization_id, pump_id, subscriber_id, weekday, sort_order, planned_minutes
+) VALUES
+  ('60000000-0000-4000-8000-000000000001', '50000000-0000-4000-8000-000000000001',
+   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000001',
+   '30000000-0000-4000-8000-000000000001', 1, 10, 45),
+  ('60000000-0000-4000-8000-000000000002', '50000000-0000-4000-8000-000000000002',
+   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '20000000-0000-4000-8000-000000000002',
+   '30000000-0000-4000-8000-000000000002', 3, 10, 60),
+  ('60000000-0000-4000-8000-000000000003', '50000000-0000-4000-8000-000000000003',
+   'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003',
+   '30000000-0000-4000-8000-000000000004', 5, 10, 90);
+
+DO $weekly_active_unique$
+DECLARE v_rejected boolean := false;
+BEGIN
+  BEGIN
+    INSERT INTO public.weekly_schedules (
+      organization_id, pump_id, name, effective_from, status, created_by
+    ) VALUES (
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      '20000000-0000-4000-8000-000000000003',
+      'جدول نشط مكرر', '2026-01-01', 'active',
+      '10000000-0000-4000-8000-000000000006'
+    );
+  EXCEPTION WHEN unique_violation THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'A second active weekly schedule for the same pump was accepted';
+  END IF;
+END;
+$weekly_active_unique$;
+
 DO $subscriber_number_global$
 DECLARE v_count bigint; v_distinct bigint; v_bad bigint;
 BEGIN
@@ -540,6 +587,65 @@ BEGIN
 END;
 $branch_table_acl$;
 
+DO $weekly_schedule_acl$
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.weekly_schedules'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.schedule_entries'::regclass) THEN
+    RAISE EXCEPTION 'RLS is not enabled on both weekly schedule tables';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.role_table_grants
+    WHERE table_schema='public' AND table_name IN ('weekly_schedules','schedule_entries')
+      AND grantee='anon'
+  ) THEN
+    RAISE EXCEPTION 'Anonymous table privileges were granted on weekly schedule tables';
+  END IF;
+  IF NOT pg_catalog.has_table_privilege('authenticated','public.weekly_schedules','SELECT')
+     OR NOT pg_catalog.has_table_privilege('authenticated','public.weekly_schedules','DELETE')
+     OR pg_catalog.has_table_privilege('authenticated','public.weekly_schedules','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.weekly_schedules','UPDATE')
+     OR NOT pg_catalog.has_column_privilege('authenticated','public.weekly_schedules','pump_id','INSERT')
+     OR NOT pg_catalog.has_column_privilege('authenticated','public.weekly_schedules','name','INSERT')
+     OR NOT pg_catalog.has_column_privilege('authenticated','public.weekly_schedules','name','UPDATE')
+     OR NOT pg_catalog.has_column_privilege('authenticated','public.weekly_schedules','effective_from','INSERT')
+     OR pg_catalog.has_column_privilege('authenticated','public.weekly_schedules','organization_id','INSERT')
+     OR pg_catalog.has_column_privilege('authenticated','public.weekly_schedules','created_by','INSERT')
+     OR pg_catalog.has_column_privilege('authenticated','public.weekly_schedules','status','INSERT')
+     OR pg_catalog.has_column_privilege('authenticated','public.weekly_schedules','status','UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated','public.weekly_schedules','pump_id','UPDATE') THEN
+    RAISE EXCEPTION 'Weekly schedule grants do not enforce least-privilege columns';
+  END IF;
+  IF NOT pg_catalog.has_table_privilege('authenticated','public.schedule_entries','SELECT')
+     OR NOT pg_catalog.has_table_privilege('authenticated','public.schedule_entries','DELETE')
+     OR pg_catalog.has_table_privilege('authenticated','public.schedule_entries','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.schedule_entries','UPDATE')
+     OR NOT pg_catalog.has_column_privilege('authenticated','public.schedule_entries','weekly_schedule_id','INSERT')
+     OR NOT pg_catalog.has_column_privilege('authenticated','public.schedule_entries','subscriber_id','INSERT')
+     OR NOT pg_catalog.has_column_privilege('authenticated','public.schedule_entries','planned_minutes','UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated','public.schedule_entries','organization_id','INSERT')
+     OR pg_catalog.has_column_privilege('authenticated','public.schedule_entries','pump_id','INSERT')
+     OR pg_catalog.has_column_privilege('authenticated','public.schedule_entries','organization_id','UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated','public.schedule_entries','pump_id','UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated','public.schedule_entries','weekly_schedule_id','UPDATE') THEN
+    RAISE EXCEPTION 'Schedule entry grants do not enforce derived tenant scope';
+  END IF;
+  IF pg_catalog.has_function_privilege('authenticated','water_management_private.prepare_schedule_entry_scope()','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','water_management_private.prepare_schedule_entry_scope()','EXECUTE') THEN
+    RAISE EXCEPTION 'Clients can execute the private schedule entry trigger function';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname='water_management_private'
+      AND p.proname='prepare_schedule_entry_scope'
+      AND NOT p.prosecdef
+      AND p.proconfig @> ARRAY['search_path=""']
+  ) THEN
+    RAISE EXCEPTION 'Schedule entry scope trigger must be SECURITY INVOKER with an empty search_path';
+  END IF;
+END;
+$weekly_schedule_acl$;
+
 -- Manager A has organization-wide management visibility and can update their own pump.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
@@ -554,6 +660,17 @@ BEGIN
   END IF;
 END;
 $manager_branch_scope$;
+DO $manager_weekly_schedule_scope$
+BEGIN
+  IF (SELECT count(*) FROM public.weekly_schedules) <> 2
+     OR EXISTS (SELECT 1 FROM public.weekly_schedules WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb') THEN
+    RAISE EXCEPTION 'Manager A must see only the schedules in organization A';
+  END IF;
+  IF (SELECT count(*) FROM public.schedule_entries) <> 2 THEN
+    RAISE EXCEPTION 'Manager A must see the entries for both organization A pumps';
+  END IF;
+END;
+$manager_weekly_schedule_scope$;
 DO $subscriber_number_immutable$
 DECLARE v_rejected boolean := false;
 BEGIN
@@ -601,6 +718,50 @@ BEGIN
     AND assignment_role = 'operator';
 END;
 $manager_a_write$;
+
+DO $manager_weekly_schedule_write$
+DECLARE v_schedule_id uuid; v_entry_id uuid; v_rows bigint;
+BEGIN
+  INSERT INTO public.weekly_schedules (pump_id, name, effective_from, effective_to)
+  VALUES ('20000000-0000-4000-8000-000000000001', 'مسودة اختبار مدير', '2026-11-01', '2026-12-31')
+  RETURNING id INTO v_schedule_id;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.weekly_schedules
+    WHERE id=v_schedule_id
+      AND organization_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      AND pump_id='20000000-0000-4000-8000-000000000001'
+      AND created_by='10000000-0000-4000-8000-000000000001'
+      AND status='draft'
+  ) THEN RAISE EXCEPTION 'Weekly schedule tenant, creator, or draft status was not derived safely'; END IF;
+
+  INSERT INTO public.schedule_entries (weekly_schedule_id, subscriber_id, weekday, sort_order, planned_minutes)
+  VALUES (v_schedule_id, '30000000-0000-4000-8000-000000000001', 2, 5, 35)
+  RETURNING id INTO v_entry_id;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.schedule_entries
+    WHERE id=v_entry_id
+      AND organization_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      AND pump_id='20000000-0000-4000-8000-000000000001'
+      AND weekly_schedule_id=v_schedule_id
+  ) THEN RAISE EXCEPTION 'Schedule entry tenant scope was not derived from its parent schedule'; END IF;
+
+  UPDATE public.schedule_entries SET planned_minutes=40 WHERE id=v_entry_id;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows<>1 THEN RAISE EXCEPTION 'Manager could not update an entry in a draft schedule'; END IF;
+
+  UPDATE public.weekly_schedules SET name='مسودة اختبار مدير معدلة', effective_to='2027-01-31'
+  WHERE id=v_schedule_id;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows<>1 THEN RAISE EXCEPTION 'Manager could not update a draft schedule'; END IF;
+
+  DELETE FROM public.weekly_schedules WHERE id=v_schedule_id;
+  IF EXISTS (SELECT 1 FROM public.schedule_entries WHERE id=v_entry_id) THEN
+    RAISE EXCEPTION 'Deleting a draft schedule did not cascade its draft entries';
+  END IF;
+END;
+$manager_weekly_schedule_write$;
 
 DO $manager_a_negative$
 DECLARE v_rejected boolean;
@@ -732,6 +893,60 @@ BEGIN
   IF NOT v_rejected THEN RAISE EXCEPTION 'Client-side organization reassignment was not rejected'; END IF;
 END;
 $manager_a_negative$;
+
+DO $manager_weekly_schedule_negative$
+DECLARE v_rejected boolean := false;
+BEGIN
+  BEGIN
+    INSERT INTO public.weekly_schedules (pump_id, name, effective_from)
+    VALUES ('20000000-0000-4000-8000-000000000003', 'جدول عابر', '2026-11-01');
+  EXCEPTION WHEN foreign_key_violation THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Manager A created a schedule for a pump in another organization'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    INSERT INTO public.weekly_schedules (organization_id, pump_id, name, effective_from)
+    VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003', 'جدول بنطاق مزور', '2026-11-01');
+  EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Manager A supplied organization_id while creating a schedule'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    UPDATE public.weekly_schedules SET pump_id='20000000-0000-4000-8000-000000000002'
+    WHERE id='50000000-0000-4000-8000-000000000001';
+  EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Manager changed weekly schedule pump_id'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    UPDATE public.weekly_schedules SET status='active'
+    WHERE id='50000000-0000-4000-8000-000000000001';
+  EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Manager activated a schedule outside the guarded publish RPC'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    INSERT INTO public.schedule_entries (weekly_schedule_id, subscriber_id, weekday, sort_order, planned_minutes)
+    VALUES ('50000000-0000-4000-8000-000000000001', '30000000-0000-4000-8000-000000000002', 1, 20, 45);
+  EXCEPTION WHEN foreign_key_violation THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Schedule entry linked a subscriber from another pump'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    INSERT INTO public.schedule_entries (weekly_schedule_id, organization_id, pump_id, subscriber_id, weekday, sort_order, planned_minutes)
+    VALUES ('50000000-0000-4000-8000-000000000001',
+            'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003',
+            '30000000-0000-4000-8000-000000000004', 1, 20, 45);
+  EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Client supplied schedule entry tenant scope'; END IF;
+END;
+$manager_weekly_schedule_negative$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
@@ -755,6 +970,15 @@ BEGIN
   IF NOT v_rejected THEN RAISE EXCEPTION 'Operator inserted a branch without manager permission'; END IF;
 END;
 $operator_branch_scope$;
+DO $operator_schedule_scope$
+BEGIN
+  IF (SELECT count(*) FROM public.weekly_schedules) <> 1
+     OR NOT EXISTS (SELECT 1 FROM public.weekly_schedules WHERE id='50000000-0000-4000-8000-000000000001')
+     OR (SELECT count(*) FROM public.schedule_entries) <> 1 THEN
+    RAISE EXCEPTION 'Operator A must read only the weekly schedule and entries for the assigned pump';
+  END IF;
+END;
+$operator_schedule_scope$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
@@ -767,6 +991,15 @@ BEGIN
   END IF;
 END;
 $collector_branch_scope$;
+DO $collector_schedule_scope$
+BEGIN
+  IF (SELECT count(*) FROM public.weekly_schedules) <> 1
+     OR NOT EXISTS (SELECT 1 FROM public.weekly_schedules WHERE id='50000000-0000-4000-8000-000000000002')
+     OR (SELECT count(*) FROM public.schedule_entries) <> 1 THEN
+    RAISE EXCEPTION 'Collector A must read only the schedule and entries for the assigned pump';
+  END IF;
+END;
+$collector_schedule_scope$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
@@ -779,6 +1012,15 @@ BEGIN
   END IF;
 END;
 $supervisor_branch_scope$;
+DO $supervisor_schedule_scope$
+BEGIN
+  IF (SELECT count(*) FROM public.weekly_schedules) <> 1
+     OR NOT EXISTS (SELECT 1 FROM public.weekly_schedules WHERE id='50000000-0000-4000-8000-000000000001')
+     OR (SELECT count(*) FROM public.schedule_entries) <> 1 THEN
+    RAISE EXCEPTION 'Supervisor A must read only the schedule and entries for the assigned pump';
+  END IF;
+END;
+$supervisor_schedule_scope$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
@@ -791,6 +1033,15 @@ BEGIN
   END IF;
 END;
 $tenant_b_branch_scope$;
+DO $tenant_b_schedule_scope$
+BEGIN
+  IF (SELECT count(*) FROM public.weekly_schedules) <> 1
+     OR NOT EXISTS (SELECT 1 FROM public.weekly_schedules WHERE id='50000000-0000-4000-8000-000000000003')
+     OR (SELECT count(*) FROM public.schedule_entries) <> 1 THEN
+    RAISE EXCEPTION 'Tenant B operator must read only its own pump weekly schedule and entries';
+  END IF;
+END;
+$tenant_b_schedule_scope$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
@@ -802,6 +1053,31 @@ BEGIN
   END IF;
 END;
 $tenant_a_branch_scope$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
+DO $manager_b_active_schedule$
+DECLARE v_rows bigint; v_rejected boolean := false;
+BEGIN
+  IF (SELECT count(*) FROM public.weekly_schedules) <> 1
+     OR NOT EXISTS (SELECT 1 FROM public.weekly_schedules WHERE id='50000000-0000-4000-8000-000000000003' AND status='active') THEN
+    RAISE EXCEPTION 'Manager B must read the active schedule in organization B';
+  END IF;
+  UPDATE public.weekly_schedules SET name='تغيير غير مسموح' WHERE id='50000000-0000-4000-8000-000000000003';
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows <> 0 THEN RAISE EXCEPTION 'Manager updated an active weekly schedule'; END IF;
+  DELETE FROM public.weekly_schedules WHERE id='50000000-0000-4000-8000-000000000003';
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows <> 0 THEN RAISE EXCEPTION 'Manager deleted an active weekly schedule'; END IF;
+  BEGIN
+    INSERT INTO public.schedule_entries (weekly_schedule_id,subscriber_id,weekday,sort_order,planned_minutes)
+    VALUES ('50000000-0000-4000-8000-000000000003','30000000-0000-4000-8000-000000000004',6,20,50);
+  EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Manager inserted an entry into an active schedule'; END IF;
+END;
+$manager_b_active_schedule$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
@@ -1638,6 +1914,12 @@ BEGIN
   ) OR EXISTS (
     SELECT 1 FROM public.branches
     WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  ) OR EXISTS (
+    SELECT 1 FROM public.weekly_schedules
+    WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  ) OR EXISTS (
+    SELECT 1 FROM public.schedule_entries
+    WHERE organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
   ) THEN
     RAISE EXCEPTION 'Deleting an organization did not cascade its tenant-owned records';
   END IF;
@@ -1713,6 +1995,26 @@ BEGIN
   v_index := to_regclass('public.subscribers_branch_tenant_idx');
   IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(branch_id, organization_id, pump_id)%' THEN
     RAISE EXCEPTION 'Missing covering index for subscribers branch tenant foreign key';
+  END IF;
+
+  v_index := to_regclass('public.weekly_schedules_pump_tenant_idx');
+  IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(pump_id, organization_id)' THEN
+    RAISE EXCEPTION 'Missing covering index for weekly_schedules pump tenant foreign key';
+  END IF;
+
+  v_index := to_regclass('public.weekly_schedules_created_by_idx');
+  IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(created_by)' THEN
+    RAISE EXCEPTION 'Missing covering index for weekly_schedules.created_by foreign key';
+  END IF;
+
+  v_index := to_regclass('public.schedule_entries_schedule_scope_idx');
+  IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(weekly_schedule_id, organization_id, pump_id)' THEN
+    RAISE EXCEPTION 'Missing covering index for schedule_entries weekly schedule foreign key';
+  END IF;
+
+  v_index := to_regclass('public.schedule_entries_subscriber_scope_idx');
+  IF v_index IS NULL OR pg_get_indexdef(v_index) NOT LIKE '%(subscriber_id, organization_id, pump_id)' THEN
+    RAISE EXCEPTION 'Missing covering index for schedule_entries subscriber foreign key';
   END IF;
 
   v_index := to_regclass('public.pump_operation_events_actor_id_idx');
