@@ -103,6 +103,16 @@ export const pumpOperationsRepository = {
       .order("name", { ascending: true });
   },
 
+  listPowerSourcesForReport(organizationId: string, pumpId: string) {
+    // Historical sources remain selectable in a retrospective report after archival.
+    return supabase
+      .from("pump_power_sources")
+      .select("id,pump_id,name,source_type,is_active")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .order("name", { ascending: true });
+  },
+
   createPowerSource(pumpId: string, name: string, sourceType: PumpPowerSource["source_type"]) {
     return supabase
       .from("pump_power_sources")
