@@ -54,6 +54,43 @@ export async function stopPersistentPumpTimerNotification() {
   await enqueueNativeTask((native) => native.stopTimer());
 }
 
+export async function pausePersistentPumpTimerNotification(operation: PumpOperation) {
+  if (Platform.OS !== "android") return;
+  const pausedAt = Date.now();
+  const snapshot = getPersistentTimerSnapshot({
+    ...operation,
+    status: "paused",
+    paused_at: new Date(pausedAt).toISOString(),
+  }, pausedAt);
+  if (!snapshot || snapshot.mode !== "paused") {
+    throw new Error("Could not calculate the paused pump timer state.");
+  }
+  await enqueueNativeTask((native) =>
+    native.pauseTimer(snapshot.operationId, snapshot.remainingMs),
+  );
+}
+
+export async function resumePersistentPumpTimerNotification(operation: PumpOperation) {
+  if (Platform.OS !== "android") return;
+  const resumedAt = Date.now();
+  const pausedAt = operation.paused_at ? Date.parse(operation.paused_at) : Number.NaN;
+  if (!Number.isFinite(pausedAt) || pausedAt > resumedAt) {
+    throw new Error("The paused pump operation has an invalid pause timestamp.");
+  }
+  const currentPauseSeconds = Math.max(0, Math.floor((resumedAt - pausedAt) / 1000));
+  const snapshot = getPersistentTimerSnapshot({
+    ...operation,
+    status: "running",
+    paused_seconds: operation.paused_seconds + currentPauseSeconds,
+  }, resumedAt);
+  if (!snapshot || snapshot.mode !== "running") {
+    throw new Error("Could not calculate the resumed pump timer end time.");
+  }
+  await enqueueNativeTask((native) =>
+    native.startTimer(snapshot.operationId, snapshot.endAtEpochMs),
+  );
+}
+
 /** Android's own Chronometer/** Android's own Chronometer updates the visible countdown; JS does not tick in background. */
 export async function syncPersistentPumpTimerNotification(
   pumpId: string,
