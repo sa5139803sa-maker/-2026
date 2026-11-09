@@ -1676,9 +1676,10 @@ SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
 DO $supervisor_power_source_read$
 BEGIN
+  -- The manager management fixture above adds and reactivates one extra source.
   IF (SELECT count(*) FROM public.pump_power_sources
-      WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 3 THEN
-    RAISE EXCEPTION 'Assigned supervisor must read the power sources for their pump';
+      WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 4 THEN
+    RAISE EXCEPTION 'Assigned supervisor must read every active and configured power source for their pump';
   END IF;
   IF (SELECT count(*) FROM public.pump_operation_power_segments
       WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 4 THEN
