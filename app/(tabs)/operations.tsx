@@ -1143,7 +1143,7 @@ function OperationsScreenContent() {
                     ) : null}
                   </View>
                 </>
-              }
+              )}
             </Card>
 
           <Card style={styles.card}>
