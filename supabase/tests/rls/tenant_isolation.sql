@@ -1212,7 +1212,7 @@ BEGIN
   IF NOT pg_catalog.has_table_privilege('authenticated','public.pump_power_sources','SELECT')
      OR NOT pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','pump_id','INSERT')
      OR NOT pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','name','INSERT')
-     OR pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','source_type','INSERT')
+     OR NOT pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','source_type','INSERT')
      OR pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','organization_id','INSERT')
      OR pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','pump_id','UPDATE')
      OR pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','organization_id','UPDATE') THEN
