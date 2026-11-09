@@ -177,7 +177,7 @@
 - اختبارات manager الحية لإنشاء/قراءة/حذف التفرع، ورفض تمرير المؤسسة أو تغيير الغطاس، وحذف التفرع والغطاس، نجحت داخل معاملات `ROLLBACK`؛ لا توجد سجلات اختبار متبقية.
 - اختبارات CI الأربعة على `d3fe69005707f5c25e91bd722a958a3bd0f8b7ba` نجحت: Quality #388، Web Console #226، PostgreSQL RLS #695، Secret History #213.
 - يوجد helper مستقل `lib/daily-queue-rules.ts` واختباراته، لكنه غير مربوط بعد ببيانات جدول أسبوعي أو طابور يومي.
-- لا تزال `weekly_schedules`, `schedule_entries`, `schedule_exceptions`, `daily_queues`, `queue_items`, وأحداث الطابور وواجهات إدارتها غير منفذة. لم تُنشأ بيانات تشغيل أو اختبار دائمة.
+- أضيفت migration `20261109093000_create_weekly_schedules.sql` إلى فرع التطوير لإنشاء `weekly_schedules` و`schedule_entries` وحقول الحصة الأسبوعية؛ لم تُطبق على Supabase بعد وتنتظر اكتمال CI. أما `schedule_exceptions` و`daily_queues` و`queue_items` وأحداث الطابور وواجهات إدارتها فما زالت غير منفذة. لم تُنشأ بيانات تشغيل أو اختبار دائمة.
 
 
 ## 12. زر «إضافة إلى آخر الطابور»
