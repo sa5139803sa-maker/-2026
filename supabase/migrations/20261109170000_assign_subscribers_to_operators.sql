@@ -293,6 +293,19 @@ BEGIN
       USING ERRCODE = 'P0002';
   END IF;
 
+  -- Queue generation serializes on the pump row before inserting a new daily
+  -- queue. Lock the same pump before discovering/locking its existing queues,
+  -- so reassignment cannot miss a queue being generated concurrently.
+  PERFORM 1
+  FROM public.pumps p
+  WHERE p.id = v_subscriber.pump_id
+    AND p.organization_id = v_organization_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Subscriber pump is not available in the current organization'
+      USING ERRCODE = 'P0002';
+  END IF;
+
   FOR v_queue_id IN
     SELECT q.id
     FROM public.daily_queues q
