@@ -69,6 +69,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109140000_add_pump_operation_time_extension.sql
 \ir ../../migrations/20261109150000_create_weekly_entitlement_ledger.sql
 \ir ../../migrations/20261109160000_add_guarded_queue_item_actions.sql
+\ir ../../migrations/20261109170000_assign_subscribers_to_operators.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -2148,7 +2149,194 @@ END;
 $daily_work_report_manager_b$;
 RESET ROLE;
 
+-- A pump can have more than one operator. The subscriber responsibility is
+-- explicit and independent from the operator recorded on a pump operation.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
+VALUES (
+  '20000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000003',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  'operator'
+);
+DO $subscriber_operator_initial_assignment$
+DECLARE
+  v_result jsonb;
+BEGIN
+  IF (SELECT count(*) FROM public.pump_assignments
+      WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+        AND assignment_role = 'operator') <> 2 THEN
+    RAISE EXCEPTION 'A pump must allow multiple assigned operators';
+  END IF;
+
+  v_result := public.assign_subscriber_operator(
+    '30000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000002',
+    'تعيين المشغّل المسؤول الأول'
+  );
+
+  IF (v_result->>'changed')::boolean IS DISTINCT FROM true
+     OR (SELECT operator_id FROM public.subscribers
+         WHERE id = '30000000-0000-4000-8000-000000000001')
+        <> '10000000-0000-4000-8000-000000000002'::uuid THEN
+    RAISE EXCEPTION 'Manager could not assign the subscriber to the first operator';
+  END IF;
+END;
+$subscriber_operator_initial_assignment$;
+RESET ROLE;
+
 \ir daily_queue.sql
+
+-- Materialize a future queue while the first operator owns the subscriber;
+-- reassignment must move only waiting items and leave completed history intact.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $create_future_assignment_queue$
+DECLARE
+  v_queue_id uuid;
+  v_future_date date := (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date + 1;
+BEGIN
+  v_queue_id := public.generate_daily_queue(
+    '20000000-0000-4000-8000-000000000001',
+    v_future_date
+  );
+  PERFORM set_config('test.assignment_future_queue_id', v_queue_id::text, true);
+END;
+$create_future_assignment_queue$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DO $subscriber_operator_reassignment$
+DECLARE
+  v_queue_id uuid := current_setting('test.assignment_future_queue_id')::uuid;
+  v_result jsonb;
+  v_expected integer;
+  v_completed_count integer;
+BEGIN
+  SELECT count(*)::integer INTO v_expected
+  FROM public.queue_items
+  WHERE daily_queue_id = v_queue_id
+    AND subscriber_id = '30000000-0000-4000-8000-000000000001'
+    AND status = 'queued';
+
+  IF v_expected < 1 THEN
+    RAISE EXCEPTION 'Future queue fixture must contain a waiting item for reassignment';
+  END IF;
+
+  SELECT count(*)::integer INTO v_completed_count
+  FROM public.queue_items
+  WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+    AND status = 'completed'
+    AND assigned_operator_id = '10000000-0000-4000-8000-000000000002';
+
+  v_result := public.assign_subscriber_operator(
+    '30000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000003',
+    'إعادة توزيع مسؤولية المشترك إلى المشغّل الثاني'
+  );
+
+  IF (v_result->>'changed')::boolean IS DISTINCT FROM true
+     OR (v_result->>'updated_queue_items')::integer <> v_expected
+     OR (SELECT operator_id FROM public.subscribers
+         WHERE id = '30000000-0000-4000-8000-000000000001')
+        <> '10000000-0000-4000-8000-000000000003'::uuid
+     OR EXISTS (
+       SELECT 1 FROM public.queue_items
+       WHERE daily_queue_id = v_queue_id
+         AND subscriber_id = '30000000-0000-4000-8000-000000000001'
+         AND status = 'queued'
+         AND assigned_operator_id IS DISTINCT FROM '10000000-0000-4000-8000-000000000003'::uuid
+     ) THEN
+    RAISE EXCEPTION 'Reassignment did not atomically move waiting queue items to the new operator';
+  END IF;
+
+  IF (SELECT count(*) FROM public.queue_item_events
+      WHERE daily_queue_id = v_queue_id
+        AND event_type = 'item_operator_reassigned') <> v_expected THEN
+    RAISE EXCEPTION 'Queue reassignment did not append an event for each waiting item';
+  END IF;
+
+  IF (SELECT count(*) FROM public.subscriber_operator_assignment_events
+      WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 2 THEN
+    RAISE EXCEPTION 'Subscriber operator assignment history must record both assignment changes';
+  END IF;
+
+  IF (SELECT count(*) FROM public.queue_items
+      WHERE subscriber_id = '30000000-0000-4000-8000-000000000001'
+        AND status = 'completed'
+        AND assigned_operator_id = '10000000-0000-4000-8000-000000000002') <> v_completed_count THEN
+    RAISE EXCEPTION 'Reassignment rewrote completed queue ownership history';
+  END IF;
+END;
+$subscriber_operator_reassignment$;
+
+DO $subscriber_operator_direct_update_denied$
+DECLARE
+  v_rejected boolean := false;
+BEGIN
+  BEGIN
+    UPDATE public.subscribers
+    SET operator_id = '10000000-0000-4000-8000-000000000002'
+    WHERE id = '30000000-0000-4000-8000-000000000001';
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Direct subscriber operator updates bypassed the guarded assignment RPC';
+  END IF;
+END;
+$subscriber_operator_direct_update_denied$;
+RESET ROLE;
+
+DO $subscriber_operator_active_operation_fixture$
+DECLARE
+  v_operation_id uuid;
+BEGIN
+  INSERT INTO public.pump_operations (
+    organization_id, pump_id, subscriber_id, subscriber_name,
+    operator_id, planned_minutes
+  ) VALUES (
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '20000000-0000-4000-8000-000000000001',
+    '30000000-0000-4000-8000-000000000001',
+    'مشترك أ 1',
+    '10000000-0000-4000-8000-000000000003',
+    5
+  )
+  RETURNING id INTO v_operation_id;
+  PERFORM set_config('test.assignment_active_operation_id', v_operation_id::text, true);
+END;
+$subscriber_operator_active_operation_fixture$;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DO $subscriber_operator_active_operation_guard$
+DECLARE
+  v_rejected boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.assign_subscriber_operator(
+      '30000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000002',
+      'محاولة تغيير المسؤولية أثناء التشغيل'
+    );
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Subscriber reassignment was allowed during a running operation';
+  END IF;
+END;
+$subscriber_operator_active_operation_guard$;
+RESET ROLE;
+
+UPDATE public.pump_operations
+SET status = 'completed',
+    ended_at = clock_timestamp(),
+    actual_seconds = 0
+WHERE id = current_setting('test.assignment_active_operation_id')::uuid;
 
 DO $daily_work_report_acl$
 BEGIN
