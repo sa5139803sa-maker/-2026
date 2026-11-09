@@ -742,8 +742,8 @@ $manager_a_write$;
 DO $manager_weekly_schedule_write$
 DECLARE v_schedule_id uuid; v_entry_id uuid; v_rows bigint;
 BEGIN
-  INSERT INTO public.weekly_schedules (pump_id, name, effective_from, effective_to)
-  VALUES ('20000000-0000-4000-8000-000000000001', 'مسودة اختبار مدير', '2026-11-01', '2026-12-31')
+  INSERT INTO public.weekly_schedules (pump_id, name, effective_from, effective_to, week_starts_on)
+  VALUES ('20000000-0000-4000-8000-000000000001', 'مسودة اختبار مدير', '2026-11-02', '2026-12-31', 1)
   RETURNING id INTO v_schedule_id;
 
   IF NOT EXISTS (
