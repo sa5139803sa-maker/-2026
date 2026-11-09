@@ -131,6 +131,7 @@ function OperationsScreenContent() {
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [operations, setOperations] = useState<Operation[]>([]);
   const [powerSources, setPowerSources] = useState<PumpPowerSource[]>([]);
+  const [surveyPowerSources, setSurveyPowerSources] = useState<PumpPowerSource[]>([]);
   const [selectedPowerSourceId, setSelectedPowerSourceId] = useState("");
   const [resumePowerSourceId, setResumePowerSourceId] = useState("");
   const [showAddPowerSource, setShowAddPowerSource] = useState(false);
@@ -463,15 +464,17 @@ function OperationsScreenContent() {
     setSurveyLoading(true);
     setSurveyStep(1);
     try {
-      const [scheduleResult, operationsResult, usageResult] = await Promise.all([
+      const [scheduleResult, operationsResult, usageResult, sourceResult] = await Promise.all([
         pumpOperationsRepository.listDailyScheduleEntries(organizationId, selectedPumpId, date),
         pumpOperationsRepository.listPumpOperations(organizationId, selectedPumpId, date),
         pumpOperationsRepository.getPowerUsage(date, date, "day", selectedPumpId),
+        pumpOperationsRepository.listPowerSourcesForReport(organizationId, selectedPumpId),
       ]);
-      if (scheduleResult.error || operationsResult.error) {
-        throw scheduleResult.error ?? operationsResult.error;
+      if (scheduleResult.error || operationsResult.error || sourceResult.error) {
+        throw scheduleResult.error ?? operationsResult.error ?? sourceResult.error;
       }
       const entries = (scheduleResult.data ?? []) as unknown as DailyScheduleEntry[];
+      setSurveyPowerSources((sourceResult.data ?? []) as PumpPowerSource[]);
       setSurveyEntries(entries);
       setSurveyOperations((operationsResult.data ?? []) as Operation[]);
       setSurveyManualMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
@@ -843,9 +846,11 @@ function OperationsScreenContent() {
                         </View>
                       </View>
                       <Text style={styles.fieldLabel}>إجمالي دقائق كل مصدر كهرباء (يشمل التشغيل المسجل آليًا)</Text>
-                      {powerSources.map((source) => (
+                      {surveyPowerSources.map((source) => (
                         <View key={source.id} style={styles.surveySourceRow}>
-                          <Text style={styles.surveySourceName}>{source.name}</Text>
+                          <Text style={styles.surveySourceName}>
+                            {source.name}{source.is_active ? "" : " (مؤرشف)"}
+                          </Text>
                           <TextInput value={sourceMinutes[source.id] ?? ""} onChangeText={(value) =>
                             setSourceMinutes((current) => ({ ...current, [source.id]: value }))
                           } style={styles.surveyMinutesInput} keyboardType="number-pad" placeholder="الدقائق" />
