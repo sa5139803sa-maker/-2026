@@ -247,6 +247,11 @@ function OperationsScreenContent() {
   const hasForeignRunningQueueItem = (dailyQueue?.items ?? []).some(
     (item) => item.is_owned === false && item.status === "running",
   );
+  const autoAdvanceTargetItem = dailyQueue?.items.find(
+    (item) => item.id === dailyQueue.auto_advance_queue_item_id,
+  );
+  const canControlAutoAdvance = profile?.role === "manager"
+    || (profile?.role === "operator" && autoAdvanceTargetItem?.is_owned === true);
   const autoAdvanceRemainingSeconds = dailyQueue?.auto_advance_at
     ? Math.max(0, Math.ceil((new Date(dailyQueue.auto_advance_at).getTime() - now) / 1000))
     : null;
@@ -761,7 +766,7 @@ function OperationsScreenContent() {
   };
 
   const cancelAutoAdvance = async () => {
-    if (!dailyQueue?.auto_advance_token || busy) return;
+    if (!dailyQueue?.auto_advance_token || !canControlAutoAdvance || busy) return;
     setBusy(true);
     setError(null);
     const { error: cancelError } = await pumpOperationsRepository.cancelDailyQueueAutoAdvance(
@@ -789,6 +794,9 @@ function OperationsScreenContent() {
       || !token
       || !itemId
       || !queue.auto_advance_at
+      || !(profile?.role === "manager"
+        || (profile?.role === "operator"
+          && queue.items.some((item) => item.id === itemId && item.is_owned === true)))
       || activeOperation
       || busy
       || !selectedPump
@@ -833,6 +841,7 @@ function OperationsScreenContent() {
     dailyQueue?.auto_advance_token,
     loadPumpData,
     now,
+    profile?.role,
     selectedPowerSourceId,
     selectedPump,
   ]);
@@ -1386,10 +1395,12 @@ function OperationsScreenContent() {
                             : `سيبدأ خلال ${autoAdvanceRemainingSeconds} ثوانٍ`}
                         </Text>
                       </View>
-                      <Pressable disabled={busy} onPress={() => void cancelAutoAdvance()}
-                        style={[styles.cancelAdvanceButton, busy && styles.disabled]}>
-                        <Text style={styles.cancelAdvanceText}>إلغاء</Text>
-                      </Pressable>
+                      {canControlAutoAdvance && (
+                        <Pressable disabled={busy} onPress={() => void cancelAutoAdvance()}
+                          style={[styles.cancelAdvanceButton, busy && styles.disabled]}>
+                          <Text style={styles.cancelAdvanceText}>إلغاء</Text>
+                        </Pressable>
+                      )}
                     </View>
                   ) : null}
 
