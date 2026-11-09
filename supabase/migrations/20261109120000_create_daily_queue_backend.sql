@@ -640,9 +640,12 @@ DECLARE
   v_new_token uuid;
   v_reason text := NULLIF(btrim(COALESCE(p_override_reason, '')), '');
 BEGIN
+  -- The queue is global across operators. Only the manager may reorder it;
+  -- an operator may act only on their own queue items, never on hidden turns.
   IF v_user_id IS NULL OR v_organization_id IS NULL
-     OR v_role NOT IN ('manager'::public.app_role, 'operator'::public.app_role) THEN
-    RAISE EXCEPTION 'Not authorized to reorder daily queues' USING ERRCODE = '42501';
+     OR v_role <> 'manager'::public.app_role THEN
+    RAISE EXCEPTION 'Only the manager can reorder the global daily queue'
+      USING ERRCODE = '42501';
   END IF;
 
   SELECT q.* INTO v_queue
