@@ -2067,6 +2067,20 @@ BEGIN
   RAISE EXCEPTION 'Platform organization creation was not atomically audited';
  END IF;
 END;$platform_organization_audit$;
+-- Retrospective report rows hold RESTRICT references to pump power sources.
+-- Remove the tenant B report ledger explicitly before the pump/source cascade.
+DELETE FROM public.daily_work_report_events
+WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  AND pump_id='20000000-0000-4000-8000-000000000003';
+DELETE FROM public.daily_work_report_items
+WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  AND pump_id='20000000-0000-4000-8000-000000000003';
+DELETE FROM public.daily_work_source_totals
+WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  AND pump_id='20000000-0000-4000-8000-000000000003';
+DELETE FROM public.daily_work_reports
+WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  AND pump_id='20000000-0000-4000-8000-000000000003';
 DELETE FROM public.pumps WHERE id = '20000000-0000-4000-8000-000000000003';
 DO $delete_behavior$
 BEGIN
