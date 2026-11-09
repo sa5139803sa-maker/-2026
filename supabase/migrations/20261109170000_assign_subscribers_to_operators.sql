@@ -94,19 +94,18 @@ CREATE TRIGGER a_assign_queue_item_operator
 -- Append-only history of responsibility changes.
 CREATE TABLE public.subscriber_operator_assignment_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  subscriber_id uuid NOT NULL REFERENCES public.subscribers(id) ON DELETE RESTRICT,
-  organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE RESTRICT,
-  pump_id uuid NOT NULL REFERENCES public.pumps(id) ON DELETE RESTRICT,
+  -- These identifiers are immutable audit snapshots, not live ownership FKs.
+  -- Historical rows must not block subscriber, pump, or tenant teardown.
+  subscriber_id uuid NOT NULL,
+  organization_id uuid NOT NULL,
+  pump_id uuid NOT NULL,
   previous_operator_id uuid REFERENCES public.profiles(id) ON DELETE RESTRICT,
   previous_operator_name text,
   new_operator_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE RESTRICT,
   new_operator_name text NOT NULL,
   actor_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE RESTRICT,
   reason text NOT NULL CHECK (char_length(btrim(reason)) BETWEEN 2 AND 240),
-  occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  CONSTRAINT subscriber_operator_assignment_events_scope_fkey
-    FOREIGN KEY (subscriber_id, organization_id, pump_id)
-    REFERENCES public.subscribers (id, organization_id, pump_id) ON DELETE RESTRICT
+  occurred_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
 CREATE INDEX subscriber_operator_assignment_events_subscriber_time_idx
@@ -257,6 +256,7 @@ DECLARE
   v_operator_name text;
   v_previous_operator_id uuid;
   v_updated_items integer := 0;
+  v_queue_updated_items integer := 0;
   v_queue_id uuid;
   v_item record;
   v_reason text := NULLIF(btrim(COALESCE(p_reason, '')), '');
@@ -342,7 +342,8 @@ BEGIN
       AND status = 'queued'
       AND assigned_operator_id IS DISTINCT FROM p_operator_id;
 
-    GET DIAGNOSTICS v_updated_items = ROW_COUNT;
+    GET DIAGNOSTICS v_queue_updated_items = ROW_COUNT;
+    v_updated_items := v_updated_items + v_queue_updated_items;
     UPDATE public.daily_queues
     SET queue_version = queue_version + 1,
         updated_at = clock_timestamp()
@@ -366,12 +367,6 @@ BEGIN
       );
     END LOOP;
   END LOOP;
-
-  SELECT count(*)::integer INTO v_updated_items
-  FROM public.queue_items qi
-  WHERE qi.subscriber_id = p_subscriber_id
-    AND qi.status = 'queued'
-    AND qi.assigned_operator_id = p_operator_id;
 
   RETURN jsonb_build_object(
     'subscriber_id', p_subscriber_id,
