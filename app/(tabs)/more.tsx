@@ -30,9 +30,9 @@ const items = [
   },
   {
     label: "التقارير",
-    detail: "قيد التطوير",
+    detail: "تقارير التشغيل ومصادر الكهرباء",
     icon: FileText,
-    enabled: false,
+    enabled: true,
   },
   {
     label: "إدارة الحسابات",
@@ -52,7 +52,12 @@ export default function MoreScreen() {
   const { profile, signOut } = useAuth();
   const displayName = profile?.display_name?.trim() || "المستخدم";
   const roleLabel = profile ? roleLabels[profile.role] ?? "حساب مخصص للويب" : "دور غير محدد";
-  const visibleItems = items.filter((item) => item.label === "إدارة الحسابات" ? profile?.role === "manager" : item.label !== "المشتركون والغواطس" || canAccessFeature(profile?.role, "management"));
+  const canViewReports = profile?.role === "manager" || profile?.role === "operator" || profile?.role === "supervisor";
+  const visibleItems = items.filter((item) => {
+    if (item.label === "إدارة الحسابات") return profile?.role === "manager";
+    if (item.label === "التقارير") return canViewReports;
+    return item.label !== "المشتركون والغواطس" || canAccessFeature(profile?.role, "management");
+  });
   const initial = displayName.charAt(0) || "؟";
 
   return (
@@ -85,7 +90,11 @@ export default function MoreScreen() {
             accessibilityRole="button"
             accessibilityState={{ disabled: !enabled }}
             disabled={!enabled}
-            onPress={() => router.push(label === "إدارة الحسابات" ? "/account-management" : "/management")}
+            onPress={() => router.push(
+              label === "إدارة الحسابات" ? "/account-management"
+                : label === "التقارير" ? "/reports"
+                  : "/management",
+            )}
             style={({ pressed }) => [
               styles.menuItem,
               index === items.length - 1 && styles.lastMenuItem,
