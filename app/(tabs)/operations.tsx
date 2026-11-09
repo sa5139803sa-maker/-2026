@@ -132,6 +132,9 @@ function OperationsScreenContent() {
   const [powerSources, setPowerSources] = useState<PumpPowerSource[]>([]);
   const [selectedPowerSourceId, setSelectedPowerSourceId] = useState("");
   const [resumePowerSourceId, setResumePowerSourceId] = useState("");
+  const [showAddPowerSource, setShowAddPowerSource] = useState(false);
+  const [newPowerSourceName, setNewPowerSourceName] = useState("");
+  const [newPowerSourceType, setNewPowerSourceType] = useState<PumpPowerSource["source_type"]>("solar");
   const [usagePeriod, setUsagePeriod] = useState<"day" | "week" | "month">("day");
   const [powerUsageRows, setPowerUsageRows] = useState<PowerUsageRow[]>([]);
   const [powerUsageLoading, setPowerUsageLoading] = useState(false);
@@ -147,6 +150,7 @@ function OperationsScreenContent() {
   const [surveyEntries, setSurveyEntries] = useState<DailyScheduleEntry[]>([]);
   const [surveyOperations, setSurveyOperations] = useState<Operation[]>([]);
   const [surveyManualMinutes, setSurveyManualMinutes] = useState<Record<string, string>>({});
+  const [surveyExtraMinutes, setSurveyExtraMinutes] = useState<Record<string, string>>({});
   const [minutes, setMinutes] = useState("30");
   const [emergencyName, setEmergencyName] = useState("");
   const [pauseReason, setPauseReason] = useState("");
@@ -341,6 +345,46 @@ function OperationsScreenContent() {
     ? Math.min(1, elapsedSeconds / (activeOperation.planned_minutes * 60))
     : 0;
 
+  const addPowerSource = async () => {
+    if (!selectedPumpId || busy || profile?.role !== "manager") return;
+    if (newPowerSourceName.trim().length < 2) {
+      setError("اسم مصدر الكهرباء يجب أن يحتوي على حرفين على الأقل.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const { error: insertError } = await pumpOperationsRepository.createPowerSource(
+      selectedPumpId, newPowerSourceName.trim(), newPowerSourceType,
+    );
+    if (insertError) {
+      console.error("power source creation failed", insertError);
+      setError(insertError.code === "23505"
+        ? "يوجد مصدر بهذا الاسم لهذا الغطاس."
+        : "تعذر إضافة مصدر الكهرباء. تحقق من الصلاحية والبيانات.");
+    } else {
+      setNewPowerSourceName("");
+      setShowAddPowerSource(false);
+      setNotice("تمت إضافة مصدر الكهرباء.");
+      await loadPumpData();
+    }
+    setBusy(false);
+  };
+
+  const archivePowerSource = async (sourceId: string) => {
+    if (profile?.role !== "manager" || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error: archiveError } = await pumpOperationsRepository.archivePowerSource(sourceId);
+    if (archiveError) {
+      console.error("power source archival failed", archiveError);
+      setError("تعذر أرشفة مصدر الكهرباء.");
+    } else {
+      setNotice("تمت أرشفة المصدر، وحُفظت سجلاته السابقة.");
+      await loadPumpData();
+    }
+    setBusy(false);
+  };
+
   const startOperation = async (subscriber: Subscriber | null) => {
     if (!selectedPumpId || busy) return;
     const plannedMinutes = Number(minutes);
@@ -428,6 +472,7 @@ function OperationsScreenContent() {
       setSurveyEntries(entries);
       setSurveyOperations((operationsResult.data ?? []) as Operation[]);
       setSurveyManualMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
+      setSurveyExtraMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
       if (usageResult.error) {
         console.error("daily source prefill failed", usageResult.error);
       }
@@ -477,8 +522,9 @@ function OperationsScreenContent() {
       }
       const items = surveyEntries.map((entry, index) => {
         const manual = Number(surveyManualMinutes[entry.id] || 0);
-        if (!Number.isInteger(manual) || manual < 0) {
-          throw new Error(`تحقق من الدقائق اليدوية للمشترك ${entry.subscribers?.full_name ?? ""}.`);
+        const extra = Number(surveyExtraMinutes[entry.id] || 0);
+        if (!Number.isInteger(manual) || manual < 0 || !Number.isInteger(extra) || extra < 0) {
+          throw new Error(`تحقق من الدقائق اليدوية والإضافية للمشترك ${entry.subscribers?.full_name ?? ""}.`);
         }
         return {
           entry_type: "weekly" as const,
@@ -486,7 +532,7 @@ function OperationsScreenContent() {
           subscriber_id: entry.subscriber_id,
           sort_order: index,
           manual_minutes: manual,
-          extra_minutes: 0,
+          extra_minutes: extra,
           note: null,
         };
       });
@@ -662,12 +708,49 @@ function OperationsScreenContent() {
                 ) : (
                   <View style={styles.sourceChoices}>
                     {powerSources.map((source) => (
-                      <Pressable key={source.id} onPress={() => setSelectedPowerSourceId(source.id)}
-                        style={[styles.sourceChoice, selectedPowerSourceId === source.id && styles.sourceChoiceSelected]}>
-                        <Text style={[styles.sourceChoiceText, selectedPowerSourceId === source.id && styles.sourceChoiceTextSelected]}>{source.name}</Text>
-                      </Pressable>
+                      <View key={source.id} style={styles.sourceChoiceRow}>
+                        <Pressable onPress={() => setSelectedPowerSourceId(source.id)}
+                          style={[styles.sourceChoice, styles.sourceChoiceGrow, selectedPowerSourceId === source.id && styles.sourceChoiceSelected]}>
+                          <Text style={[styles.sourceChoiceText, selectedPowerSourceId === source.id && styles.sourceChoiceTextSelected]}>{source.name}</Text>
+                        </Pressable>
+                        {profile?.role === "manager" ? (
+                          <Pressable disabled={busy} onPress={() => void archivePowerSource(source.id)} style={styles.archiveSourceButton}>
+                            <Text style={styles.archiveSourceText}>أرشفة</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
                     ))}
                   </View>
+                  {profile?.role === "manager" ? (
+                    <View style={styles.addSourceBlock}>
+                      <Pressable onPress={() => setShowAddPowerSource((open) => !open)} style={styles.refresh}>
+                        <Text style={styles.refreshText}>{showAddPowerSource ? "إلغاء إضافة مصدر" : "+ إضافة مصدر جديد"}</Text>
+                      </Pressable>
+                      {showAddPowerSource ? (
+                        <View style={styles.addSourceForm}>
+                          <TextInput value={newPowerSourceName} onChangeText={setNewPowerSourceName}
+                            style={styles.emergencyInput} placeholder="اسم مصدر الكهرباء" textAlign="right" maxLength={100} />
+                          <View style={styles.sourceChoices}>
+                            {([
+                              ["solar", "شمسي"],
+                              ["generator", "مولد"],
+                              ["grid", "شبكة"],
+                              ["other", "آخر"],
+                            ] as const).map(([type, label]) => (
+                              <Pressable key={type} onPress={() => setNewPowerSourceType(type)}
+                                style={[styles.sourceChoice, newPowerSourceType === type && styles.sourceChoiceSelected]}>
+                                <Text style={[styles.sourceChoiceText, newPowerSourceType === type && styles.sourceChoiceTextSelected]}>{label}</Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                          <Pressable disabled={busy || newPowerSourceName.trim().length < 2}
+                            onPress={() => void addPowerSource()} style={[styles.addSourceButton, (busy || newPowerSourceName.trim().length < 2) && styles.disabled]}>
+                            <Text style={styles.actionText}>حفظ المصدر</Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
                 )}
               </View>
               <Text style={styles.fieldLabel}>مدة التعبئة بالدقائق</Text>
@@ -802,6 +885,12 @@ function OperationsScreenContent() {
                               {automaticMinutes + (Number(surveyManualMinutes[entry.id] || 0) || 0)} دقيقة
                             </Text>
                           </View>
+                          <View style={styles.surveyInputCell}>
+                            <Text style={styles.fieldLabel}>دقائق إضافية خارج الحصة</Text>
+                            <TextInput value={surveyExtraMinutes[entry.id] ?? ""} onChangeText={(value) =>
+                              setSurveyExtraMinutes((current) => ({ ...current, [entry.id]: value }))
+                            } style={styles.surveyTimeInput} keyboardType="number-pad" placeholder="0" />
+                          </View>
                         </View>
                       </View>
                     );
@@ -905,6 +994,13 @@ const styles = StyleSheet.create({
   sourceChoiceTextSelected: { color: colors.text.inverse },
   surveyToggle: { gap: spacing.xs },
   surveyBody: { gap: spacing.md },
+  sourceChoiceRow: { flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs, width: "100%" },
+  sourceChoiceGrow: { flex: 1 },
+  archiveSourceButton: { paddingVertical: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: radius.sm, backgroundColor: colors.status.warning.background },
+  archiveSourceText: { color: colors.status.warning.text, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.medium },
+  addSourceBlock: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.xs, gap: spacing.sm },
+  addSourceForm: { gap: spacing.sm },
+  addSourceButton: { minHeight: 44, borderRadius: radius.md, backgroundColor: colors.brand.primary, alignItems: "center", justifyContent: "center" },
   surveyStep: { color: colors.brand.primary, fontSize: typography.fontSize.md, fontFamily: typography.fontFamily.bold, textAlign: "right", paddingTop: spacing.sm },
   surveyInputsRow: { flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.sm },
   surveyInputCell: { flex: 1, minWidth: 110, gap: 5 },
