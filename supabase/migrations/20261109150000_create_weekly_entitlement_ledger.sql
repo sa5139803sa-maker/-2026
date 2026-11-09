@@ -1087,10 +1087,17 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  -- Expire prior cycles on demand as well as during daily queue generation.
-  PERFORM water_management_private.expire_due_weekly_entitlement_cycles(
-    v_organization_id, v_source.pump_id, v_today, v_user_id
-  );
+  -- Serialize transfer-created queue items with subscriber reassignment and
+  -- queue generation. All three paths lock pump -> queue -> subscriber.
+  PERFORM 1
+  FROM public.pumps p
+  WHERE p.id = v_source.pump_id
+    AND p.organization_id = v_organization_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Weekly allocation pump is not accessible'
+      USING ERRCODE = '42501';
+  END IF;
 
   IF v_source.allocation_date = p_target_date THEN
     RAISE EXCEPTION 'Source and target day must be different'
@@ -1119,6 +1126,12 @@ BEGIN
   LOOP
     NULL;
   END LOOP;
+
+  -- Expire only after queue rows are locked, preserving queue -> cycle order
+  -- used by operation completion and preventing transfer/completion deadlocks.
+  PERFORM water_management_private.expire_due_weekly_entitlement_cycles(
+    v_organization_id, v_source.pump_id, v_today, v_user_id
+  );
 
   IF v_source_queue_id IS NOT NULL THEN
     SELECT q.* INTO v_source_queue
