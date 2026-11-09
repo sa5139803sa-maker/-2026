@@ -54,6 +54,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109065908_harden_pump_operations_grants_and_indexes.sql
 \ir ../../migrations/20261109070000_restrict_pump_operation_lifecycle_to_guarded_rpcs.sql
 \ir ../../migrations/20261109071000_revoke_direct_pump_operation_state_column_updates.sql
+\ir ../../migrations/20261109072000_move_pump_operation_definers_to_private_schema.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -722,9 +723,37 @@ BEGIN
     JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'public'
       AND p.proname IN ('pause_pump_operation', 'resume_pump_operation', 'complete_pump_operation')
-      AND (NOT p.prosecdef OR NOT (p.proconfig @> ARRAY['search_path=""']))
+      AND p.prosecdef
   ) THEN
-    RAISE EXCEPTION 'Operation lifecycle RPCs must be hardened SECURITY DEFINER functions';
+    RAISE EXCEPTION 'Exposed operation RPC endpoints must remain SECURITY INVOKER';
+  END IF;
+  IF (
+    SELECT count(*) FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'water_management_private'
+      AND p.proname IN (
+        'pause_pump_operation_internal',
+        'resume_pump_operation_internal',
+        'complete_pump_operation_internal'
+      )
+      AND p.prosecdef
+      AND p.proconfig @> ARRAY['search_path=""']
+  ) <> 3 THEN
+    RAISE EXCEPTION 'Private operation lifecycle implementations are not hardened SECURITY DEFINER functions';
+  END IF;
+  IF NOT pg_catalog.has_function_privilege(
+       'authenticated', 'water_management_private.pause_pump_operation_internal(uuid)', 'EXECUTE'
+     )
+     OR NOT pg_catalog.has_function_privilege(
+       'authenticated', 'water_management_private.resume_pump_operation_internal(uuid)', 'EXECUTE'
+     )
+     OR NOT pg_catalog.has_function_privilege(
+       'authenticated', 'water_management_private.complete_pump_operation_internal(uuid)', 'EXECUTE'
+     )
+     OR pg_catalog.has_function_privilege(
+       'anon', 'water_management_private.pause_pump_operation_internal(uuid)', 'EXECUTE'
+     ) THEN
+    RAISE EXCEPTION 'Private operation lifecycle RPC execution grants are incorrect';
   END IF;
 END;
 $pump_operation_acl$;
