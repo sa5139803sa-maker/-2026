@@ -910,6 +910,12 @@ BEGIN
     RAISE EXCEPTION 'Queue item is not waiting to start' USING ERRCODE = 'P0002';
   END IF;
 
+  IF v_role = 'operator'::public.app_role
+     AND v_item.assigned_operator_id IS DISTINCT FROM v_user_id THEN
+    RAISE EXCEPTION 'This queue item is assigned to another operator'
+      USING ERRCODE = '42501';
+  END IF;
+
   SELECT qi.id INTO v_first_item_id
   FROM public.queue_items qi
   WHERE qi.daily_queue_id = p_queue_id
@@ -1134,6 +1140,7 @@ DECLARE
   v_name text;
   v_branch_id uuid;
   v_branch_name text;
+  v_subscriber_operator_id uuid;
   v_sort_order integer;
   v_item public.queue_items%ROWTYPE;
   v_now timestamptz := clock_timestamp();
@@ -1184,8 +1191,8 @@ BEGIN
       RAISE EXCEPTION 'A registered subscriber is required' USING ERRCODE = '22023';
     END IF;
 
-    SELECT s.full_name, s.branch_id, b.name
-    INTO v_name, v_branch_id, v_branch_name
+    SELECT s.full_name, s.branch_id, b.name, s.operator_id
+    INTO v_name, v_branch_id, v_branch_name, v_subscriber_operator_id
     FROM public.subscribers s
     LEFT JOIN public.branches b
       ON b.id = s.branch_id
@@ -1199,6 +1206,11 @@ BEGIN
     IF v_name IS NULL THEN
       RAISE EXCEPTION 'Subscriber must be active on the same pump'
         USING ERRCODE = '22023';
+    END IF;
+    IF v_role = 'operator'::public.app_role
+       AND v_subscriber_operator_id IS DISTINCT FROM v_user_id THEN
+      RAISE EXCEPTION 'This subscriber is assigned to another operator'
+        USING ERRCODE = '42501';
     END IF;
   ELSE
     IF p_subscriber_id IS NOT NULL THEN
