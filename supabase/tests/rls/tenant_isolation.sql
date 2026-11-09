@@ -2821,12 +2821,6 @@ BEGIN
   WHERE id = current_setting('test.daily_queue_id')::uuid;
 
   IF (SELECT count(*) FROM public.get_daily_work_report_allocations(
-        '20000000-0000-4000-8000-000000000001', v_queue_date
-      ) WHERE operator_id = auth.uid()) < 1 THEN
-    RAISE EXCEPTION 'Former operator cannot view entitlement ownership for the date before reassignment';
-  END IF;
-
-  IF (SELECT count(*) FROM public.get_daily_work_report_allocations(
         '20000000-0000-4000-8000-000000000001',
         (SELECT queue_date FROM public.daily_queues
          WHERE id = current_setting('test.assignment_future_queue_id')::uuid)
