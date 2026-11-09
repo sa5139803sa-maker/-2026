@@ -156,7 +156,7 @@ function OperationsScreenContent() {
         .select("id,pump_id,subscriber_id,subscriber_name,planned_minutes,status,started_at,paused_at,paused_seconds,ended_at,actual_seconds,operation_date")
         .eq("organization_id", organizationId)
         .eq("pump_id", selectedPumpId)
-        .eq("operation_date", day)
+        .or(`operation_date.eq.${day},status.in.(running,paused)`)
         .order("started_at", { ascending: false }),
     ]);
     if (subscriberResult.error || operationResult.error) {
@@ -445,7 +445,7 @@ const styles = StyleSheet.create({
   startText: { color: "#fff", fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.bold },
   emergencyBlock: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md, gap: spacing.sm },
   emergencyInput: { minHeight: 46, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, color: colors.text.primary, backgroundColor: colors.background.surface },
-  emergencyButton: { minHeight: 44, borderRadius: radius.md, borderWidth: 1, borderColor: colors.status.warning.border, backgroundColor: colors.status.warning.background, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: spacing.xs },
+  emergencyButton: { minHeight: 44, borderRadius: radius.md, borderWidth: 1, borderColor: colors.status.warning.main, backgroundColor: colors.status.warning.background, flexDirection: "row-reverse", alignItems: "center", justifyContent: "center", gap: spacing.xs },
   emergencyText: { color: colors.status.warning.text, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.semiBold },
   historyRow: { minHeight: 64, flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm, borderTopWidth: 1, borderTopColor: colors.background.subtle },
   historyIcon: { width: 34, height: 34, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.background.subtle },
