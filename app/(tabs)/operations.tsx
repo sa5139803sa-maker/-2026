@@ -30,6 +30,9 @@ import {
   type DailyWorkReportDetails,
   type DailyQueue,
   type DailyQueueItem,
+  type WeeklyEntitlementAllocationForDay,
+  type WeeklyEntitlementTransferOption,
+  type WeeklyQueueOperationLink,
 } from "@/lib/repositories/pump-operations";
 
 function localOperationDate() {
@@ -172,6 +175,12 @@ function OperationsScreenContent() {
   const [surveyOperations, setSurveyOperations] = useState<Operation[]>([]);
   const [surveyManualMinutes, setSurveyManualMinutes] = useState<Record<string, string>>({});
   const [surveyExtraMinutes, setSurveyExtraMinutes] = useState<Record<string, string>>({});
+  const [surveyQueueItems, setSurveyQueueItems] = useState<WeeklyQueueOperationLink[]>([]);
+  const [weeklyTransferOpen, setWeeklyTransferOpen] = useState(false);
+  const [weeklyTransferLoading, setWeeklyTransferLoading] = useState(false);
+  const [weeklyTransferOptions, setWeeklyTransferOptions] = useState<WeeklyEntitlementTransferOption[]>([]);
+  const [weeklyTransferMinutes, setWeeklyTransferMinutes] = useState<Record<string, string>>({});
+  const [weeklyTransferReason, setWeeklyTransferReason] = useState("");
   const autoAdvanceInFlight = useRef<string | null>(null);
   const handoverStartTimer = useRef<{ key: string; timer: ReturnType<typeof setTimeout> } | null>(null);
   const minuteAlertPlayedForOperation = useRef<string | null>(null);
@@ -803,19 +812,64 @@ function OperationsScreenContent() {
     setSurveyLoading(true);
     setSurveyStep(1);
     try {
-      const [scheduleResult, operationsResult, usageResult, sourceResult] = await Promise.all([
+      const [
+        scheduleResult,
+        operationsResult,
+        usageResult,
+        sourceResult,
+        allocationResult,
+        queueItemsResult,
+      ] = await Promise.all([
         pumpOperationsRepository.listDailyScheduleEntries(organizationId, selectedPumpId, date),
         pumpOperationsRepository.listPumpOperations(organizationId, selectedPumpId, date),
         pumpOperationsRepository.getPowerUsage(date, date, "day", selectedPumpId),
         pumpOperationsRepository.listPowerSourcesForReport(organizationId, selectedPumpId),
+        pumpOperationsRepository.listWeeklyEntitlementAllocationsForDay(organizationId, selectedPumpId, date),
+        pumpOperationsRepository.listWeeklyQueueItemsForReport(organizationId, selectedPumpId, date),
       ]);
-      if (scheduleResult.error || operationsResult.error || sourceResult.error) {
-        throw scheduleResult.error ?? operationsResult.error ?? sourceResult.error;
+      if (scheduleResult.error || operationsResult.error || sourceResult.error
+          || allocationResult.error || queueItemsResult.error) {
+        throw scheduleResult.error ?? operationsResult.error ?? sourceResult.error
+          ?? allocationResult.error ?? queueItemsResult.error;
       }
-      const entries = (scheduleResult.data ?? []) as unknown as DailyScheduleEntry[];
+
+      const allocations = (allocationResult.data ?? []) as unknown as WeeklyEntitlementAllocationForDay[];
+      const allocationByScheduleEntry = new Map(
+        allocations
+          .filter((allocation) => allocation.source_schedule_entry_id !== null)
+          .map((allocation) => [allocation.source_schedule_entry_id as string, allocation]),
+      );
+      const scheduledEntries = ((scheduleResult.data ?? []) as unknown as DailyScheduleEntry[])
+        .flatMap((entry) => {
+          const allocation = allocationByScheduleEntry.get(entry.id);
+          if (!allocation || allocation.allocated_minutes <= 0) return [];
+          return [{
+            ...entry,
+            entry_type: "weekly" as const,
+            schedule_entry_id: entry.id,
+            weekly_entitlement_allocation_id: allocation.id,
+            planned_minutes: allocation.allocated_minutes,
+          }];
+        });
+      const reassignedEntries = allocations
+        .filter((allocation) => allocation.source_schedule_entry_id === null && allocation.allocated_minutes > 0)
+        .map((allocation, index) => ({
+          id: allocation.id,
+          subscriber_id: allocation.subscriber_id,
+          weekday: new Date(`${date}T12:00:00Z`).getUTCDay() || 7,
+          sort_order: scheduledEntries.length + index,
+          planned_minutes: allocation.allocated_minutes,
+          entry_type: "weekly_reassigned" as const,
+          schedule_entry_id: null,
+          weekly_entitlement_allocation_id: allocation.id,
+          subscribers: allocation.subscribers,
+        }));
+      const entries = [...scheduledEntries, ...reassignedEntries];
+
       setSurveyPowerSources((sourceResult.data ?? []) as PumpPowerSource[]);
       setSurveyEntries(entries);
       setSurveyOperations((operationsResult.data ?? []) as Operation[]);
+      setSurveyQueueItems((queueItemsResult.data ?? []) as unknown as WeeklyQueueOperationLink[]);
       setSurveyManualMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
       setSurveyExtraMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
       if (usageResult.error) {
@@ -835,6 +889,7 @@ function OperationsScreenContent() {
       setError("تعذر تحميل الجدول أو سجلات التشغيل لهذا التاريخ.");
       setSurveyEntries([]);
       setSurveyOperations([]);
+      setSurveyQueueItems([]);
     } finally {
       setSurveyLoading(false);
     }
@@ -869,14 +924,15 @@ function OperationsScreenContent() {
         if (!Number.isInteger(manual) || manual < 0 || !Number.isInteger(extra) || extra < 0) {
           throw new Error(`تحقق من الدقائق اليدوية والإضافية للمشترك ${entry.subscribers?.full_name ?? ""}.`);
         }
+        const entryType = entry.entry_type ?? "weekly";
         return {
-          entry_type: "weekly" as const,
-          schedule_entry_id: entry.id,
+          entry_type: entryType,
+          schedule_entry_id: entryType === "weekly_reassigned" ? null : (entry.schedule_entry_id ?? entry.id),
           subscriber_id: entry.subscriber_id,
           sort_order: index,
           manual_minutes: manual,
           extra_minutes: extra,
-          note: null,
+          note: entryType === "weekly_reassigned" ? "حصة أسبوعية منقولة" : null,
         };
       });
       const { error: saveError } = await pumpOperationsRepository.saveDailyWorkReport({
@@ -907,6 +963,78 @@ function OperationsScreenContent() {
     } finally {
       setSurveySaving(false);
     }
+  };
+
+  const loadWeeklyTransferOptions = async () => {
+    if (!selectedPumpId) return;
+    setWeeklyTransferLoading(true);
+    setError(null);
+    const { data, error: optionsError } = await pumpOperationsRepository.getWeeklyEntitlementTransferOptions(
+      selectedPumpId,
+      localOperationDate(),
+    );
+    if (optionsError) {
+      console.error("weekly entitlement transfer options failed", optionsError);
+      setWeeklyTransferOptions([]);
+      setError(optionsError.code === "P0002"
+        ? "لا يوجد جدول أسبوعي فعّال يسمح بنقل الحصة لهذا اليوم."
+        : "تعذر تحميل الأرصدة الأسبوعية القابلة للنقل.");
+    } else {
+      const rows = (data ?? []) as WeeklyEntitlementTransferOption[];
+      setWeeklyTransferOptions(rows);
+      setWeeklyTransferMinutes(Object.fromEntries(
+        rows.map((item) => [item.allocation_id, String(Math.min(5, item.available_minutes))]),
+      ));
+    }
+    setWeeklyTransferLoading(false);
+  };
+
+  const toggleWeeklyTransfer = () => {
+    const next = !weeklyTransferOpen;
+    setWeeklyTransferOpen(next);
+    if (next) void loadWeeklyTransferOptions();
+  };
+
+  const transferWeeklyMinutes = async (item: WeeklyEntitlementTransferOption) => {
+    if (!selectedPumpId || busy) return;
+    const minutes = Number(weeklyTransferMinutes[item.allocation_id] ?? "");
+    const reason = weeklyTransferReason.trim();
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > item.available_minutes) {
+      setError(`أدخل دقائق من 1 إلى ${item.available_minutes} لهذه الحصة.`);
+      return;
+    }
+    if (reason.length < 2) {
+      setError("سبب نقل الحصة مطلوب ويجب ألا يقل عن حرفين.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const { error: transferError } = await pumpOperationsRepository.transferWeeklyEntitlementMinutes({
+      sourceAllocationId: item.allocation_id,
+      targetDate: localOperationDate(),
+      minutes,
+      reason,
+    });
+    if (transferError) {
+      console.error("weekly entitlement transfer failed", transferError);
+      if (transferError.code === "22023") {
+        setError("تعذر النقل: تحقق من الدقائق والسبب، وتأكد أن المصدر والهدف داخل الأسبوع نفسه.");
+      } else if (transferError.code === "55000") {
+        setError("تعذر النقل لأن الدورة انتهت أو أن أحد الدورين بدأ أو اكتمل.");
+      } else if (transferError.code === "42501") {
+        setError("ليس لديك صلاحية نقل حصص هذا الغطاس.");
+      } else {
+        setError("تعذر نقل الحصة. حدّث الطابور ثم أعد المحاولة.");
+      }
+    } else {
+      setNotice(`تم نقل ${minutes} دقيقة من ${item.subscriber_name} إلى طابور اليوم، وسُجلت الحركة في دفتر الاستحقاق.`);
+      setWeeklyTransferReason("");
+      await loadPumpData();
+      await loadWeeklyTransferOptions();
+    }
+    setBusy(false);
   };
 
   const autoCompletedOperationId = useRef<string | null>(null);
