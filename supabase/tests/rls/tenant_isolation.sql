@@ -2166,6 +2166,9 @@ DECLARE
   v_allocation_id uuid;
   v_report public.daily_work_reports%ROWTYPE;
   v_total_minutes numeric;
+  v_work_date date := (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date
+    + 7
+    + ((5 - extract(isodow FROM (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date)::integer + 7) % 7);
   v_rejected boolean := false;
 BEGIN
   SELECT id INTO v_source_id
@@ -2175,7 +2178,7 @@ BEGIN
 
   PERFORM public.generate_daily_queue(
     '20000000-0000-4000-8000-000000000003',
-    DATE '2026-01-09'
+    v_work_date
   );
   SELECT a.id INTO v_allocation_id
   FROM public.weekly_entitlement_allocations a
@@ -2183,7 +2186,7 @@ BEGIN
     AND a.pump_id = '20000000-0000-4000-8000-000000000003'
     AND a.subscriber_id = '30000000-0000-4000-8000-000000000004'
     AND a.source_schedule_entry_id = '60000000-0000-4000-8000-000000000003'
-    AND a.allocation_date = DATE '2026-01-09';
+    AND a.allocation_date = v_work_date;
   IF v_allocation_id IS NULL THEN
     RAISE EXCEPTION 'Tenant B daily weekly entitlement allocation fixture is missing';
   END IF;
@@ -2191,8 +2194,8 @@ BEGIN
   v_report := public.save_daily_work_report(
     '20000000-0000-4000-8000-000000000003',
     '10000000-0000-4000-8000-000000000007',
-    '2026-01-09 07:00:00+02'::timestamptz,
-    '2026-01-09 09:00:00+02'::timestamptz,
+    (v_work_date::timestamp + time '07:00') AT TIME ZONE 'Asia/Hebron',
+    (v_work_date::timestamp + time '09:00') AT TIME ZONE 'Asia/Hebron',
     20,
     jsonb_build_array(jsonb_build_object('power_source_id',v_source_id,'minutes',100)),
     jsonb_build_array(jsonb_build_object(
@@ -2210,7 +2213,7 @@ BEGIN
   );
 
   IF v_report.status <> 'submitted'
-     OR v_report.work_date <> DATE '2026-01-09'
+     OR v_report.work_date <> v_work_date
      OR v_report.stoppage_minutes <> 20
      OR v_report.operator_id <> '10000000-0000-4000-8000-000000000007'::uuid
      OR v_report.created_by <> '10000000-0000-4000-8000-000000000006'::uuid
@@ -2220,7 +2223,7 @@ BEGIN
 
   SELECT sum(total_minutes) INTO v_total_minutes
   FROM public.get_pump_power_usage(
-    DATE '2026-01-09', DATE '2026-01-09', 'day',
+    v_work_date, v_work_date, 'day',
     '20000000-0000-4000-8000-000000000003'
   )
   WHERE data_source='daily_survey'
@@ -2240,7 +2243,7 @@ BEGIN
 
   IF (SELECT count(*) FROM public.pump_operations
       WHERE pump_id='20000000-0000-4000-8000-000000000003'
-        AND operation_date=DATE '2026-01-09') <> 0 THEN
+        AND operation_date=v_work_date) <> 0 THEN
     RAISE EXCEPTION 'Daily survey created a fake pump operation';
   END IF;
 
@@ -2249,8 +2252,8 @@ BEGIN
     PERFORM public.save_daily_work_report(
       '20000000-0000-4000-8000-000000000003',
       '10000000-0000-4000-8000-000000000007',
-      '2026-01-16 07:00:00+02'::timestamptz,
-      '2026-01-16 09:00:00+02'::timestamptz,
+      ((v_work_date + 7)::timestamp + time '07:00') AT TIME ZONE 'Asia/Hebron',
+      ((v_work_date + 7)::timestamp + time '09:00') AT TIME ZONE 'Asia/Hebron',
       20,
       jsonb_build_array(jsonb_build_object('power_source_id',v_source_id,'minutes',100)),
       '[]'::jsonb,
