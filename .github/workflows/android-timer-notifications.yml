@@ -53,6 +53,20 @@ jobs:
       - name: Generate Android native project
         run: npx expo prebuild --platform android --no-install --clean
 
+      - name: Verify local PumpTimer module autolinking
+        run: |
+          npx expo-modules-autolinking resolve --platform android > /tmp/expo-android-modules.json
+          node <<'NODE'
+          const fs = require("node:fs");
+          const resolved = JSON.parse(fs.readFileSync("/tmp/expo-android-modules.json", "utf8"));
+          const serialized = JSON.stringify(resolved.modules ?? []);
+          if (!serialized.includes("expo.modules.pumptimer.PumpTimerModule")) {
+            console.error("Local PumpTimer native module was not autolinked for Android.");
+            process.exit(1);
+          }
+          console.log("PumpTimer native module autolinking verified.");
+          NODE
+
       - name: Assemble Android debug APK
         working-directory: android
         run: ./gradlew --no-daemon assembleDebug
