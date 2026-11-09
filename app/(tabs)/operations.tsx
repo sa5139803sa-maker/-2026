@@ -163,10 +163,6 @@ function OperationsScreenContent() {
     () => pumps.find((pump) => pump.id === selectedPumpId) ?? null,
     [pumps, selectedPumpId],
   );
-  const selectedPowerSource = useMemo(
-    () => powerSources.find((source) => source.id === selectedPowerSourceId) ?? null,
-    [powerSources, selectedPowerSourceId],
-  );
   const groupedPowerUsage = useMemo(() => {
     const selectedRows = usagePeriod === "week" && powerUsageRows.length > 0
       ? powerUsageRows.filter((row) => row.period_start === powerUsageRows.reduce(
@@ -391,7 +387,10 @@ function OperationsScreenContent() {
     const { error: actionError } = action === "pause_pump_operation"
       ? await pumpOperationsRepository.pause(activeOperation.id, pauseReason.trim())
       : action === "resume_pump_operation"
-        ? await pumpOperationsRepository.resume(activeOperation.id)
+        ? await pumpOperationsRepository.resume(
+          activeOperation.id,
+          resumePowerSourceId || activeOperation.last_power_source_id || "",
+        )
         : await pumpOperationsRepository.complete(activeOperation.id);
     if (actionError) {
       console.error("pump operation state change failed", action, actionError);
@@ -408,6 +407,50 @@ function OperationsScreenContent() {
     }
     setBusy(false);
   }, [activeOperation, busy, loadPumpData, pauseReason, resumePowerSourceId]);
+
+  const reloadSurveySeed = async (date: string) => {
+    if (!organizationId || !selectedPumpId) return;
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) {
+      setError("أدخل تاريخًا صحيحًا بصيغة YYYY-MM-DD.");
+      return;
+    }
+    setSurveyLoading(true);
+    try {
+      const [scheduleResult, operationsResult, usageResult] = await Promise.all([
+        pumpOperationsRepository.listDailyScheduleEntries(organizationId, selectedPumpId, date),
+        pumpOperationsRepository.listPumpOperations(organizationId, selectedPumpId, date),
+        pumpOperationsRepository.getPowerUsage(date, date, "day", selectedPumpId),
+      ]);
+      if (scheduleResult.error || operationsResult.error) {
+        throw scheduleResult.error ?? operationsResult.error;
+      }
+      const entries = (scheduleResult.data ?? []) as unknown as DailyScheduleEntry[];
+      setSurveyEntries(entries);
+      setSurveyOperations((operationsResult.data ?? []) as Operation[]);
+      setSurveyManualMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
+      if (usageResult.error) {
+        console.error("daily source prefill failed", usageResult.error);
+      }
+      const usage = (usageResult.data ?? []) as PowerUsageRow[];
+      const automatic = usage.filter((row) => row.data_source === "automatic");
+      setSourceMinutes(Object.fromEntries(
+        powerSources.map((source) => [
+          source.id,
+          String(Math.floor(
+            automatic.filter((row) => row.power_source_id === source.id)
+              .reduce((sum, row) => sum + Number(row.total_seconds ?? 0), 0) / 60,
+          ) || ""),
+        ]),
+      ));
+    } catch (loadError) {
+      console.error("daily work survey seed failed", loadError);
+      setError("تعذر تحميل الجدول أو سجلات التشغيل لهذا التاريخ.");
+      setSurveyEntries([]);
+      setSurveyOperations([]);
+    } finally {
+      setSurveyLoading(false);
+    }
+  };
 
   const saveDailySurvey = async (submit: boolean) => {
     if (!selectedPumpId || surveySaving || activeOperation) return;
@@ -447,7 +490,7 @@ function OperationsScreenContent() {
           note: null,
         };
       });
-      const { data, error: saveError } = await pumpOperationsRepository.saveDailyWorkReport({
+      const { error: saveError } = await pumpOperationsRepository.saveDailyWorkReport({
         pumpId: selectedPumpId,
         workStartedAt: startIso,
         workEndedAt: endIso,
@@ -597,7 +640,7 @@ function OperationsScreenContent() {
                     </Pressable>
                   </View>
                 ) : (
-                  <Pressable disabled={busy} onPress={() => void runAction("resume_pump_operation")} style={[styles.actionButton, styles.resumeButton, busy && styles.disabled]}>
+                  <Pressable disabled={busy || !resumePowerSourceId} onPress={() => void runAction("resume_pump_operation")} style={[styles.actionButton, styles.resumeButton, (busy || !resumePowerSourceId) && styles.disabled]}>
                     <Play size={18} color="#fff" /><Text style={styles.actionText}>استئناف</Text>
                   </Pressable>
                 )}
@@ -666,41 +709,12 @@ function OperationsScreenContent() {
           <Card style={styles.card}>
             <Pressable onPress={() => {
               if (!surveyOpen) {
-                setSurveyLoading(true);
-                setSurveyDate(localOperationDate());
+                const day = localOperationDate();
+                setSurveyDate(day);
                 setWorkStartTime("");
                 setWorkEndTime("");
                 setStoppageMinutes("0");
-                const day = localOperationDate();
-                void Promise.all([
-                  pumpOperationsRepository.listDailyScheduleEntries(organizationId ?? "", selectedPumpId, day),
-                  pumpOperationsRepository.listPumpOperations(organizationId ?? "", selectedPumpId, day),
-                  pumpOperationsRepository.getPowerUsage(day, day, "day", selectedPumpId),
-                ]).then(([scheduleResult, operationsResult, usageResult]) => {
-                  if (scheduleResult.error || operationsResult.error) {
-                    setError("تعذر تحميل الجدول الفعلي لليوم. حدّث الشاشة وحاول مجددًا.");
-                    setSurveyEntries([]);
-                    setSurveyOperations([]);
-                  } else {
-                    const entries = (scheduleResult.data ?? []) as unknown as DailyScheduleEntry[];
-                    setSurveyEntries(entries);
-                    setSurveyOperations((operationsResult.data ?? []) as Operation[]);
-                    setSurveyManualMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
-                  }
-                  const usage = (usageResult.data ?? []) as PowerUsageRow[];
-                  const automatic = usage.filter((row) => row.data_source === "automatic");
-                  setSourceMinutes(Object.fromEntries(
-                    powerSources.map((source) => [
-                      source.id,
-                      String(automatic.filter((row) => row.power_source_id === source.id)
-                        .reduce((sum, row) => sum + Number(row.total_minutes ?? 0), 0) || ""),
-                    ]),
-                  ));
-                  if (usageResult.error) console.error("daily source prefill failed", usageResult.error);
-                }).catch((loadError) => {
-                  console.error("daily work survey seed failed", loadError);
-                  setError("تعذر تحميل بيانات استبيان اليوم.");
-                }).finally(() => setSurveyLoading(false));
+                void reloadSurveySeed(day);
               }
               setSurveyOpen((open) => !open);
             }} style={styles.surveyToggle}>
@@ -715,8 +729,13 @@ function OperationsScreenContent() {
                 <View style={styles.surveyBody}>
                   <Text style={styles.surveyStep}>الخطوة 1 — وقت العمل ومصادر الكهرباء</Text>
                   <Text style={styles.fieldLabel}>تاريخ العمل (YYYY-MM-DD)</Text>
-                  <TextInput value={surveyDate} onChangeText={setSurveyDate} style={styles.durationInput}
-                    autoCapitalize="none" placeholder="2026-11-09" />
+                  <View style={styles.surveyInputsRow}>
+                    <TextInput value={surveyDate} onChangeText={setSurveyDate} style={[styles.durationInput, { flex: 1 }]}
+                      autoCapitalize="none" placeholder="2026-11-09" />
+                    <Pressable onPress={() => void reloadSurveySeed(surveyDate)} style={styles.reorderButton}>
+                      <Text style={styles.reorderText}>تحميل التاريخ</Text>
+                    </Pressable>
+                  </View>
                   <View style={styles.surveyInputsRow}>
                     <View style={styles.surveyInputCell}>
                       <Text style={styles.fieldLabel}>بداية العمل</Text>
