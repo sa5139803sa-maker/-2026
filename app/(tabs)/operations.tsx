@@ -950,7 +950,8 @@ function OperationsScreenContent() {
 
       // The server resolves subscriber ownership as of this work date. Using
       // subscribers.operator_id here would silently hide former owners' history.
-      const allocations = (allocationResult.data ?? []) as WeeklyEntitlementAllocationForDay[];
+      const allocations = ((allocationResult.data ?? []) as WeeklyEntitlementAllocationForDay[])
+        .filter((allocation) => allocation.subscribers.operator_id === targetOperatorId);
       const allocationIds = new Set(allocations.map((allocation) => allocation.id));
       const scheduledEntries: DailyScheduleEntry[] = allocations
         .filter((allocation) => allocation.source_schedule_entry_id !== null)
