@@ -118,7 +118,7 @@ export type DailyQueueItem = {
 export type DailyQueueEvent = {
   id: string;
   event_type: "queue_generated" | "item_created" | "item_deferred" | "item_cancelled"
-    | "reordered" | "branch_order_override" | "started" | "completed"
+    | "item_operator_reassigned" | "reordered" | "branch_order_override" | "started" | "completed"
     | "auto_advance_scheduled" | "auto_advance_retargeted"
     | "auto_advance_cancelled" | "queue_closed" | "weekly_minutes_transferred";
   actor_id: string;
