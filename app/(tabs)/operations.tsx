@@ -10,6 +10,10 @@ import {
   View,
 } from "react-native";
 import { CheckCircle2, Clock3, Droplets, Pause, Play, RefreshCw, Waves } from "lucide-react-native";
+import * as Haptics from "expo-haptics";
+import { loadAlertSettings, type AlertSettings } from "@/lib/alerts/settings";
+import { playAlertSound, stopAlertSound } from "@/lib/alerts/audio";
+import { getHandoverAlertWindow, shouldTriggerMinuteWarning } from "@/lib/alerts/timing-rules";
 import { SectionTitle, StatusBadge } from "@/components/UI";
 import { Card, RoleGate } from "@/components/ui";
 import { colors, radius, spacing, typography } from "@/constants/theme";
@@ -169,6 +173,8 @@ function OperationsScreenContent() {
   const [surveyManualMinutes, setSurveyManualMinutes] = useState<Record<string, string>>({});
   const [surveyExtraMinutes, setSurveyExtraMinutes] = useState<Record<string, string>>({});
   const autoAdvanceInFlight = useRef<string | null>(null);
+  const minuteAlertPlayedForOperation = useRef<string | null>(null);
+  const [alertSettings, setAlertSettings] = useState<AlertSettings | null>(null);
   const [pauseReason, setPauseReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -381,6 +387,17 @@ function OperationsScreenContent() {
     setDailyWorkReportLoading(false);
   }, [organizationId, selectedPumpId]);
 
+  useEffect(() => {
+    let mounted = true;
+    void loadAlertSettings()
+      .then((loadedSettings) => { if (mounted) setAlertSettings(loadedSettings); })
+      .catch((settingsError) => console.warn("Could not load local alert settings.", settingsError));
+    return () => {
+      mounted = false;
+      stopAlertSound();
+    };
+  }, []);
+
   useEffect(() => { void loadPumps(); }, [loadPumps]);
   useEffect(() => { void loadPumpData(); }, [loadPumpData]);
   useEffect(() => { void loadPowerUsage(); }, [loadPowerUsage]);
@@ -414,6 +431,65 @@ function OperationsScreenContent() {
   const progress = activeOperation
     ? Math.min(1, elapsedSeconds / (activeOperation.planned_minutes * 60))
     : 0;
+
+  useEffect(() => {
+    if (!activeOperation || activeOperation.status !== "running" || !alertSettings) {
+      if (activeOperation?.status === "paused") {
+        stopAlertSound(`minute:${activeOperation.id}`);
+      }
+      return;
+    }
+
+    const operationId = activeOperation.id;
+    if (!shouldTriggerMinuteWarning(
+      remainingSeconds,
+      minuteAlertPlayedForOperation.current === operationId,
+    )) {
+      return;
+    }
+
+    minuteAlertPlayedForOperation.current = operationId;
+    const preference = alertSettings.minuteWarning;
+    if (!preference.enabled) return;
+
+    const alertKey = `minute:${operationId}`;
+    void playAlertSound(preference.soundUri, 5000, alertKey);
+    if (preference.vibrate) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
+    }
+  }, [activeOperation?.id, activeOperation?.status, alertSettings, remainingSeconds]);
+
+  useEffect(() => {
+    const token = dailyQueue?.auto_advance_token;
+    const deadline = dailyQueue?.auto_advance_at;
+    const preference = alertSettings?.handover;
+    if (!token || !deadline || !preference?.enabled) return;
+
+    const window = getHandoverAlertWindow(
+      new Date(deadline).getTime(),
+      Date.now(),
+    );
+    if (!window) return;
+
+    const alertKey = `handover:${token}`;
+    const startTimer = setTimeout(() => {
+      void playAlertSound(preference.soundUri, window.durationMs, alertKey);
+      if (preference.vibrate) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
+      }
+    }, window.delayMs);
+
+    return () => {
+      clearTimeout(startTimer);
+      stopAlertSound(alertKey);
+    };
+  }, [
+    dailyQueue?.auto_advance_token,
+    dailyQueue?.auto_advance_at,
+    alertSettings?.handover.enabled,
+    alertSettings?.handover.soundUri,
+    alertSettings?.handover.vibrate,
+  ]);
 
   const addPowerSource = async () => {
     if (!selectedPumpId || busy || profile?.role !== "manager") return;
@@ -465,6 +541,9 @@ function OperationsScreenContent() {
     if (!firstWaitingItem || firstWaitingItem.id !== item.id) {
       setError("يمكن بدء أول عنصر منتظر فقط. أعد ترتيب الطابور أولًا عند الحاجة.");
       return;
+    }
+    if (dailyQueue.auto_advance_token) {
+      stopAlertSound(`handover:${dailyQueue.auto_advance_token}`);
     }
     setBusy(true);
     setError(null);
@@ -561,6 +640,7 @@ function OperationsScreenContent() {
 
   const cancelAutoAdvance = async () => {
     if (!dailyQueue?.auto_advance_token || busy) return;
+    stopAlertSound(`handover:${dailyQueue.auto_advance_token}`);
     setBusy(true);
     setError(null);
     const { error: cancelError } = await pumpOperationsRepository.cancelDailyQueueAutoAdvance(
@@ -654,6 +734,9 @@ function OperationsScreenContent() {
       console.error("pump operation state change failed", action, actionError);
       setError(friendlyError(actionError));
     } else {
+      if (action !== "resume_pump_operation") {
+        stopAlertSound(`minute:${activeOperation.id}`);
+      }
       const messages = {
         pause_pump_operation: "تم إيقاف المؤقت مؤقتًا.",
         resume_pump_operation: "تم استئناف التشغيل.",
