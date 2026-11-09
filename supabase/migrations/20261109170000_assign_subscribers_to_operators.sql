@@ -73,12 +73,14 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  -- Serialize queue item snapshots with reassignment of this subscriber.
   SELECT s.operator_id
   INTO NEW.assigned_operator_id
   FROM public.subscribers s
   WHERE s.id = NEW.subscriber_id
     AND s.organization_id = NEW.organization_id
-    AND s.pump_id = NEW.pump_id;
+    AND s.pump_id = NEW.pump_id
+  FOR KEY SHARE;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Subscriber does not belong to this organization and pump'
