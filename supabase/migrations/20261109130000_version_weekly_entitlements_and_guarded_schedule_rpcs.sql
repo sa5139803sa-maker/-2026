@@ -912,6 +912,205 @@ $activate_weekly_schedule_internal$;
 COMMENT ON TABLE public.weekly_schedule_events IS
   'Append-only audit trail for weekly schedule draft changes, activation, and historical version rotation.';
 
+-- Archived versions continue to apply to their historical date range. The
+-- daily queue itself is still generated only once per organization/pump/date.
+CREATE OR REPLACE FUNCTION water_management_private.generate_daily_queue_internal(
+  p_pump_id uuid,
+  p_queue_date date
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $generate_daily_queue_internal$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_organization_id uuid := water_management_private.current_user_organization_id();
+  v_role public.app_role := water_management_private.current_user_role();
+  v_weekly_schedule public.weekly_schedules%ROWTYPE;
+  v_queue_id uuid;
+  v_weekday smallint;
+  v_cycle_start date;
+  v_remaining uuid[];
+  v_selected_id uuid;
+  v_selected_branch_id uuid;
+  v_last_branch_id uuid;
+  v_has_previous boolean := false;
+  v_position integer := 0;
+  v_created_count integer := 0;
+  v_inserted_count integer := 0;
+BEGIN
+  IF v_user_id IS NULL OR v_organization_id IS NULL
+     OR v_role NOT IN ('manager'::public.app_role, 'operator'::public.app_role) THEN
+    RAISE EXCEPTION 'Not authorized to generate daily queues' USING ERRCODE = '42501';
+  END IF;
+  IF p_pump_id IS NULL OR p_queue_date IS NULL THEN
+    RAISE EXCEPTION 'Pump and queue date are required' USING ERRCODE = '22023';
+  END IF;
+
+  PERFORM 1
+  FROM public.pumps p
+  WHERE p.id = p_pump_id
+    AND p.organization_id = v_organization_id
+    AND p.status = 'active'
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Pump is not active or not accessible' USING ERRCODE = '42501';
+  END IF;
+
+  IF v_role = 'operator'::public.app_role AND NOT EXISTS (
+    SELECT 1 FROM public.pump_assignments pa
+    WHERE pa.organization_id = v_organization_id
+      AND pa.pump_id = p_pump_id
+      AND pa.user_id = v_user_id
+      AND pa.assignment_role = 'operator'::public.app_role
+  ) THEN
+    RAISE EXCEPTION 'Operator is not assigned to this pump' USING ERRCODE = '42501';
+  END IF;
+
+  v_weekday := extract(isodow FROM p_queue_date)::smallint;
+
+  SELECT ws.* INTO v_weekly_schedule
+  FROM public.weekly_schedules ws
+  WHERE ws.organization_id = v_organization_id
+    AND ws.pump_id = p_pump_id
+    AND ws.status IN ('active', 'archived')
+    AND p_queue_date >= ws.effective_from
+    AND (ws.effective_to IS NULL OR p_queue_date <= ws.effective_to)
+  ORDER BY ws.effective_from DESC, ws.created_at DESC
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'No active weekly schedule applies to this date'
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  v_cycle_start := p_queue_date - (
+    (v_weekday - v_weekly_schedule.week_starts_on + 7) % 7
+  );
+
+  INSERT INTO public.daily_queues (
+    organization_id, pump_id, weekly_schedule_id, queue_date,
+    week_starts_on, weekly_cycle_start, status, created_by
+  ) VALUES (
+    v_organization_id, p_pump_id, v_weekly_schedule.id, p_queue_date,
+    v_weekly_schedule.week_starts_on, v_cycle_start, 'ready', v_user_id
+  )
+  ON CONFLICT (organization_id, pump_id, queue_date) DO NOTHING
+  RETURNING id INTO v_queue_id;
+
+  IF v_queue_id IS NULL THEN
+    SELECT q.id INTO v_queue_id
+    FROM public.daily_queues q
+    WHERE q.organization_id = v_organization_id
+      AND q.pump_id = p_pump_id
+      AND q.queue_date = p_queue_date;
+    RETURN v_queue_id;
+  END IF;
+
+  INSERT INTO public.queue_items (
+    daily_queue_id, organization_id, pump_id, source_type,
+    schedule_entry_id, subscriber_id, subscriber_name_snapshot,
+    branch_id, branch_name_snapshot, planned_minutes, sort_order
+  )
+  SELECT
+    v_queue_id, v_organization_id, p_pump_id, 'weekly',
+    e.id, s.id, s.full_name, s.branch_id, b.name, e.planned_minutes,
+    row_number() OVER (ORDER BY e.sort_order, e.id)::integer - 1
+  FROM public.schedule_entries e
+  JOIN public.subscribers s
+    ON s.id = e.subscriber_id
+   AND s.organization_id = e.organization_id
+   AND s.pump_id = e.pump_id
+   AND s.is_active
+  LEFT JOIN public.branches b
+    ON b.id = s.branch_id
+   AND b.organization_id = s.organization_id
+   AND b.pump_id = s.pump_id
+  WHERE e.weekly_schedule_id = v_weekly_schedule.id
+    AND e.organization_id = v_organization_id
+    AND e.pump_id = p_pump_id
+    AND e.weekday = v_weekday;
+
+  GET DIAGNOSTICS v_inserted_count = ROW_COUNT;
+
+  SELECT array_agg(qi.id ORDER BY qi.sort_order, qi.id)
+  INTO v_remaining
+  FROM public.queue_items qi
+  WHERE qi.daily_queue_id = v_queue_id
+    AND qi.status = 'queued';
+
+  IF COALESCE(cardinality(v_remaining), 0) > 0 THEN
+    UPDATE public.queue_items
+    SET sort_order = sort_order + 1000000
+    WHERE daily_queue_id = v_queue_id
+      AND status = 'queued';
+
+    FOR v_position IN 1..cardinality(v_remaining) LOOP
+      SELECT qi.id, qi.branch_id
+      INTO v_selected_id, v_selected_branch_id
+      FROM public.queue_items qi
+      WHERE qi.id = ANY(v_remaining)
+        AND (
+          NOT v_has_previous
+          OR qi.branch_id IS NULL
+          OR v_last_branch_id IS NULL
+          OR qi.branch_id IS DISTINCT FROM v_last_branch_id
+        )
+      ORDER BY qi.sort_order, qi.id
+      LIMIT 1;
+
+      IF NOT FOUND THEN
+        SELECT qi.id, qi.branch_id
+        INTO v_selected_id, v_selected_branch_id
+        FROM public.queue_items qi
+        WHERE qi.id = ANY(v_remaining)
+        ORDER BY qi.sort_order, qi.id
+        LIMIT 1;
+      END IF;
+
+      UPDATE public.queue_items
+      SET sort_order = v_position - 1
+      WHERE id = v_selected_id;
+
+      v_remaining := array_remove(v_remaining, v_selected_id);
+      v_last_branch_id := v_selected_branch_id;
+      v_has_previous := true;
+    END LOOP;
+  END IF;
+
+  PERFORM water_management_private.append_queue_item_event(
+    v_queue_id, NULL, v_organization_id, p_pump_id,
+    'queue_generated', v_user_id, NULL,
+    jsonb_build_object(
+      'weekly_schedule_id', v_weekly_schedule.id,
+      'queue_date', p_queue_date,
+      'weekly_cycle_start', v_cycle_start,
+      'item_count', v_inserted_count
+    )
+  );
+
+  INSERT INTO public.queue_item_events (
+    daily_queue_id, queue_item_id, organization_id, pump_id,
+    event_sequence, event_type, actor_id, metadata
+  )
+  SELECT
+    v_queue_id, qi.id, v_organization_id, p_pump_id,
+    row_number() OVER (ORDER BY qi.sort_order, qi.id)::bigint + 1,
+    'item_created', v_user_id,
+    jsonb_build_object(
+      'source_type', qi.source_type,
+      'subscriber_id', qi.subscriber_id,
+      'planned_minutes', qi.planned_minutes,
+      'sort_order', qi.sort_order
+    )
+  FROM public.queue_items qi
+  WHERE qi.daily_queue_id = v_queue_id;
+
+  RETURN v_queue_id;
+END;
+$generate_daily_queue_internal$;
+
 -- Organization teardown: daily queues have RESTRICT references to weekly schedule
 -- versions, so remove daily queues first, then let the existing schedule cleanup run.
 CREATE FUNCTION water_management_private.delete_organization_daily_queues()
