@@ -83,6 +83,42 @@ END;
 $queue_generation_operator$;
 RESET ROLE;
 
+-- Managers must not materialize registered subscriber queue rows without a
+-- responsible operator; otherwise no operator can safely see or execute them.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DO $queue_reject_unassigned_subscriber$
+DECLARE
+  v_queue_id uuid := current_setting('test.daily_queue_id')::uuid;
+  v_rejected boolean := false;
+BEGIN
+  BEGIN
+    PERFORM public.add_daily_queue_item(
+      v_queue_id,
+      'additional_registered',
+      '30000000-0000-4000-8000-000000000002',
+      NULL,
+      5
+    );
+  EXCEPTION WHEN check_violation THEN
+    v_rejected := true;
+  END;
+
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Manager added a registered subscriber to the daily queue without a responsible operator';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.queue_items
+    WHERE daily_queue_id = v_queue_id
+      AND subscriber_id = '30000000-0000-4000-8000-000000000002'
+  ) THEN
+    RAISE EXCEPTION 'Unassigned registered subscriber queue row persisted after rejection';
+  END IF;
+END;
+$queue_reject_unassigned_subscriber$;
+RESET ROLE;
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
 DO $weekly_entitlement_transfer$
