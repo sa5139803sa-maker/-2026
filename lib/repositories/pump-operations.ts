@@ -15,6 +15,38 @@ export type OperationSubscriber = {
   created_at: string;
 };
 
+export type PumpPowerSource = {
+  id: string;
+  pump_id: string;
+  name: string;
+  source_type: "solar" | "generator" | "grid" | "other";
+  is_active: boolean;
+};
+
+export type PowerUsageRow = {
+  pump_id: string;
+  period_start: string;
+  power_source_id: string;
+  power_source_name: string;
+  total_seconds: number;
+  total_minutes: number;
+  data_source: "automatic" | "daily_survey";
+};
+
+export type DailyScheduleEntry = {
+  id: string;
+  subscriber_id: string;
+  weekday: number;
+  sort_order: number;
+  planned_minutes: number;
+  subscribers: {
+    id: string;
+    full_name: string;
+    subscriber_number: number;
+    branch_id: string | null;
+  };
+};
+
 export type PumpOperation = {
   id: string;
   pump_id: string;
@@ -29,6 +61,8 @@ export type PumpOperation = {
   ended_at: string | null;
   actual_seconds: number | null;
   operation_date: string;
+  current_power_source_id: string | null;
+  last_power_source_id: string | null;
 };
 
 export type DashboardOperation = PumpOperation & { pump_name: string };
@@ -59,22 +93,87 @@ export const pumpOperationsRepository = {
       .order("subscriber_number", { ascending: true });
   },
 
+  listPowerSources(organizationId: string, pumpId: string) {
+    return supabase
+      .from("pump_power_sources")
+      .select("id,pump_id,name,source_type,is_active")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .eq("is_active", true)
+      .order("name", { ascending: true });
+  },
+
+  listDailyScheduleEntries(organizationId: string, pumpId: string, workDate: string) {
+    const weekday = new Date(`${workDate}T12:00:00Z`).getUTCDay() || 7;
+    return supabase
+      .from("schedule_entries")
+      .select("id,subscriber_id,weekday,sort_order,planned_minutes,subscribers!inner(id,full_name,subscriber_number,branch_id),weekly_schedules!inner(id,status,effective_from,effective_to)")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .eq("weekday", weekday)
+      .eq("weekly_schedules.status", "active")
+      .lte("weekly_schedules.effective_from", workDate)
+      .or(`effective_to.is.null,effective_to.gte.${workDate}`, { foreignTable: "weekly_schedules" })
+      .order("sort_order", { ascending: true });
+  },
+
+  getPowerUsage(from: string, to: string, period: "day" | "week" | "month", pumpId: string) {
+    return supabase.rpc("get_pump_power_usage", {
+      p_from: from,
+      p_to: to,
+      p_period: period,
+      p_pump_id: pumpId,
+    });
+  },
+
+  saveDailyWorkReport(args: {
+    pumpId: string;
+    workStartedAt: string;
+    workEndedAt: string;
+    stoppageMinutes: number;
+    sourceTotals: { power_source_id: string; minutes: number }[];
+    items: {
+      entry_type: "weekly" | "additional_registered" | "additional_guest";
+      schedule_entry_id?: string | null;
+      subscriber_id?: string | null;
+      external_beneficiary_name?: string | null;
+      sort_order: number;
+      manual_minutes: number;
+      extra_minutes: number;
+      note?: string | null;
+    }[];
+    submit: boolean;
+    reportId?: string | null;
+  }) {
+    return supabase.rpc("save_daily_work_report", {
+      p_pump_id: args.pumpId,
+      p_work_started_at: args.workStartedAt,
+      p_work_ended_at: args.workEndedAt,
+      p_stoppage_minutes: args.stoppageMinutes,
+      p_source_totals: args.sourceTotals,
+      p_items: args.items,
+      p_submit: args.submit,
+      p_report_id: args.reportId ?? null,
+    });
+  },
+
   listPumpOperations(organizationId: string, pumpId: string, day: string) {
     return supabase
       .from("pump_operations")
-      .select("id,pump_id,subscriber_id,subscriber_name,planned_minutes,status,started_at,paused_at,pause_reason,paused_seconds,ended_at,actual_seconds,operation_date")
+      .select("id,pump_id,subscriber_id,subscriber_name,planned_minutes,status,started_at,paused_at,pause_reason,paused_seconds,ended_at,actual_seconds,operation_date,current_power_source_id,last_power_source_id")
       .eq("organization_id", organizationId)
       .eq("pump_id", pumpId)
       .or(`operation_date.eq.${day},status.in.(running,paused)`)
       .order("started_at", { ascending: false });
   },
 
-  start(pumpId: string, subscriberId: string | null, subscriberName: string | null, plannedMinutes: number) {
+  start(pumpId: string, subscriberId: string | null, subscriberName: string | null, plannedMinutes: number, powerSourceId: string) {
     return supabase.rpc("start_pump_operation", {
       p_pump_id: pumpId,
       p_subscriber_id: subscriberId,
       p_subscriber_name: subscriberName,
       p_planned_minutes: plannedMinutes,
+      p_power_source_id: powerSourceId,
     });
   },
 
@@ -85,8 +184,11 @@ export const pumpOperationsRepository = {
     });
   },
 
-  resume(operationId: string) {
-    return supabase.rpc("resume_pump_operation", { p_operation_id: operationId });
+  resume(operationId: string, powerSourceId: string) {
+    return supabase.rpc("resume_pump_operation", {
+      p_operation_id: operationId,
+      p_power_source_id: powerSourceId,
+    });
   },
 
   complete(operationId: string) {
