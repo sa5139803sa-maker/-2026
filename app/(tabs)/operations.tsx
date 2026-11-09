@@ -1462,6 +1462,38 @@ function OperationsScreenContent() {
                     </View>
                   ) : null}
 
+                  {dailyQueue.events.length > 0 ? (
+                    <View style={styles.completedQueueBlock}>
+                      <Text style={styles.fieldLabel}>آخر أحداث الطابور وسجل التدقيق</Text>
+                      {dailyQueue.events.slice(0, 6).map((event) => {
+                        const eventLabels: Record<string, string> = {
+                          queue_generated: "إنشاء طابور اليوم",
+                          item_created: "إضافة دور",
+                          item_deferred: "تأجيل إلى نهاية الطابور",
+                          item_cancelled: "إلغاء دور",
+                          reordered: "إعادة ترتيب الطابور",
+                          branch_order_override: "تجاوز قاعدة التفرعات",
+                          started: "بدء تعبئة",
+                          completed: "اكتمال تعبئة",
+                          auto_advance_scheduled: "جدولة الانتقال التلقائي",
+                          auto_advance_retargeted: "تحديث هدف الانتقال التلقائي",
+                          auto_advance_cancelled: "إلغاء الانتقال التلقائي",
+                          queue_closed: "إغلاق طابور اليوم",
+                        };
+                        return (
+                          <View key={event.id} style={styles.completedQueueRow}>
+                            <View style={{ flex: 1, alignItems: "flex-end", gap: 2 }}>
+                              <Text style={styles.completedQueueName}>{eventLabels[event.event_type] ?? event.event_type}</Text>
+                              <Text style={styles.queueMeta}>
+                                {formatTime(event.occurred_at)}{event.reason ? ` · السبب: ${event.reason}` : ""}
+                              </Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+
                   {(profile?.role === "manager" || profile?.role === "operator") ? (
                     <View style={styles.weeklyTransferBlock}>
                       <Pressable onPress={toggleWeeklyTransfer} style={styles.refresh}>
