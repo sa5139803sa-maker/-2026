@@ -1645,6 +1645,32 @@ BEGIN
   END;
   IF NOT v_rejected THEN RAISE EXCEPTION 'An operation started without a power source'; END IF;
 
+  -- Managers cannot start registered subscribers until a single responsible
+  -- operator is assigned; otherwise historical operation ownership is ambiguous.
+  v_rejected := false;
+  SELECT id INTO v_other_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id = '20000000-0000-4000-8000-000000000002'
+    AND organization_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    AND is_active
+  ORDER BY created_at
+  LIMIT 1;
+  IF v_other_source_id IS NULL THEN
+    RAISE EXCEPTION 'Pump 2 fixture requires an active power source';
+  END IF;
+  BEGIN
+    PERFORM public.start_pump_operation(
+      '20000000-0000-4000-8000-000000000002',
+      '30000000-0000-4000-8000-000000000002',
+      NULL, 5, v_other_source_id
+    );
+  EXCEPTION WHEN foreign_key_violation THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Manager started a registered subscriber without a responsible operator';
+  END IF;
+
   SELECT * INTO v_operation
   FROM public.start_pump_operation(
     '20000000-0000-4000-8000-000000000001',
@@ -2747,6 +2773,29 @@ BEGIN
   END IF;
 END;
 $operator_a2_current_subscriber_scope$;
+RESET ROLE;
+
+-- Supervisors keep pump-wide read access but do not receive operator controls.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
+DO $supervisor_queue_is_read_only$
+DECLARE
+  v_queue_id uuid := current_setting('test.assignment_future_queue_id')::uuid;
+  v_view jsonb;
+BEGIN
+  v_view := public.get_daily_queue_operator_view(v_queue_id);
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(COALESCE(v_view->'items', '[]'::jsonb)) AS item
+    WHERE item->>'subscriber_id' = '30000000-0000-4000-8000-000000000001'
+      AND item->>'subscriber_name_snapshot' = 'مشترك أ 1'
+      AND item->>'is_owned' = 'false'
+  ) THEN
+    RAISE EXCEPTION 'Supervisor lost pump-wide read access or was incorrectly granted operator ownership controls';
+  END IF;
+END;
+$supervisor_queue_is_read_only$;
 RESET ROLE;
 
 -- Assignment history is append-only and visible only to the organization manager.
