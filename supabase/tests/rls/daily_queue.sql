@@ -420,6 +420,124 @@ END;
 $queue_reorder_and_lifecycle$;
 RESET ROLE;
 
+-- Reconcile the manual part of today's weekly filling against the same
+-- entitlement allocation already linked to the completed queue item.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $weekly_entitlement_manual_report_reconciliation$
+DECLARE
+  v_queue_id uuid := current_setting('test.daily_queue_id')::uuid;
+  v_work_date date;
+  v_started_at timestamptz;
+  v_ended_at timestamptz;
+  v_source_id uuid;
+  v_report public.daily_work_reports%ROWTYPE;
+  v_cycle_id uuid;
+  v_allocation_id uuid;
+  v_rejected boolean := false;
+BEGIN
+  SELECT queue_date INTO v_work_date
+  FROM public.daily_queues
+  WHERE id = v_queue_id;
+
+  v_started_at := (v_work_date + time '07:00') AT TIME ZONE 'Asia/Hebron';
+  v_ended_at := (v_work_date + time '08:00') AT TIME ZONE 'Asia/Hebron';
+
+  SELECT id INTO v_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+    AND name = 'طاقة شمسية – مزود 1'
+    AND is_active;
+
+  v_report := public.save_daily_work_report(
+    '20000000-0000-4000-8000-000000000001',
+    v_started_at,
+    v_ended_at,
+    0,
+    jsonb_build_array(jsonb_build_object(
+      'power_source_id', v_source_id,
+      'minutes', 60
+    )),
+    jsonb_build_array(jsonb_build_object(
+      'entry_type', 'weekly',
+      'schedule_entry_id', '60000000-0000-4000-8000-000000000001',
+      'subscriber_id', '30000000-0000-4000-8000-000000000001',
+      'sort_order', 0,
+      'manual_minutes', 7,
+      'extra_minutes', 0,
+      'note', 'اختبار مصالحة الجزء المنفذ خارج التطبيق'
+    )),
+    true,
+    NULL
+  );
+
+  SELECT ri.weekly_entitlement_allocation_id
+  INTO v_allocation_id
+  FROM public.daily_work_report_items ri
+  WHERE ri.daily_work_report_id = v_report.id;
+
+  SELECT a.weekly_entitlement_cycle_id
+  INTO v_cycle_id
+  FROM public.weekly_entitlement_allocations a
+  WHERE a.id = v_allocation_id;
+
+  IF v_report.status <> 'submitted'
+     OR v_allocation_id IS NULL
+     OR (SELECT scheduled_minutes FROM public.daily_work_report_items
+         WHERE daily_work_report_id = v_report.id) <> 35
+     OR (SELECT weekly_minutes_consumed FROM public.daily_work_report_items
+         WHERE daily_work_report_id = v_report.id) <> 7
+     OR (SELECT consumed_minutes FROM public.weekly_entitlement_allocations
+         WHERE id = v_allocation_id) <> 7
+     OR (SELECT consumed_minutes FROM public.weekly_entitlement_cycles
+         WHERE id = v_cycle_id) <> 7
+     OR (SELECT remaining_minutes FROM public.weekly_entitlement_cycles
+         WHERE id = v_cycle_id) <> 38 THEN
+    RAISE EXCEPTION 'Submitted daily report did not reconcile seven manual weekly minutes exactly once';
+  END IF;
+
+  IF (SELECT count(*) FROM public.weekly_entitlement_events
+      WHERE weekly_entitlement_cycle_id = v_cycle_id
+        AND event_type = 'manual_reconciliation'
+        AND minutes = 7
+        AND actor_id = auth.uid()) <> 1 THEN
+    RAISE EXCEPTION 'Manual reconciliation was not recorded once with the authenticated actor';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.save_daily_work_report(
+      '20000000-0000-4000-8000-000000000001',
+      v_started_at,
+      v_ended_at,
+      0,
+      jsonb_build_array(jsonb_build_object('power_source_id', v_source_id, 'minutes', 60)),
+      jsonb_build_array(jsonb_build_object(
+        'entry_type', 'weekly',
+        'schedule_entry_id', '60000000-0000-4000-8000-000000000001',
+        'subscriber_id', '30000000-0000-4000-8000-000000000001',
+        'sort_order', 0,
+        'manual_minutes', 7,
+        'extra_minutes', 0
+      )),
+      true,
+      v_report.id
+    );
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'A submitted daily report was mutable and could reconcile entitlement minutes twice';
+  END IF;
+
+  IF (SELECT consumed_minutes FROM public.weekly_entitlement_cycles
+      WHERE id = v_cycle_id) <> 7 THEN
+    RAISE EXCEPTION 'Resubmitting a daily report consumed weekly minutes more than once';
+  END IF;
+END;
+$weekly_entitlement_manual_report_reconciliation$;
+RESET ROLE;
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
 DO $supervisor_queue_read$
