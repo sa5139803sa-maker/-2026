@@ -1414,7 +1414,7 @@ function OperationsScreenContent() {
                         <View style={styles.queueInfo}>
                           <Text style={styles.queueName}>{item.subscriber_name_snapshot}</Text>
                           <Text style={styles.queueMeta}>
-                            {sourceLabel} · {item.planned_minutes} دقيقة
+                            {sourceLabel}{item.source_type !== "other" ? ` · ${item.planned_minutes} دقيقة` : ""}
                             {item.branch_name_snapshot ? ` · ${item.branch_name_snapshot}` : ""}
                           </Text>
                         </View>
