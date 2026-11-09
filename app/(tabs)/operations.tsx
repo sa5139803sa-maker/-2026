@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -87,6 +87,8 @@ function OperationsScreenContent() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [dataPumpId, setDataPumpId] = useState<string | null>(null);
+  const dataRequestSequence = useRef(0);
 
   const selectedPump = useMemo(
     () => pumps.find((pump) => pump.id === selectedPumpId) ?? null,
@@ -138,10 +140,15 @@ function OperationsScreenContent() {
 
   const loadPumpData = useCallback(async () => {
     if (!selectedPumpId || !organizationId) {
+      dataRequestSequence.current += 1;
       setSubscribers([]);
       setOperations([]);
+      setDataPumpId(null);
+      setRefreshing(false);
       return;
     }
+    const requestId = ++dataRequestSequence.current;
+    setDataPumpId(null);
     setRefreshing(true);
     setError(null);
     const day = localOperationDate();
@@ -159,6 +166,7 @@ function OperationsScreenContent() {
         .or(`operation_date.eq.${day},status.in.(running,paused)`)
         .order("started_at", { ascending: false }),
     ]);
+    if (requestId !== dataRequestSequence.current) return;
     if (subscriberResult.error || operationResult.error) {
       console.error("operation queue load failed", subscriberResult.error ?? operationResult.error);
       setSubscribers([]);
@@ -167,6 +175,7 @@ function OperationsScreenContent() {
     } else {
       setSubscribers((subscriberResult.data ?? []) as Subscriber[]);
       setOperations((operationResult.data ?? []) as Operation[]);
+      setDataPumpId(selectedPumpId);
     }
     setRefreshing(false);
   }, [organizationId, selectedPumpId]);
@@ -264,7 +273,7 @@ function OperationsScreenContent() {
       <Card style={styles.card}>
         <View style={styles.sectionHeader}>
           <SectionTitle title="الغطاس" />
-          <Pressable onPress={() => void loadPumps()} disabled={loading || refreshing} style={styles.refresh}>
+          <Pressable onPress={() => { void loadPumps(); void loadPumpData(); }} disabled={loading || refreshing} style={styles.refresh}>
             <RefreshCw size={15} color={colors.brand.primary} />
             <Text style={styles.refreshText}>تحديث</Text>
           </Pressable>
@@ -285,7 +294,11 @@ function OperationsScreenContent() {
         )}
       </Card>
 
-      {selectedPump && (
+      {selectedPump && dataPumpId !== selectedPumpId ? (
+        <Card style={styles.card}><ActivityIndicator color={colors.brand.teal} /><Text style={styles.empty}>جاري تحميل بيانات هذا الغطاس...</Text></Card>
+      ) : null}
+
+      {selectedPump && dataPumpId === selectedPumpId && (
         <>
           {activeOperation ? (
             <View style={styles.activeCard}>
@@ -297,7 +310,7 @@ function OperationsScreenContent() {
                 <StatusBadge label={activeStatus} status={activeOperation.status === "paused" ? "warning" : "success"} />
               </View>
               <View style={styles.timerBlock}>
-                <Text style={styles.timerLabel}>الوقت المتبقي</Text>
+                <Text style={styles.timerLabel}>{remainingSeconds === 0 ? "انتهت المدة المحددة — تحقّق من التعبئة وأنهِها عند اكتمالها" : "الوقت المتبقي"}</Text>
                 <Text style={styles.timer}>{formatClock(remainingSeconds)}</Text>
                 <View style={styles.progressTrack}>
                   <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
