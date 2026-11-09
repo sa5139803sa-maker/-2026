@@ -1,6 +1,16 @@
 name: Web console checks
 
 on:
+  push:
+    branches:
+      - security/tenant-isolation-rls
+    paths:
+      - "apps/web/**"
+      - "supabase/functions/manage-accounts/**"
+      - "supabase/functions/subscriber-portal/**"
+      - "supabase/migrations/**"
+      - "supabase/tests/rls/tenant_isolation.sql"
+      - ".github/workflows/web-console.yml"
   pull_request:
     paths:
       - "apps/web/**"
