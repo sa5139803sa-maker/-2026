@@ -638,6 +638,28 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Anonymous table privileges were granted on weekly schedule tables';
   END IF;
+
+  IF NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.weekly_schedule_subscribers'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.weekly_schedule_events'::regclass)
+     OR NOT pg_catalog.has_table_privilege('authenticated','public.weekly_schedule_subscribers','SELECT')
+     OR NOT pg_catalog.has_table_privilege('authenticated','public.weekly_schedule_events','SELECT')
+     OR pg_catalog.has_table_privilege('authenticated','public.weekly_schedule_subscribers','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.weekly_schedule_subscribers','UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated','public.weekly_schedule_subscribers','DELETE')
+     OR pg_catalog.has_table_privilege('authenticated','public.weekly_schedule_events','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.weekly_schedule_events','UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated','public.weekly_schedule_events','DELETE') THEN
+    RAISE EXCEPTION 'Versioned entitlements and schedule audit must be read-only through the Data API';
+  END IF;
+
+  IF pg_catalog.has_function_privilege('anon','public.save_weekly_schedule_draft(uuid,uuid,text,date,date,smallint,jsonb)','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','public.activate_weekly_schedule(uuid)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','public.save_weekly_schedule_draft(uuid,uuid,text,date,date,smallint,jsonb)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','public.activate_weekly_schedule(uuid)','EXECUTE')
+     OR pg_catalog.has_function_privilege('authenticated','water_management_private.prepare_weekly_schedule_subscriber_scope()','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','water_management_private.prepare_weekly_schedule_subscriber_scope()','EXECUTE') THEN
+    RAISE EXCEPTION 'Weekly schedule save/activation RPCs and private trigger grants are not least-privileged';
+  END IF;
   IF NOT pg_catalog.has_table_privilege('authenticated','public.weekly_schedules','SELECT')
      OR NOT pg_catalog.has_table_privilege('authenticated','public.weekly_schedules','DELETE')
      OR pg_catalog.has_table_privilege('authenticated','public.weekly_schedules','INSERT')
@@ -673,13 +695,21 @@ BEGIN
   END IF;
   IF pg_catalog.has_function_privilege('authenticated','water_management_private.delete_organization_weekly_schedules()','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','water_management_private.delete_organization_weekly_schedules()','EXECUTE')
+     OR pg_catalog.has_function_privilege('authenticated','water_management_private.delete_organization_daily_queues()','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','water_management_private.delete_organization_daily_queues()','EXECUTE')
      OR NOT EXISTS (
        SELECT 1 FROM pg_catalog.pg_trigger
        WHERE tgname='delete_organization_weekly_schedules'
          AND tgrelid='public.organizations'::regclass
          AND NOT tgisinternal
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_trigger
+       WHERE tgname='delete_organization_daily_queues'
+         AND tgrelid='public.organizations'::regclass
+         AND NOT tgisinternal
      ) THEN
-    RAISE EXCEPTION 'Organization teardown must remove weekly schedules through its private trigger only';
+    RAISE EXCEPTION 'Organization teardown must remove daily queues and weekly schedules through private triggers only';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_catalog.pg_proc p
