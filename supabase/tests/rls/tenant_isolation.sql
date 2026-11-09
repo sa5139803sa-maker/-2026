@@ -1195,6 +1195,51 @@ SELECT test_support.assert_scope('manager A after multiple collectors', 1, 2, 3,
 RESET ROLE;
 
 -- Operation RPC access is scoped to the actor, organization, and pump.
+DO $power_source_acl$
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.pump_power_sources'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.pump_operation_power_segments'::regclass) THEN
+    RAISE EXCEPTION 'RLS must be enabled on power sources and operation segments';
+  END IF;
+  IF pg_catalog.has_table_privilege('anon','public.pump_power_sources','SELECT')
+     OR pg_catalog.has_table_privilege('anon','public.pump_power_sources','INSERT')
+     OR pg_catalog.has_table_privilege('anon','public.pump_operation_power_segments','SELECT')
+     OR pg_catalog.has_table_privilege('authenticated','public.pump_operation_power_segments','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.pump_operation_power_segments','UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated','public.pump_operation_power_segments','DELETE') THEN
+    RAISE EXCEPTION 'Power source or segment privileges are too broad';
+  END IF;
+  IF NOT pg_catalog.has_table_privilege('authenticated','public.pump_power_sources','SELECT')
+     OR NOT pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','pump_id','INSERT')
+     OR NOT pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','name','INSERT')
+     OR pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','source_type','INSERT')
+     OR pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','organization_id','INSERT')
+     OR pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','pump_id','UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated','public.pump_power_sources','organization_id','UPDATE') THEN
+    RAISE EXCEPTION 'Power source column grants do not protect tenant scope';
+  END IF;
+  IF (SELECT count(*) FROM public.pump_power_sources) <> 9 THEN
+    RAISE EXCEPTION 'Three default electricity sources must be seeded for each test pump';
+  END IF;
+  IF NOT pg_catalog.has_function_privilege('authenticated','public.get_pump_power_usage(date,date,text,uuid)','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','public.get_pump_power_usage(date,date,text,uuid)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','public.save_daily_work_report(uuid,timestamptz,timestamptz,integer,jsonb,jsonb,boolean,uuid)','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','public.save_daily_work_report(uuid,timestamptz,timestamptz,integer,jsonb,jsonb,boolean,uuid)','EXECUTE') THEN
+    RAISE EXCEPTION 'Power usage and daily report RPC grants are incorrect';
+  END IF;
+  IF NOT (SELECT prosecdef FROM pg_catalog.pg_proc
+          WHERE oid='water_management_private.start_pump_operation_internal(uuid,uuid,text,integer,uuid)'::regprocedure)
+     OR NOT (SELECT prosecdef FROM pg_catalog.pg_proc
+          WHERE oid='water_management_private.resume_pump_operation_internal(uuid,uuid)'::regprocedure)
+     OR (SELECT prosecdef FROM pg_catalog.pg_proc
+          WHERE oid='public.start_pump_operation(uuid,uuid,text,integer,uuid)'::regprocedure)
+     OR (SELECT prosecdef FROM pg_catalog.pg_proc
+          WHERE oid='public.resume_pump_operation(uuid,uuid)'::regprocedure) THEN
+    RAISE EXCEPTION 'Power-aware lifecycle RPC security modes are incorrect';
+  END IF;
+END;
+$power_source_acl$;
+
 DO $pump_operation_acl$
 BEGIN
   IF NOT pg_catalog.has_table_privilege('authenticated', 'public.pump_operations', 'SELECT')
@@ -1303,6 +1348,7 @@ DECLARE
   v_event_types text[];
   v_dashboard jsonb;
   v_power_source_id uuid;
+  v_other_source_id uuid;
   v_rejected boolean := false;
 BEGIN
   SELECT id INTO v_power_source_id
@@ -1310,6 +1356,32 @@ BEGIN
   WHERE pump_id='20000000-0000-4000-8000-000000000001'
     AND name='طاقة شمسية – مزود 1';
   IF v_power_source_id IS NULL THEN RAISE EXCEPTION 'Default source 1 was not seeded'; END IF;
+
+  SELECT id INTO v_other_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id='20000000-0000-4000-8000-000000000003'
+    AND name='طاقة شمسية – مزود 1';
+  v_rejected := false;
+  BEGIN
+    PERFORM public.start_pump_operation(
+      '20000000-0000-4000-8000-000000000001',
+      '30000000-0000-4000-8000-000000000001',
+      NULL, 10, v_other_source_id
+    );
+  EXCEPTION WHEN invalid_parameter_value THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'A source belonging to another pump was accepted'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.start_pump_operation(
+      '20000000-0000-4000-8000-000000000001',
+      '30000000-0000-4000-8000-000000000001',
+      NULL, 10, NULL
+    );
+  EXCEPTION WHEN invalid_parameter_value THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'An operation started without a power source'; END IF;
 
   SELECT * INTO v_operation
   FROM public.start_pump_operation(
@@ -1426,6 +1498,36 @@ BEGIN
   END IF;
 END;
 $manager_operation_lifecycle$;
+DO $manager_power_source_management$
+DECLARE v_added_source_id uuid;
+BEGIN
+  INSERT INTO public.pump_power_sources (pump_id, name, source_type)
+  VALUES ('20000000-0000-4000-8000-000000000001', 'مولد احتياطي اختباري', 'generator')
+  RETURNING id INTO v_added_source_id;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.pump_power_sources
+    WHERE id=v_added_source_id
+      AND organization_id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      AND created_by=auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'Manager could not create a pump-scoped power source with derived tenant identity';
+  END IF;
+  UPDATE public.pump_power_sources SET is_active=false WHERE id=v_added_source_id;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.pump_power_sources
+    WHERE id=v_added_source_id AND NOT is_active AND archived_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'Power source archival timestamp was not captured';
+  END IF;
+  UPDATE public.pump_power_sources SET is_active=true WHERE id=v_added_source_id;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.pump_power_sources
+    WHERE id=v_added_source_id AND is_active AND archived_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Power source reactivation did not clear archived_at';
+  END IF;
+END;
+$manager_power_source_management$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
@@ -1594,6 +1696,114 @@ END;
 $tenant_b_operation$;
 RESET ROLE;
 
+-- The end-of-day survey is an aggregate record and must not synthesize operations.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
+DO $daily_work_report_manager_b$
+DECLARE
+  v_source_id uuid;
+  v_report public.daily_work_reports%ROWTYPE;
+  v_total_minutes numeric;
+  v_rejected boolean := false;
+BEGIN
+  SELECT id INTO v_source_id
+  FROM public.pump_power_sources
+  WHERE pump_id='20000000-0000-4000-8000-000000000003'
+    AND name='طاقة شمسية – مزود 2';
+
+  v_report := public.save_daily_work_report(
+    '20000000-0000-4000-8000-000000000003',
+    '2026-01-09 07:00:00+02'::timestamptz,
+    '2026-01-09 09:00:00+02'::timestamptz,
+    20,
+    jsonb_build_array(jsonb_build_object('power_source_id',v_source_id,'minutes',100)),
+    jsonb_build_array(jsonb_build_object(
+      'entry_type','weekly',
+      'schedule_entry_id','60000000-0000-4000-8000-000000000003',
+      'subscriber_id','30000000-0000-4000-8000-000000000004',
+      'sort_order',0,
+      'manual_minutes',25,
+      'extra_minutes',0,
+      'note','تم توثيق التعبئة بعد العمل'
+    )),
+    true,
+    NULL
+  );
+
+  IF v_report.status <> 'submitted'
+     OR v_report.work_date <> DATE '2026-01-09'
+     OR v_report.stoppage_minutes <> 20 THEN
+    RAISE EXCEPTION 'Daily work survey did not preserve its date, stoppages, or submitted state';
+  END IF;
+
+  SELECT sum(total_minutes) INTO v_total_minutes
+  FROM public.get_pump_power_usage(
+    DATE '2026-01-09', DATE '2026-01-09', 'day',
+    '20000000-0000-4000-8000-000000000003'
+  )
+  WHERE data_source='daily_survey'
+    AND power_source_id=v_source_id;
+  IF v_total_minutes <> 100 THEN
+    RAISE EXCEPTION 'Daily survey power totals were not used as final daily source totals: %', v_total_minutes;
+  END IF;
+
+  IF (SELECT weekly_minutes_consumed
+      FROM public.daily_work_report_items
+      WHERE daily_work_report_id=v_report.id) <> 25
+     OR (SELECT fulfillment_status
+         FROM public.daily_work_report_items
+         WHERE daily_work_report_id=v_report.id) <> 'partial' THEN
+    RAISE EXCEPTION 'Partial weekly fulfillment did not consume only the delivered minutes';
+  END IF;
+
+  IF (SELECT count(*) FROM public.pump_operations
+      WHERE pump_id='20000000-0000-4000-8000-000000000003'
+        AND operation_date=DATE '2026-01-09') <> 0 THEN
+    RAISE EXCEPTION 'Daily survey created a fake pump operation';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.save_daily_work_report(
+      '20000000-0000-4000-8000-000000000003',
+      '2026-01-16 07:00:00+02'::timestamptz,
+      '2026-01-16 09:00:00+02'::timestamptz,
+      20,
+      jsonb_build_array(jsonb_build_object('power_source_id',v_source_id,'minutes',100)),
+      '[]'::jsonb,
+      true,
+      NULL
+    );
+  EXCEPTION WHEN check_violation THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Daily report submission omitted a required weekly schedule entry';
+  END IF;
+END;
+$daily_work_report_manager_b$;
+RESET ROLE;
+
+DO $daily_work_report_acl$
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_reports'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_source_totals'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_report_items'::regclass)
+     OR NOT (SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid='public.daily_work_report_events'::regclass) THEN
+    RAISE EXCEPTION 'RLS must be enabled on all daily work report tables';
+  END IF;
+  IF pg_catalog.has_table_privilege('anon','public.daily_work_reports','SELECT')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_work_reports','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_work_reports','UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_work_source_totals','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_work_report_items','DELETE')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_work_report_events','INSERT')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_work_report_events','UPDATE')
+     OR pg_catalog.has_table_privilege('authenticated','public.daily_work_report_events','DELETE') THEN
+    RAISE EXCEPTION 'Daily work report write privileges are too broad';
+  END IF;
+END;
+$daily_work_report_acl$;
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
 DO $tenant_a_cannot_see_tenant_b_operation$
@@ -1609,6 +1819,7 @@ $tenant_a_cannot_see_tenant_b_operation$;
 RESET ROLE;
 
 -- Operation event and session rows are removed before the test deletes pumps with RESTRICT FKs.
+DELETE FROM public.pump_operation_power_segments;
 DELETE FROM public.pump_operation_events;
 DELETE FROM public.pump_operations;
 
