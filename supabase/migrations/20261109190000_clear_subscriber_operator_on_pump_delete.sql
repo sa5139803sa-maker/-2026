@@ -99,16 +99,17 @@ ALTER FUNCTION water_management_private.record_subscriber_operator_assignment()
 REVOKE ALL ON FUNCTION water_management_private.record_subscriber_operator_assignment()
   FROM PUBLIC, anon, authenticated, service_role;
 
--- Replace the earlier invoker trigger with a narrowly scoped owner function.
--- This function is callable only as a trigger and runs only as part of an
--- authorized pump deletion. The hard guard on operator_id permits the update
--- because this function executes with current_user = postgres.
-CREATE OR REPLACE FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
+-- Keep the existing branch cleanup trigger SECURITY INVOKER. A separate,
+-- narrowly scoped SECURITY DEFINER trigger clears only the pump-scoped operator
+-- assignment after the branch trigger has cleared branch_id. Trigger names sort
+-- alphabetically, so clear_subscriber_branches... runs first.
+
+CREATE FUNCTION water_management_private.clear_subscriber_operator_assignments_before_pump_delete()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
-AS $clear_subscriber_branches_before_pump_delete$
+AS $clear_subscriber_operator_assignments_before_pump_delete$
 BEGIN
   PERFORM set_config(
     'water_management.subscriber_operator_reason',
@@ -117,17 +118,21 @@ BEGIN
   );
 
   UPDATE public.subscribers
-  SET branch_id = NULL,
-      operator_id = NULL
+  SET operator_id = NULL
   WHERE organization_id = OLD.organization_id
     AND pump_id = OLD.id
-    AND (branch_id IS NOT NULL OR operator_id IS NOT NULL);
+    AND operator_id IS NOT NULL;
 
   RETURN OLD;
 END;
-$clear_subscriber_branches_before_pump_delete$;
+$clear_subscriber_operator_assignments_before_pump_delete$;
 
-ALTER FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
+ALTER FUNCTION water_management_private.clear_subscriber_operator_assignments_before_pump_delete()
   OWNER TO postgres;
-REVOKE ALL ON FUNCTION water_management_private.clear_subscriber_branches_before_pump_delete()
+REVOKE ALL ON FUNCTION water_management_private.clear_subscriber_operator_assignments_before_pump_delete()
   FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE TRIGGER clear_subscriber_operator_assignments_before_pump_delete
+  BEFORE DELETE ON public.pumps
+  FOR EACH ROW
+  EXECUTE FUNCTION water_management_private.clear_subscriber_operator_assignments_before_pump_delete();
