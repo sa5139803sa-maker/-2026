@@ -633,6 +633,7 @@ DECLARE
   v_duplicate_count integer;
   v_missing_count integer;
   v_conflict_count integer := 0;
+  v_base_order integer := 0;
   v_old_order jsonb;
   v_new_order jsonb;
   v_first_queue_item_id uuid;
@@ -729,8 +730,14 @@ BEGIN
   WHERE qi.daily_queue_id = p_queue_id
     AND qi.status = 'queued';
 
+  SELECT COALESCE(max(qi.sort_order), -1) + 1
+  INTO v_base_order
+  FROM public.queue_items qi
+  WHERE qi.daily_queue_id = p_queue_id
+    AND qi.status <> 'queued';
+
   SELECT jsonb_agg(
-    jsonb_build_object('id', submitted.item_id, 'to', submitted.ordinality - 1)
+    jsonb_build_object('id', submitted.item_id, 'to', v_base_order + submitted.ordinality - 1)
     ORDER BY submitted.ordinality
   ) INTO v_new_order
   FROM unnest(COALESCE(p_order, ARRAY[]::uuid[]))
@@ -742,7 +749,7 @@ BEGIN
     AND status = 'queued';
 
   UPDATE public.queue_items qi
-  SET sort_order = submitted.ordinality - 1
+  SET sort_order = v_base_order + submitted.ordinality - 1
   FROM unnest(COALESCE(p_order, ARRAY[]::uuid[]))
     WITH ORDINALITY AS submitted(item_id, ordinality)
   WHERE qi.id = submitted.item_id
