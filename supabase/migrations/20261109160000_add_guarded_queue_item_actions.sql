@@ -118,6 +118,12 @@ BEGIN
       USING ERRCODE = 'P0002';
   END IF;
 
+  IF v_role = 'operator'::public.app_role
+     AND v_item.assigned_operator_id IS DISTINCT FROM v_user_id THEN
+    RAISE EXCEPTION 'This queue item is assigned to another operator'
+      USING ERRCODE = '42501';
+  END IF;
+
   SELECT count(*)::integer INTO v_queued_count
   FROM public.queue_items qi
   WHERE qi.daily_queue_id = p_queue_id
