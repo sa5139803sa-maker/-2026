@@ -918,16 +918,16 @@ DO $manager_weekly_schedule_negative$
 DECLARE v_rejected boolean := false;
 BEGIN
   BEGIN
-    INSERT INTO public.weekly_schedules (pump_id, name, effective_from)
-    VALUES ('20000000-0000-4000-8000-000000000003', 'جدول عابر', '2026-11-01');
+    INSERT INTO public.weekly_schedules (pump_id, name, effective_from, week_starts_on)
+    VALUES ('20000000-0000-4000-8000-000000000003', 'جدول عابر', '2026-11-01', 7);
   EXCEPTION WHEN foreign_key_violation THEN v_rejected := true;
   END;
   IF NOT v_rejected THEN RAISE EXCEPTION 'Manager A created a schedule for a pump in another organization'; END IF;
 
   v_rejected := false;
   BEGIN
-    INSERT INTO public.weekly_schedules (organization_id, pump_id, name, effective_from)
-    VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003', 'جدول بنطاق مزور', '2026-11-01');
+    INSERT INTO public.weekly_schedules (organization_id, pump_id, name, effective_from, week_starts_on)
+    VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '20000000-0000-4000-8000-000000000003', 'جدول بنطاق مزور', '2026-11-01', 7);
   EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
   END;
   IF NOT v_rejected THEN RAISE EXCEPTION 'Manager A supplied organization_id while creating a schedule'; END IF;
