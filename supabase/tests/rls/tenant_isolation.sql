@@ -2811,6 +2811,46 @@ END;
 $subscriber_operator_history_not_visible_to_operator$;
 RESET ROLE;
 
+-- The initial assignment reason for a newly created subscriber is server-authored;
+-- a client-settable custom GUC must not forge the audit reason.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DO $subscriber_assignment_insert_reason_not_forged$
+DECLARE
+  v_subscriber_id uuid;
+BEGIN
+  PERFORM set_config('water_management.subscriber_operator_reason', 'سبب مزور من العميل', true);
+
+  INSERT INTO public.subscribers (
+    organization_id, pump_id, operator_id, full_name, phone
+  ) VALUES (
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '20000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000003',
+    'مشترك اختبار سجل الإسناد',
+    '+970599888801'
+  )
+  RETURNING id INTO v_subscriber_id;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.subscriber_operator_assignment_events
+    WHERE subscriber_id = v_subscriber_id
+      AND actor_id = auth.uid()
+      AND new_operator_id = '10000000-0000-4000-8000-000000000003'
+      AND reason = 'إسناد عند إنشاء المشترك'
+  ) OR EXISTS (
+    SELECT 1 FROM public.subscriber_operator_assignment_events
+    WHERE subscriber_id = v_subscriber_id
+      AND reason = 'سبب مزور من العميل'
+  ) THEN
+    RAISE EXCEPTION 'Client-set reason GUC forged the initial subscriber assignment audit event';
+  END IF;
+
+  DELETE FROM public.subscribers WHERE id = v_subscriber_id;
+END;
+$subscriber_assignment_insert_reason_not_forged$;
+RESET ROLE;
+
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
 DO $subscriber_operator_history_append_only$
