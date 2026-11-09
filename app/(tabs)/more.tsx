@@ -42,9 +42,9 @@ const items = [
   },
   {
     label: "الإعدادات",
-    detail: "قيد التطوير",
+    detail: "أصوات التنبيهات والاهتزاز وتخصيص صوت الهاتف",
     icon: Settings,
-    enabled: false,
+    enabled: true,
   },
 ];
 
@@ -93,7 +93,8 @@ export default function MoreScreen() {
             onPress={() => router.push(
               label === "إدارة الحسابات" ? "/account-management"
                 : label === "التقارير" ? "/reports"
-                  : "/management",
+                  : label === "الإعدادات" ? "/alert-settings"
+                    : "/management",
             )}
             style={({ pressed }) => [
               styles.menuItem,
