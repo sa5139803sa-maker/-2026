@@ -425,7 +425,7 @@ BEGIN
     END IF;
     v_seen_subscribers := array_append(v_seen_subscribers, v_subscriber_id);
 
-    SELECT s.full_name INTO v_subscriber_name
+    PERFORM 1
     FROM public.subscribers s
     WHERE s.id = v_subscriber_id
       AND s.organization_id = v_organization_id
