@@ -826,7 +826,7 @@ BEGIN
   END;
 
   IF NOT v_rejected THEN
-    RAISE EXCEPTION 'A previous week's expired balance was transferable into the current cycle';
+    RAISE EXCEPTION 'An expired weekly balance was transferable into the current cycle';
   END IF;
 END;
 $weekly_entitlement_expired_transfer_denied$;
