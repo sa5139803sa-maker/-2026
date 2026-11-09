@@ -2462,6 +2462,7 @@ DECLARE
   v_transfer_option_rows integer;
   v_report_date date;
   v_queue_date date;
+  v_reassignment_event jsonb;
 BEGIN
   SELECT count(*)::integer INTO v_operations
   FROM public.pump_operations
@@ -2631,6 +2632,29 @@ BEGIN
     WHERE event->>'event_type' = 'item_operator_reassigned'
   ) THEN
     RAISE EXCEPTION 'New operator queue view did not return owned item details and reassignment event';
+  END IF;
+
+  SELECT event INTO v_reassignment_event
+  FROM jsonb_array_elements(COALESCE(v_view->'events', '[]'::jsonb)) AS event
+  WHERE event->>'event_type' = 'item_operator_reassigned'
+  LIMIT 1;
+
+  IF v_reassignment_event IS NULL
+     OR v_reassignment_event->>'actor_id' IS NOT NULL
+     OR v_reassignment_event->>'reason' IS NOT NULL
+     OR COALESCE(v_reassignment_event->'metadata', '{}'::jsonb) <> '{}'::jsonb THEN
+    RAISE EXCEPTION 'Reassignment event leaked the manager identity, internal reason, or metadata to the new operator';
+  END IF;
+
+  IF (SELECT count(*) FROM public.queue_item_events
+      WHERE daily_queue_id = v_queue_id
+        AND queue_item_id IN (
+          SELECT id FROM public.queue_items
+          WHERE daily_queue_id = v_queue_id
+            AND subscriber_id = '30000000-0000-4000-8000-000000000001'
+        )
+        AND event_type = 'item_operator_reassigned') <> 0 THEN
+    RAISE EXCEPTION 'New operator directly selected an event created by the manager';
   END IF;
 
   SELECT work_date INTO v_report_date
