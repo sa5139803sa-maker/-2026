@@ -1479,6 +1479,7 @@ function OperationsScreenContent() {
                           auto_advance_retargeted: "تحديث هدف الانتقال التلقائي",
                           auto_advance_cancelled: "إلغاء الانتقال التلقائي",
                           queue_closed: "إغلاق طابور اليوم",
+                          weekly_minutes_transferred: "نقل دقائق حصة أسبوعية",
                         };
                         return (
                           <View key={event.id} style={styles.completedQueueRow}>
