@@ -1127,7 +1127,6 @@ function OperationsScreenContent() {
                   </View>
                 </>
               }
-              </View>
             </Card>
           )}
 
@@ -1504,6 +1503,23 @@ const styles = StyleSheet.create({
   actionText: { color: "#fff", fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.bold },
   fieldLabel: { color: colors.text.primary, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.semiBold, textAlign: "right" },
   durationInput: { minHeight: 48, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, color: colors.text.primary, textAlign: "center", backgroundColor: colors.background.surface, fontSize: typography.fontSize.md },
+  queueHeaderTitle: { flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm },
+  queueMetaBlock: { gap: 3, paddingVertical: spacing.xs },
+  autoAdvanceCard: { flexDirection: "row-reverse", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, backgroundColor: colors.status.info.background, padding: spacing.sm, borderRadius: radius.md },
+  autoAdvanceInfo: { flex: 1, alignItems: "flex-end", gap: 2 },
+  autoAdvanceTitle: { color: colors.status.info.text, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.semiBold },
+  autoAdvanceCountdown: { color: colors.status.info.text, fontSize: typography.fontSize.sm, fontFamily: typography.fontFamily.bold },
+  cancelAdvanceButton: { minHeight: 36, minWidth: 60, borderRadius: radius.sm, backgroundColor: colors.background.surface, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.sm },
+  cancelAdvanceText: { color: colors.status.danger.text, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.bold },
+  queueReorderControls: { flexDirection: "column", gap: 3 },
+  queueReasonInput: { minHeight: 42, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, color: colors.text.primary, backgroundColor: colors.background.surface, textAlign: "right" },
+  completedQueueBlock: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm, gap: spacing.xs },
+  completedQueueRow: { flexDirection: "row-reverse", alignItems: "center", gap: spacing.xs, paddingVertical: 3 },
+  completedQueueName: { flex: 1, color: colors.text.primary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.medium, textAlign: "right" },
+  queueAdditionForm: { gap: spacing.sm },
+  queueSubscriberChoices: { flexDirection: "row-reverse", flexWrap: "wrap", gap: spacing.xs },
+  queueSubscriberChoice: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background.surface, borderRadius: radius.md, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  queueSubscriberName: { color: colors.text.primary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.medium },
   queueHeader: { flexDirection: "row-reverse", justifyContent: "space-between", alignItems: "center" },
   count: { color: colors.text.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.medium },
   queueRow: { flexDirection: "row-reverse", alignItems: "center", gap: spacing.sm, minHeight: 62, borderTopWidth: 1, borderTopColor: colors.background.subtle, paddingTop: spacing.xs },
