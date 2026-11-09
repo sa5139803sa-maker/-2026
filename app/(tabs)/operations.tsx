@@ -53,7 +53,7 @@ function formatClock(seconds: number) {
 
 function formatTime(value: string | null) {
   if (!value) return "—";
-  return new Date(value).toLocaleTimeString("ar-PS", { hour: "2-digit", minute: "2-digit" });
+  return new Date(value).toLocaleTimeString("ar-PS", { timeZone: "Asia/Hebron", hour: "2-digit", minute: "2-digit" });
 }
 
 function friendlyError(error: { code?: string; message?: string }) {
@@ -151,37 +151,58 @@ function OperationsScreenContent() {
     setDataPumpId(null);
     setRefreshing(true);
     setError(null);
-    const day = localOperationDate();
-    const [subscriberResult, operationResult] = await Promise.all([
-      supabase.from("subscribers")
-        .select("id,full_name,subscriber_number,pump_id,created_at")
-        .eq("organization_id", organizationId)
-        .eq("pump_id", selectedPumpId)
-        .eq("is_active", true)
-        .order("subscriber_number", { ascending: true }),
-      supabase.from("pump_operations")
-        .select("id,pump_id,subscriber_id,subscriber_name,planned_minutes,status,started_at,paused_at,paused_seconds,ended_at,actual_seconds,operation_date")
-        .eq("organization_id", organizationId)
-        .eq("pump_id", selectedPumpId)
-        .or(`operation_date.eq.${day},status.in.(running,paused)`)
-        .order("started_at", { ascending: false }),
-    ]);
-    if (requestId !== dataRequestSequence.current) return;
-    if (subscriberResult.error || operationResult.error) {
-      console.error("operation queue load failed", subscriberResult.error ?? operationResult.error);
-      setSubscribers([]);
-      setOperations([]);
-      setError("تعذر تحميل طابور المشتركين أو سجل التشغيل. حدّث الشاشة.");
-    } else {
-      setSubscribers((subscriberResult.data ?? []) as Subscriber[]);
-      setOperations((operationResult.data ?? []) as Operation[]);
-      setDataPumpId(selectedPumpId);
+    try {
+      const day = localOperationDate();
+      const [subscriberResult, operationResult] = await Promise.all([
+        supabase.from("subscribers")
+          .select("id,full_name,subscriber_number,pump_id,created_at")
+          .eq("organization_id", organizationId)
+          .eq("pump_id", selectedPumpId)
+          .eq("is_active", true)
+          .order("subscriber_number", { ascending: true }),
+        supabase.from("pump_operations")
+          .select("id,pump_id,subscriber_id,subscriber_name,planned_minutes,status,started_at,paused_at,paused_seconds,ended_at,actual_seconds,operation_date")
+          .eq("organization_id", organizationId)
+          .eq("pump_id", selectedPumpId)
+          .or(`operation_date.eq.${day},status.in.(running,paused)`)
+          .order("started_at", { ascending: false }),
+      ]);
+      if (requestId !== dataRequestSequence.current) return;
+      if (subscriberResult.error || operationResult.error) {
+        console.error("operation queue load failed", subscriberResult.error ?? operationResult.error);
+        setSubscribers([]);
+        setOperations([]);
+        setDataPumpId(selectedPumpId);
+        setError("تعذر تحميل طابور المشتركين أو سجل التشغيل. حدّث الشاشة.");
+      } else {
+        setSubscribers((subscriberResult.data ?? []) as Subscriber[]);
+        setOperations((operationResult.data ?? []) as Operation[]);
+        setDataPumpId(selectedPumpId);
+      }
+    } catch (loadError) {
+      console.error("operation queue request failed", loadError);
+      if (requestId === dataRequestSequence.current) {
+        setSubscribers([]);
+        setOperations([]);
+        setDataPumpId(selectedPumpId);
+        setError("انقطع الاتصال أثناء تحميل بيانات التشغيل. حاول التحديث.");
+      }
+    } finally {
+      if (requestId === dataRequestSequence.current) setRefreshing(false);
     }
-    setRefreshing(false);
   }, [organizationId, selectedPumpId]);
 
   useEffect(() => { void loadPumps(); }, [loadPumps]);
   useEffect(() => { void loadPumpData(); }, [loadPumpData]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        setNow(Date.now());
+        void loadPumpData();
+      }
+    });
+    return () => subscription.remove();
+  }, [loadPumpData]);
   useEffect(() => {
     if (!activeOperation) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
