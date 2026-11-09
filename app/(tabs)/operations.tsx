@@ -1382,6 +1382,80 @@ function OperationsScreenContent() {
                     </View>
                   ) : null}
 
+                  {(profile?.role === "manager" || profile?.role === "operator") ? (
+                    <View style={styles.weeklyTransferBlock}>
+                      <Pressable onPress={toggleWeeklyTransfer} style={styles.refresh}>
+                        <Text style={styles.refreshText}>
+                          {weeklyTransferOpen ? "إغلاق نقل الحصة الأسبوعية" : "نقل دقائق حصة أسبوعية من يوم آخر"}
+                        </Text>
+                      </Pressable>
+                      {weeklyTransferOpen ? (
+                        <View style={styles.weeklyTransferForm}>
+                          <Text style={styles.detailText}>
+                            انقل الدقائق غير المستخدمة من يوم سابق إلى اليوم الحالي داخل الدورة نفسها. لا يمكن نقل الدقائق المنفذة أو ترحيلها إلى أسبوع آخر.
+                          </Text>
+                          {weeklyTransferLoading ? (
+                            <ActivityIndicator color={colors.brand.teal} />
+                          ) : weeklyTransferOptions.length === 0 ? (
+                            <Text style={styles.empty}>لا توجد دقائق أسبوعية متبقية قابلة للنقل إلى اليوم.</Text>
+                          ) : (
+                            weeklyTransferOptions.map((item) => {
+                              const entered = Number(weeklyTransferMinutes[item.allocation_id] ?? "");
+                              const valid = Number.isInteger(entered) && entered >= 1 && entered <= item.available_minutes;
+                              return (
+                                <View key={item.allocation_id} style={styles.weeklyTransferRow}>
+                                  <View style={styles.weeklyTransferInfo}>
+                                    <Text style={styles.queueName}>{item.subscriber_name}</Text>
+                                    <Text style={styles.queueMeta}>
+                                      من تاريخ {item.source_date} · متاح {item.available_minutes} د · استهلك {item.weekly_consumed_minutes} من {item.weekly_quota_minutes} د
+                                    </Text>
+                                  </View>
+                                  <View style={styles.weeklyTransferAction}>
+                                    <TextInput
+                                      value={weeklyTransferMinutes[item.allocation_id] ?? ""}
+                                      onChangeText={(value) => setWeeklyTransferMinutes((current) => ({
+                                        ...current,
+                                        [item.allocation_id]: value,
+                                      }))}
+                                      keyboardType="number-pad"
+                                      maxLength={4}
+                                      placeholder="الدقائق"
+                                      accessibilityLabel={`دقائق النقل للمشترك ${item.subscriber_name}`}
+                                      style={styles.weeklyTransferInput}
+                                    />
+                                    <Pressable
+                                      disabled={busy || !valid || weeklyTransferReason.trim().length < 2 || dailyQueue.status === "closed"}
+                                      onPress={() => void transferWeeklyMinutes(item)}
+                                      style={[styles.weeklyTransferButton, (busy || !valid || weeklyTransferReason.trim().length < 2 || dailyQueue.status === "closed") && styles.disabled]}
+                                    >
+                                      <Text style={styles.actionText}>نقل إلى اليوم</Text>
+                                    </Pressable>
+                                  </View>
+                                </View>
+                              );
+                            })
+                          )}
+                          <Text style={styles.fieldLabel}>سبب النقل (إلزامي)</Text>
+                          <TextInput
+                            value={weeklyTransferReason}
+                            onChangeText={setWeeklyTransferReason}
+                            placeholder="مثال: تعذر إكمال الحصة في يومها"
+                            maxLength={240}
+                            textAlign="right"
+                            style={styles.queueReasonInput}
+                          />
+                          <Pressable
+                            disabled={weeklyTransferLoading || busy || weeklyTransferReason.trim().length < 2 || dailyQueue.status === "closed"}
+                            onPress={() => void loadWeeklyTransferOptions()}
+                            style={[styles.refresh, (weeklyTransferLoading || busy || weeklyTransferReason.trim().length < 2 || dailyQueue.status === "closed") && styles.disabled]}
+                          >
+                            <Text style={styles.refreshText}>تحديث الأرصدة المتاحة</Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+
                   <View style={styles.emergencyBlock}>
                     <Pressable onPress={() => setQueueAdditionOpen((open) => !open)} style={styles.refresh}>
                       <Text style={styles.refreshText}>
@@ -1548,11 +1622,14 @@ function OperationsScreenContent() {
                         <Text style={styles.empty}>لا توجد حصص أسبوعية في الجدول لهذا اليوم. يمكن حفظ تقرير المصادر، وسيظل الجدول فارغًا.</Text>
                       ) : surveyEntries.map((entry, index) => {
                         const subscriber = entry.subscribers;
-                        const automaticMinutes = Math.floor(
-                          surveyOperations.filter((operation) =>
-                            operation.status === "completed" && operation.subscriber_id === entry.subscriber_id,
-                          ).reduce((sum, operation) => sum + (operation.actual_seconds ?? 0), 0) / 60,
-                        );
+                        const allocationId = entry.weekly_entitlement_allocation_id;
+                        const automaticSeconds = surveyQueueItems
+                          .filter((item) => item.weekly_entitlement_allocation_id === allocationId && item.operation_id)
+                          .reduce((sum, item) => {
+                            const operation = surveyOperations.find((candidate) => candidate.id === item.operation_id);
+                            return sum + (operation?.status === "completed" ? operation.actual_seconds ?? 0 : 0);
+                          }, 0);
+                        const automaticMinutes = Math.floor(automaticSeconds / 60);
                         return (
                           <View key={entry.id} style={styles.surveyEntry}>
                             <View style={styles.surveyEntryHeader}>
@@ -1566,7 +1643,10 @@ function OperationsScreenContent() {
                               </View>
                               <View style={styles.surveyEntryInfo}>
                                 <Text style={styles.queueName}>{subscriber?.full_name ?? "مشترك"}</Text>
-                                <Text style={styles.queueMeta}>المقرر {entry.planned_minutes} د · المسجل آليًا {automaticMinutes} د</Text>
+                                <Text style={styles.queueMeta}>
+                                  {entry.entry_type === "weekly_reassigned" ? "حصة أسبوعية منقولة" : "الحصة الأسبوعية"}
+                                  {" · المخصص "}{entry.planned_minutes} د · المسجل آليًا {automaticMinutes} د
+                                </Text>
                               </View>
                             </View>
                             <View style={styles.surveyInputsRow}>
