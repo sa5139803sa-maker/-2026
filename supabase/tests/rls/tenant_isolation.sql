@@ -71,6 +71,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 \ir ../../migrations/20261109160000_add_guarded_queue_item_actions.sql
 \ir ../../migrations/20261109170000_assign_subscribers_to_operators.sql
 \ir ../../migrations/20261109181500_scope_operator_data_access.sql
+\ir ../../migrations/20261109190000_clear_subscriber_operator_on_pump_delete.sql
 
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT, UPDATE ON public.profiles TO service_role;
@@ -3287,7 +3288,18 @@ WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 DELETE FROM public.daily_work_source_totals
 WHERE organization_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
   AND pump_id='20000000-0000-4000-8000-000000000003';
-DELETE FROM public.pumps WHERE id = '20000000-0000-4000-8000-000000000003';
+DO $delete_tenant_b_pump_as_system$
+DECLARE
+  v_previous_claim text := current_setting('request.jwt.claim.sub', true);
+BEGIN
+  -- This fixture models a system/database lifecycle delete, not an action
+  -- performed by the last JWT identity used by preceding tests.
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  DELETE FROM public.pumps
+  WHERE id = '20000000-0000-4000-8000-000000000003';
+  PERFORM set_config('request.jwt.claim.sub', COALESCE(v_previous_claim, ''), true);
+END;
+$delete_tenant_b_pump_as_system$;
 DO $daily_report_pump_teardown$
 BEGIN
   IF EXISTS (
@@ -3311,12 +3323,33 @@ BEGIN
     SELECT 1 FROM public.subscribers
     WHERE id = '30000000-0000-4000-8000-000000000004'
       AND pump_id IS NULL
+      AND operator_id IS NULL
+      AND branch_id IS NULL
       AND organization_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
   ) THEN
-    RAISE EXCEPTION 'Pump deletion did not preserve subscriber tenant and null pump_id';
+    RAISE EXCEPTION 'Pump deletion did not preserve the subscriber while clearing its pump, branch, and operator assignment';
   END IF;
 END;
 $delete_behavior$;
+
+DO $pump_delete_assignment_audit$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.subscriber_operator_assignment_events
+    WHERE subscriber_id = '30000000-0000-4000-8000-000000000004'
+      AND organization_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      AND previous_operator_id = '10000000-0000-4000-8000-000000000007'
+      AND new_operator_id IS NULL
+      AND new_operator_name IS NULL
+      AND actor_id IS NULL
+      AND actor_type = 'system'
+      AND reason = 'إلغاء إسناد المشترك تلقائيًا بسبب حذف الغطاس'
+  ) THEN
+    RAISE EXCEPTION 'Pump deletion did not append a system audit event for subscriber operator unassignment';
+  END IF;
+END;
+$pump_delete_assignment_audit$;
 
 -- Public portal lookup is service-only and requires exact number + phone matching.
 SET LOCAL ROLE service_role;
