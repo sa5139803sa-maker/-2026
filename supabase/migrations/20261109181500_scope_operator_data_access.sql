@@ -56,44 +56,6 @@ REVOKE ALL ON FUNCTION water_management_private.can_read_subscriber_scope(uuid, 
 GRANT EXECUTE ON FUNCTION water_management_private.can_read_subscriber_scope(uuid, uuid, uuid)
   TO authenticated;
 
-CREATE OR REPLACE FUNCTION water_management_private.can_read_operation_scope(
-  p_organization_id uuid,
-  p_pump_id uuid,
-  p_subscriber_id uuid,
-  p_executor_id uuid
-)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = ''
-AS $can_read_operation_scope$
-  SELECT
-    (SELECT auth.uid()) IS NOT NULL
-    AND p_organization_id = water_management_private.current_user_organization_id()
-    AND CASE water_management_private.current_user_role()
-      WHEN 'manager'::public.app_role THEN true
-      WHEN 'operator'::public.app_role THEN
-        CASE
-          WHEN p_subscriber_id IS NULL
-            THEN p_executor_id = (SELECT auth.uid())
-          ELSE EXISTS (
-            SELECT 1
-            FROM public.subscribers s
-            WHERE s.id = p_subscriber_id
-              AND s.organization_id = p_organization_id
-              AND s.pump_id = p_pump_id
-              AND s.operator_id = (SELECT auth.uid())
-          )
-        END
-      ELSE false
-    END
-$can_read_operation_scope$;
-ALTER FUNCTION water_management_private.can_read_operation_scope(uuid, uuid, uuid, uuid) OWNER TO postgres;
-REVOKE ALL ON FUNCTION water_management_private.can_read_operation_scope(uuid, uuid, uuid, uuid)
-  FROM PUBLIC, anon, service_role;
-GRANT EXECUTE ON FUNCTION water_management_private.can_read_operation_scope(uuid, uuid, uuid, uuid)
-  TO authenticated;
 
 CREATE OR REPLACE FUNCTION water_management_private.can_read_supervisor_pump_scope(
   p_organization_id uuid,
@@ -305,8 +267,9 @@ CREATE POLICY pump_operations_select_scoped
   FOR SELECT TO authenticated
   USING (
     organization_id = (SELECT water_management_private.current_user_organization_id())
-    AND (SELECT water_management_private.can_read_operation_scope(
-      organization_id, pump_id, subscriber_id, operator_id
+    AND (SELECT water_management_private.can_read_operation_snapshot_scope(
+      organization_id, pump_id, subscriber_id,
+      subscriber_operator_id, operator_id
     ))
   );
 
@@ -347,8 +310,9 @@ CREATE POLICY pump_operation_power_segments_select_scoped
         WHERE op.id = pump_operation_power_segments.operation_id
           AND op.organization_id = pump_operation_power_segments.organization_id
           AND op.pump_id = pump_operation_power_segments.pump_id
-          AND (SELECT water_management_private.can_read_operation_scope(
-            op.organization_id, op.pump_id, op.subscriber_id, op.operator_id
+          AND (SELECT water_management_private.can_read_operation_snapshot_scope(
+            op.organization_id, op.pump_id, op.subscriber_id,
+            op.subscriber_operator_id, op.operator_id
           ))
       )
     )
@@ -619,8 +583,9 @@ BEGIN
           WHERE op.id = seg.operation_id
             AND op.organization_id = seg.organization_id
             AND op.pump_id = seg.pump_id
-            AND (SELECT water_management_private.can_read_operation_scope(
-              op.organization_id, op.pump_id, op.subscriber_id, op.operator_id
+            AND (SELECT water_management_private.can_read_operation_snapshot_scope(
+              op.organization_id, op.pump_id, op.subscriber_id,
+              op.subscriber_operator_id, op.operator_id
             ))
         )
       )
