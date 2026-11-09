@@ -3034,8 +3034,8 @@ BEGIN
     '20000000-0000-4000-8000-000000000001', v_queue_date + 3
   );
 
-  IF v_power_usage_rows <> 0 OR v_transfer_option_rows < 1 THEN
-    RAISE EXCEPTION 'New operator power usage or weekly transfer options escaped subscriber ownership: power rows %, transfer options %',
+  IF v_power_usage_rows < 1 OR v_transfer_option_rows < 1 THEN
+    RAISE EXCEPTION 'New operator must read shared pump energy and their own weekly transfer options: power rows %, transfer options %',
       v_power_usage_rows, v_transfer_option_rows;
   END IF;
 
