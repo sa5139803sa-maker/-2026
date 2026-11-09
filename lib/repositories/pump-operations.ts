@@ -247,25 +247,20 @@ export const pumpOperationsRepository = {
       .order("created_at", { ascending: true });
   },
 
-  async listPumpOperators(organizationId: string, pumpId: string) {
-    const assignments = await supabase
-      .from("pump_assignments")
-      .select("user_id")
-      .eq("organization_id", organizationId)
-      .eq("pump_id", pumpId)
-      .eq("assignment_role", "operator");
+  async listPumpOperators(_organizationId: string, pumpId: string, workDate: string) {
+    return supabase.rpc("get_daily_report_operators", {
+      p_pump_id: pumpId,
+      p_work_date: workDate,
+      p_only_existing_reports: false,
+    });
+  },
 
-    if (assignments.error) return { data: null, error: assignments.error };
-    const ids = [...new Set((assignments.data ?? []).map((row) => row.user_id))];
-    if (ids.length === 0) return { data: [], error: null };
-
-    return supabase
-      .from("profiles")
-      .select("id,display_name")
-      .eq("organization_id", organizationId)
-      .eq("role", "operator")
-      .in("id", ids)
-      .order("display_name", { ascending: true });
+  async listDailyReportOperators(_organizationId: string, pumpId: string, workDate: string) {
+    return supabase.rpc("get_daily_report_operators", {
+      p_pump_id: pumpId,
+      p_work_date: workDate,
+      p_only_existing_reports: true,
+    });
   },
 
   prepareDailyWorkReport(pumpId: string, workDate: string) {
