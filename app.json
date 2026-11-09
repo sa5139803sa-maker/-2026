@@ -39,7 +39,8 @@
             "./assets/alerts/handover_warning.wav"
           ]
         }
-      ]
+      ],
+      "./plugins/with-pump-timer-foreground-service"
     ],
     "experiments": {
       "typedRoutes": true

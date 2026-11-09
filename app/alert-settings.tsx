@@ -219,7 +219,7 @@ export default function AlertSettingsScreen() {
             <Text style={styles.nativeTitle}>تنبيهات Android وشاشة القفل</Text>
           </View>
           <Text style={styles.nativeDescription}>
-            تُجدول التنبيهات في نظام Android لتصل بعد قفل الشاشة أو إغلاق واجهة التطبيق. فعّل إذن الإشعارات أولًا، ثم اسمح بالمنبّهات الدقيقة.
+            يُعرض عداد تنازلي مستمر في إشعارات Android طوال التعبئة، ويتحدث من نظام Android نفسه حتى عند إغلاق واجهة التطبيق. عند الإيقاف المؤقت يتحول إلى وقت متبقٍ ثابت، ويختفي عند إنهاء العملية. فعّل إذن الإشعارات ليظهر العداد.
           </Text>
           <View style={styles.nativeActions}>
             <Pressable disabled={nativeBusy} onPress={() => void enableAndroidNotifications()}

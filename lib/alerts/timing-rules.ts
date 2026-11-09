@@ -48,3 +48,56 @@ export function getHandoverAlertWindow(deadlineEpochMs: number, nowEpochMs: numb
   const durationMs = Math.min(HANDOVER_WARNING_WINDOW_MS, remainingMs);
   return { delayMs: Math.max(0, remainingMs - HANDOVER_WARNING_WINDOW_MS), durationMs };
 }
+
+
+export type PersistentTimerOperation = {
+  id: string;
+  status: "running" | "paused" | "completed";
+  started_at: string;
+  paused_at: string | null;
+  planned_minutes: number;
+  paused_seconds: number;
+};
+
+export type PersistentTimerSnapshot =
+  | { mode: "running"; operationId: string; endAtEpochMs: number }
+  | { mode: "paused"; operationId: string; remainingMs: number };
+
+export function getPersistentTimerSnapshot(
+  operation: PersistentTimerOperation,
+  nowEpochMs: number,
+): PersistentTimerSnapshot | null {
+  const startedAtMs = Date.parse(operation.started_at);
+  if (
+    !operation.id
+    || !Number.isFinite(startedAtMs)
+    || !Number.isInteger(operation.planned_minutes)
+    || operation.planned_minutes < 1
+    || !Number.isFinite(operation.paused_seconds)
+    || operation.paused_seconds < 0
+    || !Number.isFinite(nowEpochMs)
+  ) return null;
+
+  if (operation.status === "running") {
+    const endAtEpochMs =
+      startedAtMs + operation.planned_minutes * 60_000 + operation.paused_seconds * 1000;
+    if (!Number.isFinite(endAtEpochMs)) return null;
+    return { mode: "running", operationId: operation.id, endAtEpochMs };
+  }
+
+  if (operation.status === "paused") {
+    if (!operation.paused_at) return null;
+    const pausedAtMs = Date.parse(operation.paused_at);
+    if (!Number.isFinite(pausedAtMs) || pausedAtMs < startedAtMs) return null;
+    const elapsedBeforePauseSeconds = Math.max(
+      0,
+      Math.floor((pausedAtMs - startedAtMs) / 1000) - operation.paused_seconds,
+    );
+    const remainingMs = Math.max(
+      0,
+      operation.planned_minutes * 60_000 - elapsedBeforePauseSeconds * 1000,
+    );
+    return { mode: "paused", operationId: operation.id, remainingMs };
+  }
+  return null;
+}

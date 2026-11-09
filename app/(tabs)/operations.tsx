@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { CheckCircle2, Clock3, Droplets, Pause, Play, Plus, RefreshCw, Waves } from "lucide-react-native";
 import { loadAlertSettings, type AlertSettings } from "@/lib/alerts/settings";
+import { syncPersistentPumpTimerNotification } from "@/lib/alerts/persistent-timer";
 import {
   cancelHandoverNotification,
   cancelOperationTimerNotifications,
@@ -502,6 +503,20 @@ function OperationsScreenContent() {
   ]);
 
   useEffect(() => {
+    if (
+      Platform.OS !== "android"
+      || !selectedPumpId
+      || dataPumpId !== selectedPumpId
+      || operationLoadFailed
+    ) return;
+
+    void syncPersistentPumpTimerNotification(selectedPumpId, operations).catch((syncError) => {
+      console.warn("Android persistent timer notification sync failed.", syncError);
+      setError("تعذر تشغيل عداد التعبئة المستمر في إشعارات Android. تحقق من إذن الإشعارات.");
+    });
+  }, [selectedPumpId, dataPumpId, operations, operationLoadFailed]);
+
+  useEffect(() => {
     if (!selectedPumpId || dataPumpId !== selectedPumpId || !alertSettings || dailyQueueLoadFailed) return;
     void syncQueueHandoverNotification(selectedPumpId, dailyQueue, alertSettings).catch((syncError) => {
       console.warn("Android queue handover notification sync failed.", syncError);
@@ -638,8 +653,8 @@ function OperationsScreenContent() {
     } else {
       stopHandoverAlert(dailyQueue.auto_advance_token);
       setNotice(notificationsGranted
-        ? `بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي.`
-        : "بدأت التعبئة، لكن إذن إشعارات Android غير مفعّل؛ لن تصل تنبيهات شاشة القفل حتى تفعيله.");
+        ? `بدأت تعبئة ${item.subscriber_name_snapshot} من الطابور اليومي، وسيظهر عداد الوقت المتبقي في إشعارات Android.`
+        : "بدأت التعبئة، لكن إذن إشعارات Android غير مفعّل؛ لن يظهر العداد المستمر أو تنبيهات شاشة القفل حتى تفعيله.");
       await loadPumpData();
     }
     setBusy(false);
