@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
   summaryLabel: { color: colors.text.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular },
   summaryValue: { color: colors.text.primary, fontSize: typography.fontSize.md, fontFamily: typography.fontFamily.bold },
   smallNote: { color: colors.text.secondary, fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.regular, textAlign: "right" },
-  statusPill: { paddingHorizontal: spacing.sm, paddingVertical: 5, borderRadius: radius.full },
+  statusPill: { paddingHorizontal: spacing.sm, paddingVertical: 5, borderRadius: radius.pill },
   statusSubmitted: { backgroundColor: colors.status.success.background },
   statusDraft: { backgroundColor: colors.status.warning.background },
   statusText: { fontSize: typography.fontSize.xs, fontFamily: typography.fontFamily.bold },
