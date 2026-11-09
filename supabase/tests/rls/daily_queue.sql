@@ -51,36 +51,39 @@ END;
 $queue_generation_operator$;
 RESET ROLE;
 
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
 DO $queue_item_fixtures$
 DECLARE
   v_queue_id uuid := current_setting('test.daily_queue_id')::uuid;
-  v_subscriber public.subscribers%ROWTYPE;
+  v_item public.queue_items%ROWTYPE;
 BEGIN
-  SELECT * INTO v_subscriber
-  FROM public.subscribers
-  WHERE id = '30000000-0000-4000-8000-000000000001';
-
-  INSERT INTO public.queue_items (
-    id, daily_queue_id, organization_id, pump_id, source_type,
-    subscriber_id, subscriber_name_snapshot, branch_id, branch_name_snapshot,
-    planned_minutes, sort_order
-  ) VALUES (
-    '70000000-0000-4000-8000-000000000001',
-    v_queue_id, v_subscriber.organization_id, v_subscriber.pump_id,
-    'additional_registered', v_subscriber.id, v_subscriber.full_name,
-    v_subscriber.branch_id, 'تفرع أ 1', 12, 1
+  v_item := public.add_daily_queue_item(
+    v_queue_id,
+    'additional_registered',
+    '30000000-0000-4000-8000-000000000001',
+    NULL,
+    12
   );
+  PERFORM set_config('test.additional_queue_item_id', v_item.id::text, true);
+  IF v_item.sort_order <> 1 OR v_item.branch_id <> '40000000-0000-4000-8000-000000000001' THEN
+    RAISE EXCEPTION 'Registered additional queue item was not appended with the subscriber branch snapshot';
+  END IF;
 
-  INSERT INTO public.queue_items (
-    id, daily_queue_id, organization_id, pump_id, source_type,
-    subscriber_name_snapshot, planned_minutes, sort_order
-  ) VALUES (
-    '70000000-0000-4000-8000-000000000002',
-    v_queue_id, v_subscriber.organization_id, v_subscriber.pump_id,
-    'emergency', 'مستفيد طارئ للاختبار', 7, 2
+  v_item := public.add_daily_queue_item(
+    v_queue_id,
+    'emergency',
+    NULL,
+    'مستفيد طارئ للاختبار',
+    7
   );
+  PERFORM set_config('test.guest_queue_item_id', v_item.id::text, true);
+  IF v_item.sort_order <> 2 OR v_item.subscriber_id IS NOT NULL THEN
+    RAISE EXCEPTION 'Emergency beneficiary must append to the tail without creating a subscriber record';
+  END IF;
 END;
 $queue_item_fixtures$;
+RESET ROLE;
 
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
@@ -89,8 +92,8 @@ DECLARE
   v_queue_id uuid := current_setting('test.daily_queue_id')::uuid;
   v_weekly_item_id uuid;
   v_source_id uuid;
-  v_additional_item_id uuid := '70000000-0000-4000-8000-000000000001';
-  v_guest_item_id uuid := '70000000-0000-4000-8000-000000000002';
+  v_additional_item_id uuid := current_setting('test.additional_queue_item_id')::uuid;
+  v_guest_item_id uuid := current_setting('test.guest_queue_item_id')::uuid;
   v_version integer;
   v_result jsonb;
   v_operation public.pump_operations%ROWTYPE;
@@ -372,7 +375,8 @@ BEGIN
      OR pg_catalog.has_function_privilege('anon', 'public.reorder_daily_queue(uuid,integer,uuid[],text)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.start_daily_queue_item(uuid,uuid,uuid)', 'EXECUTE')
      OR pg_catalog.has_function_privilege('anon', 'public.start_next_daily_queue_item(uuid,uuid,uuid,uuid)', 'EXECUTE')
-     OR pg_catalog.has_function_privilege('anon', 'public.cancel_daily_queue_auto_advance(uuid,uuid,text)', 'EXECUTE') THEN
+     OR pg_catalog.has_function_privilege('anon', 'public.cancel_daily_queue_auto_advance(uuid,uuid,text)', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'public.add_daily_queue_item(uuid,text,uuid,text,integer)', 'EXECUTE') THEN
     RAISE EXCEPTION 'Queue RPCs must not be executable by anon';
   END IF;
 END;
