@@ -48,6 +48,7 @@ export type DailyScheduleEntry = {
     full_name: string;
     subscriber_number: number;
     branch_id: string | null;
+    operator_id: string | null;
   };
 };
 
@@ -65,6 +66,7 @@ export type WeeklyEntitlementAllocationForDay = {
     full_name: string;
     subscriber_number: number;
     branch_id: string | null;
+    operator_id: string | null;
   };
 };
 
@@ -150,11 +152,13 @@ export type DailyWorkReportDetails = {
   id: string;
   work_date: string;
   operator_id: string;
+  created_by: string;
   work_started_at: string;
   work_ended_at: string;
   stoppage_minutes: number;
   status: "draft" | "submitted";
   submitted_at: string | null;
+  submitted_by: string | null;
   updated_at: string;
   sourceTotals: {
     id: string;
@@ -185,6 +189,23 @@ export type DailyWorkReportDetails = {
   }[];
 };
 
+export type DailyPumpEnergyReport = {
+  id: string;
+  work_date: string;
+  work_started_at: string;
+  work_ended_at: string;
+  stoppage_minutes: number;
+  status: "draft" | "submitted";
+  submitted_at: string | null;
+  revision: number;
+  sourceTotals: {
+    id: string;
+    power_source_id: string;
+    source_name_snapshot: string;
+    minutes: number;
+  }[];
+};
+
 export type PumpOperation = {
   id: string;
   pump_id: string;
@@ -199,6 +220,8 @@ export type PumpOperation = {
   ended_at: string | null;
   actual_seconds: number | null;
   operation_date: string;
+  operator_id: string;
+  subscriber_operator_id: string | null;
   current_power_source_id: string | null;
   last_power_source_id: string | null;
 };
@@ -219,6 +242,48 @@ export const pumpOperationsRepository = {
       .select("id,name,code,status")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: true });
+  },
+
+  async listPumpOperators(organizationId: string, pumpId: string) {
+    const assignments = await supabase
+      .from("pump_assignments")
+      .select("user_id")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .eq("assignment_role", "operator");
+
+    if (assignments.error) return { data: null, error: assignments.error };
+    const ids = [...new Set((assignments.data ?? []).map((row) => row.user_id))];
+    if (ids.length === 0) return { data: [], error: null };
+
+    return supabase
+      .from("profiles")
+      .select("id,display_name")
+      .eq("organization_id", organizationId)
+      .eq("role", "operator")
+      .in("id", ids)
+      .order("display_name", { ascending: true });
+  },
+
+  async listDailyReportOperators(organizationId: string, pumpId: string, workDate: string) {
+    const reports = await supabase
+      .from("daily_work_reports")
+      .select("operator_id")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .eq("work_date", workDate);
+
+    if (reports.error) return { data: null, error: reports.error };
+    const ids = [...new Set((reports.data ?? []).map((row) => row.operator_id))];
+    if (ids.length === 0) return { data: [], error: null };
+
+    return supabase
+      .from("profiles")
+      .select("id,display_name")
+      .eq("organization_id", organizationId)
+      .eq("role", "operator")
+      .in("id", ids)
+      .order("display_name", { ascending: true });
   },
 
   listActiveSubscribers(organizationId: string, pumpId: string) {
@@ -380,7 +445,7 @@ export const pumpOperationsRepository = {
     const weekday = new Date(`${workDate}T12:00:00Z`).getUTCDay() || 7;
     return supabase
       .from("schedule_entries")
-      .select("id,subscriber_id,weekday,sort_order,planned_minutes,subscribers!inner(id,full_name,subscriber_number,branch_id),weekly_schedules!inner(id,status,effective_from,effective_to)")
+      .select("id,subscriber_id,weekday,sort_order,planned_minutes,subscribers!inner(id,full_name,subscriber_number,branch_id,operator_id),weekly_schedules!inner(id,status,effective_from,effective_to)")
       .eq("organization_id", organizationId)
       .eq("pump_id", pumpId)
       .eq("weekday", weekday)
@@ -393,7 +458,7 @@ export const pumpOperationsRepository = {
   listWeeklyEntitlementAllocationsForDay(organizationId: string, pumpId: string, workDate: string) {
     return supabase
       .from("weekly_entitlement_allocations")
-      .select("id,subscriber_id,allocation_date,source_schedule_entry_id,original_minutes,allocated_minutes,consumed_minutes,available_minutes,subscribers!inner(id,full_name,subscriber_number,branch_id)")
+      .select("id,subscriber_id,allocation_date,source_schedule_entry_id,original_minutes,allocated_minutes,consumed_minutes,available_minutes,subscribers!inner(id,full_name,subscriber_number,branch_id,operator_id)")
       .eq("organization_id", organizationId)
       .eq("pump_id", pumpId)
       .eq("allocation_date", workDate)
@@ -467,10 +532,10 @@ export const pumpOperationsRepository = {
       .in("id", actorIds);
   },
 
-  async getDailyWorkReport(organizationId: string, pumpId: string, workDate: string) {
+  async getDailyPumpEnergyReport(organizationId: string, pumpId: string, workDate: string) {
     const reportResult = await supabase
-      .from("daily_work_reports")
-      .select("id,work_date,operator_id,work_started_at,work_ended_at,stoppage_minutes,status,submitted_at,updated_at")
+      .from("daily_pump_energy_reports")
+      .select("id,work_date,work_started_at,work_ended_at,stoppage_minutes,status,submitted_at,revision")
       .eq("organization_id", organizationId)
       .eq("pump_id", pumpId)
       .eq("work_date", workDate)
@@ -480,14 +545,46 @@ export const pumpOperationsRepository = {
       return { data: null, error: reportResult.error };
     }
 
+    const sourcesResult = await supabase
+      .from("daily_pump_energy_source_totals")
+      .select("id,power_source_id,source_name_snapshot,minutes")
+      .eq("organization_id", organizationId)
+      .eq("daily_pump_energy_report_id", reportResult.data.id)
+      .order("source_name_snapshot", { ascending: true });
+
+    if (sourcesResult.error) return { data: null, error: sourcesResult.error };
+    return {
+      data: {
+        ...reportResult.data,
+        sourceTotals: (sourcesResult.data ?? []) as DailyPumpEnergyReport["sourceTotals"],
+      } satisfies DailyPumpEnergyReport,
+      error: null,
+    };
+  },
+
+  async getDailyWorkReport(
+    organizationId: string,
+    pumpId: string,
+    workDate: string,
+    operatorId?: string | null,
+  ) {
+    let reportQuery = supabase
+      .from("daily_work_reports")
+      .select("id,work_date,operator_id,created_by,work_started_at,work_ended_at,stoppage_minutes,status,submitted_at,submitted_by,updated_at")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .eq("work_date", workDate);
+
+    if (operatorId) reportQuery = reportQuery.eq("operator_id", operatorId);
+    const reportResult = await reportQuery.order("operator_id", { ascending: true }).limit(1).maybeSingle();
+
+    if (reportResult.error || !reportResult.data) {
+      return { data: null, error: reportResult.error };
+    }
+
     const reportId = reportResult.data.id;
-    const [sourcesResult, itemsResult, eventsResult] = await Promise.all([
-      supabase
-        .from("daily_work_source_totals")
-        .select("id,power_source_id,source_name_snapshot,minutes")
-        .eq("organization_id", organizationId)
-        .eq("daily_work_report_id", reportId)
-        .order("source_name_snapshot", { ascending: true }),
+    const [energyResult, itemsResult, eventsResult] = await Promise.all([
+      this.getDailyPumpEnergyReport(organizationId, pumpId, workDate),
       supabase
         .from("daily_work_report_items")
         .select("id,entry_type,sort_order,subscriber_name_snapshot,external_beneficiary_name,scheduled_minutes,app_recorded_minutes,manual_minutes,extra_minutes,weekly_minutes_consumed,app_over_quota_minutes,fulfillment_status")
@@ -502,13 +599,13 @@ export const pumpOperationsRepository = {
         .order("occurred_at", { ascending: true }),
     ]);
 
-    const detailError = sourcesResult.error ?? itemsResult.error ?? eventsResult.error;
+    const detailError = energyResult.error ?? itemsResult.error ?? eventsResult.error;
     if (detailError) return { data: null, error: detailError };
 
     return {
       data: {
         ...reportResult.data,
-        sourceTotals: (sourcesResult.data ?? []) as DailyWorkReportDetails["sourceTotals"],
+        sourceTotals: energyResult.data?.sourceTotals ?? [],
         items: (itemsResult.data ?? []) as DailyWorkReportDetails["items"],
         events: (eventsResult.data ?? []) as DailyWorkReportDetails["events"],
       } satisfies DailyWorkReportDetails,
@@ -518,6 +615,7 @@ export const pumpOperationsRepository = {
 
   saveDailyWorkReport(args: {
     pumpId: string;
+    operatorId: string;
     workStartedAt: string;
     workEndedAt: string;
     stoppageMinutes: number;
@@ -525,6 +623,7 @@ export const pumpOperationsRepository = {
     items: {
       entry_type: "weekly" | "weekly_reassigned" | "additional_registered" | "additional_guest";
       schedule_entry_id?: string | null;
+      weekly_entitlement_allocation_id?: string | null;
       subscriber_id?: string | null;
       external_beneficiary_name?: string | null;
       sort_order: number;
@@ -537,6 +636,7 @@ export const pumpOperationsRepository = {
   }) {
     return supabase.rpc("save_daily_work_report", {
       p_pump_id: args.pumpId,
+      p_target_operator_id: args.operatorId,
       p_work_started_at: args.workStartedAt,
       p_work_ended_at: args.workEndedAt,
       p_stoppage_minutes: args.stoppageMinutes,
@@ -550,7 +650,7 @@ export const pumpOperationsRepository = {
   listPumpOperations(organizationId: string, pumpId: string, day: string) {
     return supabase
       .from("pump_operations")
-      .select("id,pump_id,subscriber_id,subscriber_name,planned_minutes,status,started_at,paused_at,pause_reason,paused_seconds,ended_at,actual_seconds,operation_date,current_power_source_id,last_power_source_id")
+      .select("id,pump_id,subscriber_id,subscriber_name,operator_id,subscriber_operator_id,planned_minutes,status,started_at,paused_at,pause_reason,paused_seconds,ended_at,actual_seconds,operation_date,current_power_source_id,last_power_source_id")
       .eq("organization_id", organizationId)
       .eq("pump_id", pumpId)
       .or(`operation_date.eq.${day},status.in.(running,paused)`)
