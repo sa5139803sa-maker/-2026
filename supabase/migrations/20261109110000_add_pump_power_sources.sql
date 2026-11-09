@@ -3,7 +3,7 @@
 
 CREATE TABLE public.pump_power_sources (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id uuid NOT NULL,
+  organization_id uuid NOT NULL DEFAULT water_management_private.current_user_organization_id(),
   pump_id uuid NOT NULL,
   name text NOT NULL CHECK (char_length(btrim(name)) BETWEEN 2 AND 100),
   source_type text NOT NULL CHECK (source_type IN ('solar', 'generator', 'grid', 'other')),
@@ -45,7 +45,7 @@ CREATE POLICY pump_power_sources_select_assigned
         WHERE pa.organization_id = pump_power_sources.organization_id
           AND pa.pump_id = pump_power_sources.pump_id
           AND pa.user_id = (SELECT auth.uid())
-          AND pa.assignment_role::text = (SELECT water_management_private.current_user_role())::text
+          AND pa.assignment_role = 'operator'::public.assignment_role
       )
     )
   );
@@ -197,7 +197,7 @@ CREATE POLICY pump_operation_power_segments_select_scoped
         WHERE pa.organization_id = pump_operation_power_segments.organization_id
           AND pa.pump_id = pump_operation_power_segments.pump_id
           AND pa.user_id = (SELECT auth.uid())
-          AND pa.assignment_role::text IN ('operator', 'supervisor')
+          AND pa.assignment_role = 'operator'::public.assignment_role
       )
     )
   );
