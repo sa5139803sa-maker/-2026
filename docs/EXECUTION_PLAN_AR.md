@@ -630,4 +630,4 @@
 - [x] إبقاء `public.start_pump_operation` نقطة RPC من نوع SECURITY INVOKER، ومنح EXECUTE للمستخدم المصادق فقط.
 - [x] إضافة assertion في اختبار PostgreSQL تمنع عودة امتياز الإدخال المباشر، وتحاول INSERT مباشرًا للتأكد من رفضه.
 - [x] اختبار حي على مشروع Supabase داخل معاملة ROLLBACK: رُفض الإدخال المباشر، ونجحت دورة RPC الكاملة وأحداثها.
-- [ ] إعادة تشغيل GitHub Actions على الرأس بعد إضافة migration واختبارات الإدخال المباشر؛ لم تُعتبر الفحوص السابقة بديلًا عن هذا التشغيل.
+- [x] إعادة تشغيل GitHub Actions على HEAD الكود `54d692d5979fc1f4978e55f94e7473222272a232`: Quality #371 وWeb Console #209 وPostgreSQL RLS #658 وSecret History #176 جميعها `success`؛ فشل تنزيل Deno أولًا بـHTTP 504 ثم نجحت إعادة المحاولة.
