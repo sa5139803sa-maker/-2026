@@ -969,38 +969,164 @@ function OperationsScreenContent() {
                   </>
                 )}
               </View>
-              <Text style={styles.fieldLabel}>مدة التعبئة بالدقائق</Text>
-              <TextInput value={minutes} onChangeText={setMinutes} keyboardType="number-pad"
-                placeholder="30" style={styles.durationInput} accessibilityLabel="مدة التعبئة بالدقائق" />
               <View style={styles.queueHeader}>
-                <Text style={styles.fieldLabel}>طابور المشتركين اليوم</Text>
-                <Text style={styles.count}>{queue.length} متبقٍ</Text>
-              </View>
-              {refreshing ? <ActivityIndicator color={colors.brand.teal} /> : queue.length === 0 ? (
-                <Text style={styles.empty}>اكتمل طابور المشتركين النشطين لهذا اليوم، أو لا يوجد مشتركون على هذا الغطاس.</Text>
-              ) : queue.map((subscriber, index) => (
-                <View key={subscriber.id} style={styles.queueRow}>
-                  <View style={styles.queueNumber}><Text style={styles.queueNumberText}>{index + 1}</Text></View>
-                  <View style={styles.queueInfo}>
-                    <Text style={styles.queueName}>{subscriber.full_name}</Text>
-                    <Text style={styles.queueMeta}>رقم المشترك {String(subscriber.subscriber_number).padStart(6, "0")}</Text>
-                  </View>
-                  <Pressable disabled={busy || selectedPump.status !== "active" || !selectedPowerSourceId} onPress={() => void startOperation(subscriber)}
-                    style={[styles.startButton, (busy || selectedPump.status !== "active" || !selectedPowerSourceId) && styles.disabled]}>
-                    <Play size={14} color="#fff" /><Text style={styles.startText}>بدء</Text>
-                  </Pressable>
+                <View style={styles.queueHeaderTitle}>
+                  <SectionTitle title="طابور اليوم المعتمد" />
+                  <Text style={styles.count}>{queuedItems.length} منتظر</Text>
                 </View>
-              ))}
-              <View style={styles.emergencyBlock}>
-                <Text style={styles.fieldLabel}>تعبئة طارئة باسم غير مسجل</Text>
-                <TextInput value={emergencyName} onChangeText={setEmergencyName}
-                  placeholder="اسم الحالة الطارئة" style={styles.emergencyInput}
-                  maxLength={120} textAlign="right" />
-                <Pressable disabled={busy || selectedPump.status !== "active" || emergencyName.trim().length < 2 || !selectedPowerSourceId}
-                  onPress={() => void startOperation(null)}
-                  style={[styles.emergencyButton, (busy || selectedPump.status !== "active" || emergencyName.trim().length < 2 || !selectedPowerSourceId) && styles.disabled]}>
-                  <Play size={15} color={colors.status.warning.text} /><Text style={styles.emergencyText}>بدء تعبئة طارئة</Text>
+                <Pressable disabled={refreshing || busy} onPress={() => void loadPumpData()} style={styles.refresh}>
+                  <RefreshCw size={15} color={colors.brand.primary} />
+                  <Text style={styles.refreshText}>تحديث</Text>
                 </Pressable>
+              </View>
+
+              {dailyQueueError ? (
+                <Text style={styles.error}>{dailyQueueError}</Text>
+              ) : !dailyQueue ? (
+                <Text style={styles.empty}>سيظهر طابور الغطاس هنا بعد اعتماد جدول أسبوعي نشط.</Text>
+              ) : (
+                <>
+                  <View style={styles.queueMetaBlock}>
+                    <Text style={styles.queueMeta}>
+                      {dailyQueue.queue_date} · الدورة تبدأ {dailyQueue.weekly_cycle_start}
+                    </Text>
+                    <Text style={styles.queueMeta}>
+                      {dailyQueue.status === "closed" ? "مغلق بعد اكتمال الأدوار"
+                        : dailyQueue.status === "running" ? "قيد التشغيل" : "جاهز"}
+                      {" · إصدار الطابور "}{dailyQueue.queue_version}
+                    </Text>
+                  </View>
+
+                  {dailyQueue.auto_advance_token && dailyQueue.auto_advance_at ? (
+                    <View style={styles.autoAdvanceCard}>
+                      <View style={styles.autoAdvanceInfo}>
+                        <Text style={styles.autoAdvanceTitle}>الانتقال التلقائي إلى الدور التالي</Text>
+                        <Text style={styles.autoAdvanceCountdown}>
+                          {autoAdvanceRemainingSeconds === null || autoAdvanceRemainingSeconds <= 0
+                            ? "جارٍ بدء الدور التالي..."
+                            : `سيبدأ خلال ${autoAdvanceRemainingSeconds} ثوانٍ`}
+                        </Text>
+                      </View>
+                      <Pressable disabled={busy} onPress={() => void cancelAutoAdvance()}
+                        style={[styles.cancelAdvanceButton, busy && styles.disabled]}>
+                        <Text style={styles.cancelAdvanceText}>إلغاء</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+
+                  {refreshing ? <ActivityIndicator color={colors.brand.teal} /> : queuedItems.length === 0 ? (
+                    <Text style={styles.empty}>
+                      {dailyQueue.status === "closed"
+                        ? "اكتملت جميع أدوار هذا اليوم."
+                        : "لا توجد أدوار منتظرة في الطابور حاليًا."}
+                    </Text>
+                  ) : queuedItems.map((item, index) => {
+                    const isFirst = index === 0;
+                    const sourceLabel = item.source_type === "weekly" ? "حصة أسبوعية"
+                      : item.source_type === "weekly_reassigned" ? "حصة أسبوعية منقولة"
+                        : item.source_type === "additional_registered" ? "حصة إضافية لمشترك"
+                          : item.source_type === "additional_guest" ? "مستفيد إضافي" : "حالة طارئة";
+                    return (
+                      <View key={item.id} style={styles.queueRow}>
+                        <View style={styles.queueNumber}>
+                          <Text style={styles.queueNumberText}>{index + 1}</Text>
+                        </View>
+                        <View style={styles.queueInfo}>
+                          <Text style={styles.queueName}>{item.subscriber_name_snapshot}</Text>
+                          <Text style={styles.queueMeta}>
+                            {sourceLabel} · {item.planned_minutes} دقيقة
+                            {item.branch_name_snapshot ? ` · ${item.branch_name_snapshot}` : ""}
+                          </Text>
+                        </View>
+                        <View style={styles.queueReorderControls}>
+                          <Pressable accessibilityLabel="تحريك الدور إلى أعلى" disabled={busy || index === 0}
+                            onPress={() => void moveQueueItem(item.id, -1)}
+                            style={[styles.reorderButton, (busy || index === 0) && styles.disabled]}>
+                            <Text style={styles.reorderText}>↑</Text>
+                          </Pressable>
+                          <Pressable accessibilityLabel="تحريك الدور إلى أسفل" disabled={busy || index === queuedItems.length - 1}
+                            onPress={() => void moveQueueItem(item.id, 1)}
+                            style={[styles.reorderButton, (busy || index === queuedItems.length - 1) && styles.disabled]}>
+                            <Text style={styles.reorderText}>↓</Text>
+                          </Pressable>
+                        </View>
+                        <Pressable disabled={busy || Boolean(activeOperation) || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId}
+                          onPress={() => void startQueueItem(item)}
+                          style={[styles.startButton, (busy || Boolean(activeOperation) || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId) && styles.disabled]}>
+                          <Play size={14} color="#fff" /><Text style={styles.startText}>{isFirst ? "بدء" : "انتظار"}</Text>
+                        </Pressable>
+                      </View>
+                    );
+                  })}
+
+                  <Text style={styles.fieldLabel}>سبب تجاوز قاعدة التفرعات (عند الحاجة)</Text>
+                  <TextInput value={queueOverrideReason} onChangeText={setQueueOverrideReason}
+                    placeholder="يُحفظ السبب عند وضع دورين من التفرع نفسه متتاليين"
+                    maxLength={240} textAlign="right" style={styles.queueReasonInput} />
+
+                  {completedQueueItems.length > 0 ? (
+                    <View style={styles.completedQueueBlock}>
+                      <Text style={styles.fieldLabel}>أدوار مكتملة اليوم ({completedQueueItems.length})</Text>
+                      {completedQueueItems.slice(0, 5).map((item) => (
+                        <View key={item.id} style={styles.completedQueueRow}>
+                          <CheckCircle2 size={15} color={colors.status.success.main} />
+                          <Text style={styles.completedQueueName}>{item.subscriber_name_snapshot}</Text>
+                          <Text style={styles.queueMeta}>{formatTime(item.completed_at)}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  <View style={styles.emergencyBlock}>
+                    <Pressable onPress={() => setQueueAdditionOpen((open) => !open)} style={styles.refresh}>
+                      <Text style={styles.refreshText}>
+                        {queueAdditionOpen ? "إغلاق الإضافة" : "+ إضافة حصة إلى آخر الطابور"}
+                      </Text>
+                    </Pressable>
+                    {queueAdditionOpen ? (
+                      <View style={styles.queueAdditionForm}>
+                        <Text style={styles.fieldLabel}>نوع الإضافة</Text>
+                        <View style={styles.sourceChoices}>
+                          {([
+                            ["additional_registered", "مشترك مسجل"],
+                            ["additional_guest", "مستفيد إضافي"],
+                            ["emergency", "حالة طارئة"],
+                          ] as const).map(([type, label]) => (
+                            <Pressable key={type} onPress={() => setQueueAdditionType(type)}
+                              style={[styles.sourceChoice, queueAdditionType === type && styles.sourceChoiceSelected]}>
+                              <Text style={[styles.sourceChoiceText, queueAdditionType === type && styles.sourceChoiceTextSelected]}>{label}</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                        {queueAdditionType === "additional_registered" ? (
+                          <View style={styles.queueSubscriberChoices}>
+                            {subscribers.length === 0 ? <Text style={styles.empty}>لا يوجد مشتركون نشطون لهذا الغطاس.</Text>
+                              : subscribers.map((subscriber) => (
+                                <Pressable key={subscriber.id} onPress={() => setQueueAdditionSubscriberId(subscriber.id)}
+                                  style={[styles.queueSubscriberChoice, queueAdditionSubscriberId === subscriber.id && styles.sourceChoiceSelected]}>
+                                  <Text style={[styles.queueSubscriberName, queueAdditionSubscriberId === subscriber.id && styles.sourceChoiceTextSelected]}>
+                                    {subscriber.full_name}
+                                  </Text>
+                                </Pressable>
+                              ))}
+                          </View>
+                        ) : (
+                          <TextInput value={queueAdditionName} onChangeText={setQueueAdditionName}
+                            placeholder="اسم المستفيد" style={styles.emergencyInput} textAlign="right" maxLength={120} />
+                        )}
+                        <Text style={styles.fieldLabel}>مدة الحصة بالدقائق</Text>
+                        <TextInput value={queueAdditionMinutes} onChangeText={setQueueAdditionMinutes}
+                          keyboardType="number-pad" placeholder="30" style={styles.durationInput} />
+                        <Pressable disabled={busy || !Number.isInteger(Number(queueAdditionMinutes)) || Number(queueAdditionMinutes) < 1 || Number(queueAdditionMinutes) > 1440}
+                          onPress={() => void appendQueueItem()}
+                          style={[styles.addSourceButton, (busy || !Number.isInteger(Number(queueAdditionMinutes)) || Number(queueAdditionMinutes) < 1 || Number(queueAdditionMinutes) > 1440) && styles.disabled]}>
+                          <Text style={styles.actionText}>إضافة إلى نهاية الطابور</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                  </View>
+                </>
+              }
               </View>
             </Card>
           )}
