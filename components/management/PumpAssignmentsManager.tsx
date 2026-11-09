@@ -216,7 +216,7 @@ export function PumpAssignmentsManager({ organizationId, pumps }: Props) {
           <View style={styles.headingText}>
             <Text style={styles.title}>توزيع الموظفين على الغواطس</Text>
             <Text style={styles.subtitle}>
-              عيّن مشغّلًا واحدًا، وعدة محصّلين ومشرفين عند الحاجة.
+              يمكن إسناد عدة مشغّلين ومحصّلين ومشرفين إلى الغطاس نفسه.
             </Text>
           </View>
           <View style={styles.headingIcon}>
@@ -256,17 +256,15 @@ export function PumpAssignmentsManager({ organizationId, pumps }: Props) {
                     const roleAssignments = pumpAssignments.filter(
                       (assignment) => assignment.assignment_role === role,
                     );
-                    const isSingleSlot = role === "operator";
-                    const hasAssignedEmployee = isSingleSlot && roleAssignments.length > 0;
                     const available = getAssignableEmployees(role, pump.id, employees, assignments);
-                    const canAdd = !hasAssignedEmployee && available.length > 0;
+                    const canAdd = available.length > 0;
                     const hasRoleAccounts = employees.some((employee) => employee.role === role);
 
                     return (
                       <View key={role} style={styles.roleBlock}>
                         <View style={styles.roleHeading}>
                           <Text style={styles.roleLabel}>{roleLabels[role]}</Text>
-                          {role !== "operator" ? <Text style={styles.roleHint}>متعدد</Text> : null}
+                          <Text style={styles.roleHint}>متعدد</Text>
                         </View>
 
                         {roleAssignments.length > 0 ? (
@@ -311,13 +309,12 @@ export function PumpAssignmentsManager({ organizationId, pumps }: Props) {
                           >
                             <Plus size={16} color={colors.brand.primary} />
                             <Text style={styles.addText}>
-                              {role !== "operator" && roleAssignments.length > 0
-                                ? role === "collector" ? "إضافة محصّل آخر" : "إضافة مشرف آخر"
+                              {roleAssignments.length > 0
+                                ? role === "operator" ? "إضافة مشغّل آخر"
+                                  : role === "collector" ? "إضافة محصّل آخر" : "إضافة مشرف آخر"
                                 : "إسناد موظف"}
                             </Text>
                           </Pressable>
-                        ) : hasAssignedEmployee ? (
-                          <Text style={styles.roleHint}>أزل التعيين الحالي أولًا لإسناد موظف بديل.</Text>
                         ) : !hasRoleAccounts ? (
                           <Text style={styles.roleHint}>لا توجد حسابات بهذا الدور في المؤسسة.</Text>
                         ) : null}
