@@ -110,6 +110,7 @@ export type DailyQueueItem = {
   operation_id: string | null;
   started_at: string | null;
   completed_at: string | null;
+  weekly_entitlement_allocation_id?: string | null;
 };
 
 export type DailyQueue = {
