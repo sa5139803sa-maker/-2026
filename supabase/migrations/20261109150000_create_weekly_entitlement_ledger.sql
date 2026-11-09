@@ -18,7 +18,7 @@ CREATE TABLE public.weekly_entitlement_cycles (
   remaining_minutes integer GENERATED ALWAYS AS (
     quota_minutes - consumed_minutes - expired_minutes
   ) STORED,
-  status text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'expired')),
+  status text NOT NULL DEFAULT 'open',
   last_event_sequence bigint NOT NULL DEFAULT 0 CHECK (last_event_sequence >= 0),
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   expired_at timestamptz,
