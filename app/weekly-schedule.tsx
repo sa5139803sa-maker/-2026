@@ -192,7 +192,7 @@ function WeeklyScheduleScreenContent() {
     });
   }, []);
 
-  const loadPumpData = useCallback(async (pumpId: string) => {
+  const loadPumpData = useCallback(async (pumpId: string, preferredScheduleId?: string) => {
     if (!organizationId || !pumpId) return;
     const requestId = ++requestSequence.current;
     setLoading(true);
@@ -213,7 +213,8 @@ function WeeklyScheduleScreenContent() {
       setVersions(versionRows);
 
       const preferredVersion =
-        versionRows.find((version) => version.status === "draft")
+        versionRows.find((version) => version.id === preferredScheduleId)
+        ?? versionRows.find((version) => version.status === "draft")
         ?? versionRows.find((version) => version.status === "active")
         ?? versionRows[0]
         ?? null;
@@ -288,7 +289,11 @@ function WeeklyScheduleScreenContent() {
   };
 
   const startNewVersion = () => {
-    const nextStart = nextCycleStart(dateInHebron(), weekStartsOn);
+    let nextStart = nextCycleStart(dateInHebron(), weekStartsOn);
+    if (selectedVersion?.effective_from) {
+      const afterSelectedVersion = shiftDate(selectedVersion.effective_from, 7);
+      if (nextStart < afterSelectedVersion) nextStart = afterSelectedVersion;
+    }
     setSelectedVersion(null);
     setSelectedScheduleId(null);
     setScheduleName(activeVersion ? `${activeVersion.name} — نسخة جديدة` : "الجدول الأسبوعي");
@@ -448,10 +453,8 @@ function WeeklyScheduleScreenContent() {
           : "تعذر حفظ مسودة الجدول.");
       }
       const savedId = String(result.data);
-      setSelectedScheduleId(savedId);
       setNotice("حُفظت مسودة الجدول. لم تتغير الحصص الحالية للمشتركين.");
-      await loadPumpData(selectedPumpId);
-      setSelectedScheduleId(savedId);
+      await loadPumpData(selectedPumpId, savedId);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "تعذر حفظ الجدول.");
     } finally {
