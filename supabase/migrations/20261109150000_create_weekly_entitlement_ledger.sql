@@ -1050,6 +1050,8 @@ DECLARE
   v_has_source_item boolean := false;
   v_has_target_item boolean := false;
   v_lock_id uuid;
+  v_source_next_item_id uuid;
+  v_source_new_token uuid;
 BEGIN
   IF v_user_id IS NULL OR v_organization_id IS NULL
      OR v_role NOT IN ('manager'::public.app_role, 'operator'::public.app_role) THEN
@@ -1117,6 +1119,12 @@ BEGIN
   LOOP
     NULL;
   END LOOP;
+
+  IF v_source_queue_id IS NOT NULL THEN
+    SELECT q.* INTO v_source_queue
+    FROM public.daily_queues q
+    WHERE q.id = v_source_queue_id;
+  END IF;
 
   SELECT c.* INTO v_cycle
   FROM public.weekly_entitlement_cycles c
@@ -1252,10 +1260,63 @@ BEGIN
       WHERE id = v_source_item.id;
     END IF;
 
-    UPDATE public.daily_queues
-    SET queue_version = queue_version + 1,
-        updated_at = clock_timestamp()
-    WHERE id = v_source_queue_id;
+    IF v_source_after = 0
+       AND v_source_queue.auto_advance_queue_item_id = v_source_item.id
+       AND v_source_queue.auto_advance_token IS NOT NULL THEN
+      SELECT qi.id INTO v_source_next_item_id
+      FROM public.queue_items qi
+      WHERE qi.daily_queue_id = v_source_queue_id
+        AND qi.status = 'queued'
+      ORDER BY qi.sort_order, qi.id
+      LIMIT 1;
+
+      IF v_source_next_item_id IS NOT NULL THEN
+        v_source_new_token := gen_random_uuid();
+        UPDATE public.daily_queues
+        SET auto_advance_queue_item_id = v_source_next_item_id,
+            auto_advance_token = v_source_new_token,
+            auto_advance_at = v_source_queue.auto_advance_at,
+            auto_advance_cancelled_at = NULL,
+            queue_version = queue_version + 1,
+            updated_at = clock_timestamp()
+        WHERE id = v_source_queue_id;
+
+        PERFORM water_management_private.append_queue_item_event(
+          v_source_queue_id, v_source_next_item_id, v_organization_id, v_source.pump_id,
+          'auto_advance_retargeted', v_user_id, p_reason,
+          jsonb_build_object(
+            'previous_queue_item_id', v_source_item.id,
+            'previous_token', v_source_queue.auto_advance_token,
+            'auto_advance_token', v_source_new_token,
+            'auto_advance_at', v_source_queue.auto_advance_at,
+            'reason', 'The previous weekly item was moved to another day'
+          )
+        );
+      ELSE
+        UPDATE public.daily_queues
+        SET auto_advance_queue_item_id = NULL,
+            auto_advance_token = NULL,
+            auto_advance_at = NULL,
+            auto_advance_cancelled_at = clock_timestamp(),
+            queue_version = queue_version + 1,
+            updated_at = clock_timestamp()
+        WHERE id = v_source_queue_id;
+
+        PERFORM water_management_private.append_queue_item_event(
+          v_source_queue_id, v_source_item.id, v_organization_id, v_source.pump_id,
+          'auto_advance_cancelled', v_user_id, p_reason,
+          jsonb_build_object(
+            'previous_token', v_source_queue.auto_advance_token,
+            'reason', 'No queued item remained after the weekly item was moved'
+          )
+        );
+      END IF;
+    ELSE
+      UPDATE public.daily_queues
+      SET queue_version = queue_version + 1,
+          updated_at = clock_timestamp()
+      WHERE id = v_source_queue_id;
+    END IF;
 
     PERFORM water_management_private.append_queue_item_event(
       v_source_queue_id, v_source_item.id, v_organization_id, v_source.pump_id,
@@ -1939,6 +2000,22 @@ BEGIN
         AND v_work_date >= ws.effective_from
         AND (ws.effective_to IS NULL OR v_work_date <= ws.effective_to)
         AND se.weekday = extract(isodow FROM v_work_date)::integer
+        AND EXISTS (
+          SELECT 1
+          FROM public.weekly_entitlement_cycles c
+          JOIN public.weekly_entitlement_allocations a
+            ON a.weekly_entitlement_cycle_id = c.id
+          WHERE c.weekly_schedule_id = ws.id
+            AND c.organization_id = ws.organization_id
+            AND c.pump_id = ws.pump_id
+            AND c.cycle_start = v_work_date - (
+              (extract(isodow FROM v_work_date)::integer - ws.week_starts_on + 7) % 7
+            )
+            AND a.subscriber_id = se.subscriber_id
+            AND a.allocation_date = v_work_date
+            AND a.source_schedule_entry_id = se.id
+            AND a.allocated_minutes > 0
+        )
         AND NOT EXISTS (
           SELECT 1 FROM public.daily_work_report_items ri
           WHERE ri.daily_work_report_id = v_report.id
