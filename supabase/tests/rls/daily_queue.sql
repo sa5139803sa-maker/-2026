@@ -509,9 +509,9 @@ BEGIN
      OR (SELECT scheduled_minutes FROM public.daily_work_report_items
          WHERE daily_work_report_id = v_report.id) <> 35
      OR (SELECT weekly_minutes_consumed FROM public.daily_work_report_items
-         WHERE daily_work_report_id = v_report.id) <> 7
+         WHERE daily_work_report_id = v_report.id) <> 9
      OR (SELECT consumed_minutes FROM public.weekly_entitlement_allocations
-         WHERE id = v_allocation_id) <> 7
+         WHERE id = v_allocation_id) <> 9
      OR (SELECT consumed_minutes FROM public.weekly_entitlement_cycles
          WHERE id = v_cycle_id) <> 9
      OR (SELECT remaining_minutes FROM public.weekly_entitlement_cycles
@@ -662,9 +662,9 @@ BEGIN
      OR (SELECT consumed_minutes FROM public.weekly_entitlement_allocations
          WHERE id = v_target_allocation_id) <> 3
      OR (SELECT consumed_minutes FROM public.weekly_entitlement_cycles
-         WHERE id = v_cycle_id) <> 10
+         WHERE id = v_cycle_id) <> 12
      OR (SELECT remaining_minutes FROM public.weekly_entitlement_cycles
-         WHERE id = v_cycle_id) <> 35 THEN
+         WHERE id = v_cycle_id) <> 33 THEN
     RAISE EXCEPTION 'Reassigned weekly minutes were not included and reconciled as part of the same entitlement cycle';
   END IF;
 END;
