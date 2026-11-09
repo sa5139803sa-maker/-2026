@@ -63,7 +63,7 @@ export function PumpAssignmentsManager({ organizationId, pumps }: Props) {
   const requestSequence = useRef(0);
 
   const employeeNames = useMemo(
-    () => new Map(employees.map((employee) => [employee.id, employee.display_name])),
+    () => new Map<string, string>(employees.map((employee) => [employee.id, employee.display_name] as const)),
     [employees],
   );
 
