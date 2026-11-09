@@ -2672,14 +2672,25 @@ BEGIN
     RAISE EXCEPTION 'Supervisor unfiltered operator selector was not rejected';
   END IF;
 
-  IF pg_catalog.has_table_privilege('authenticated','public.profiles','SELECT')
-     AND NOT EXISTS (
-       SELECT 1 FROM pg_catalog.pg_policies
-       WHERE schemaname = 'public'
-         AND tablename = 'profiles'
-         AND policyname = 'users_select_own_profile'
-     ) THEN
-    RAISE EXCEPTION 'Profiles RLS self-read boundary changed unexpectedly';
+  IF EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id <> auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'Supervisor can read profile rows directly outside their own profile';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM 1 FROM public.get_daily_report_operators(
+      '20000000-0000-4000-8000-000000000002', DATE '2026-01-20', true
+    );
+    RAISE EXCEPTION 'Supervisor listed report operators for a pump outside their assignment';
+  EXCEPTION WHEN insufficient_privilege THEN
+    v_rejected := true;
+  END;
+
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Supervisor report operator RPC did not enforce pump assignment';
   END IF;
 END;
 $supervisor_daily_report_operator_selector$;
