@@ -193,6 +193,7 @@ export type DailyWorkReportDetails = {
 
 export type DailyPumpEnergyReport = {
   id: string;
+  created_by: string;
   work_date: string;
   work_started_at: string;
   work_ended_at: string;
@@ -586,7 +587,7 @@ export const pumpOperationsRepository = {
   async getDailyPumpEnergyReport(organizationId: string, pumpId: string, workDate: string) {
     const reportResult = await supabase
       .from("daily_pump_energy_reports")
-      .select("id,work_date,work_started_at,work_ended_at,stoppage_minutes,status,submitted_at,revision")
+      .select("id,created_by,work_date,work_started_at,work_ended_at,stoppage_minutes,status,submitted_at,revision")
       .eq("organization_id", organizationId)
       .eq("pump_id", pumpId)
       .eq("work_date", workDate)
