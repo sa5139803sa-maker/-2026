@@ -3,11 +3,28 @@
 
 DO $activate_queue_test_schedule$
 DECLARE
+  v_today date := (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date;
   v_weekday smallint := extract(isodow FROM (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date)::smallint;
+  v_source_weekday smallint := (extract(isodow FROM (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date)::integer % 7 + 1)::smallint;
 BEGIN
+  -- Split the same 45-minute weekly quota across today and another day so
+  -- transfer/partial-consumption behavior is exercised without altering quota.
   UPDATE public.schedule_entries
-  SET weekday = v_weekday
+  SET weekday = v_weekday,
+      planned_minutes = 30
   WHERE id = '60000000-0000-4000-8000-000000000001';
+
+  INSERT INTO public.schedule_entries (
+    id, weekly_schedule_id, organization_id, pump_id, subscriber_id,
+    weekday, sort_order, planned_minutes
+  ) VALUES (
+    '60000000-0000-4000-8000-000000000004',
+    '50000000-0000-4000-8000-000000000001',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '20000000-0000-4000-8000-000000000001',
+    '30000000-0000-4000-8000-000000000001',
+    v_source_weekday, 20, 15
+  );
 
   UPDATE public.weekly_schedules
   SET status = 'active'
@@ -46,9 +63,102 @@ BEGIN
     RAISE EXCEPTION 'Daily queue did not snapshot the scheduled item exactly once: %', v_item_count;
   END IF;
 
+  IF (SELECT planned_minutes FROM public.queue_items
+      WHERE daily_queue_id = v_queue_id AND source_type = 'weekly') <> 30
+     OR (SELECT weekly_entitlement_allocation_id FROM public.queue_items
+         WHERE daily_queue_id = v_queue_id AND source_type = 'weekly') IS NULL THEN
+    RAISE EXCEPTION 'Generated weekly queue item was not attached to its 30-minute entitlement allocation';
+  END IF;
+
+  IF (SELECT sum(a.allocated_minutes) FROM public.weekly_entitlement_allocations a
+      JOIN public.weekly_entitlement_cycles c ON c.id = a.weekly_entitlement_cycle_id
+      WHERE c.weekly_schedule_id = '50000000-0000-4000-8000-000000000001'
+        AND c.subscriber_id = '30000000-0000-4000-8000-000000000001'
+        AND c.cycle_start = (SELECT weekly_cycle_start FROM public.daily_queues WHERE id = v_queue_id)) <> 45 THEN
+    RAISE EXCEPTION 'Provisioned daily allocations do not equal the full weekly quota';
+  END IF;
+
   PERFORM set_config('test.daily_queue_id', v_queue_id::text, true);
 END;
 $queue_generation_operator$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000002', true);
+DO $weekly_entitlement_transfer$
+DECLARE
+  v_queue_id uuid := current_setting('test.daily_queue_id')::uuid;
+  v_today date := (clock_timestamp() AT TIME ZONE 'Asia/Hebron')::date;
+  v_source_date date;
+  v_source_allocation_id uuid;
+  v_target_allocation_id uuid;
+  v_cycle_id uuid;
+  v_result jsonb;
+  v_rejected boolean := false;
+BEGIN
+  SELECT weekly_cycle_start INTO v_source_date
+  FROM public.daily_queues
+  WHERE id = v_queue_id;
+  v_source_date := v_source_date
+    + ((extract(isodow FROM v_today)::integer % 7));
+
+  SELECT a.id, a.weekly_entitlement_cycle_id
+  INTO v_source_allocation_id, v_cycle_id
+  FROM public.weekly_entitlement_allocations a
+  WHERE a.allocation_date = v_source_date
+    AND a.subscriber_id = '30000000-0000-4000-8000-000000000001'
+    AND a.weekly_entitlement_cycle_id IN (
+      SELECT c.id FROM public.weekly_entitlement_cycles c
+      WHERE c.weekly_schedule_id = '50000000-0000-4000-8000-000000000001'
+        AND c.cycle_start = (SELECT weekly_cycle_start FROM public.daily_queues WHERE id = v_queue_id)
+    );
+
+  IF v_source_allocation_id IS NULL THEN
+    RAISE EXCEPTION 'Expected a 15-minute source-day entitlement allocation';
+  END IF;
+
+  v_result := public.transfer_weekly_entitlement_minutes(
+    v_source_allocation_id, v_today, 5,
+    'اختبار نقل خمس دقائق غير مستخدمة إلى طابور اليوم'
+  );
+
+  SELECT id INTO v_target_allocation_id
+  FROM public.weekly_entitlement_allocations
+  WHERE weekly_entitlement_cycle_id = v_cycle_id
+    AND allocation_date = v_today;
+
+  IF (SELECT allocated_minutes FROM public.weekly_entitlement_allocations
+      WHERE id = v_source_allocation_id) <> 10
+     OR (SELECT allocated_minutes FROM public.weekly_entitlement_allocations
+         WHERE id = v_target_allocation_id) <> 35
+     OR (SELECT planned_minutes FROM public.queue_items
+         WHERE daily_queue_id = v_queue_id
+           AND weekly_entitlement_allocation_id = v_target_allocation_id) <> 35
+     OR (v_result->>'transferred_minutes')::integer <> 5 THEN
+    RAISE EXCEPTION 'Weekly transfer did not atomically move five minutes into today';
+  END IF;
+
+  v_rejected := false;
+  BEGIN
+    PERFORM public.transfer_weekly_entitlement_minutes(
+      v_source_allocation_id, v_today, 11,
+      'يجب رفض نقل دقائق أكثر من المتبقي'
+    );
+  EXCEPTION WHEN invalid_parameter_value THEN
+    v_rejected := true;
+  END;
+  IF NOT v_rejected THEN
+    RAISE EXCEPTION 'Weekly transfer allowed spending the same source minutes twice';
+  END IF;
+
+  IF (SELECT count(*) FROM public.weekly_entitlement_events
+      WHERE weekly_entitlement_cycle_id = v_cycle_id
+        AND event_type = 'minutes_transferred'
+        AND actor_id = auth.uid()) <> 1 THEN
+    RAISE EXCEPTION 'Weekly transfer event ledger did not record one actor-attributed transfer';
+  END IF;
+END;
+$weekly_entitlement_transfer$;
 RESET ROLE;
 
 SET LOCAL ROLE authenticated;
