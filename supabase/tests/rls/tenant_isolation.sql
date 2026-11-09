@@ -1107,15 +1107,15 @@ BEGIN
   END;
   IF NOT v_rejected THEN RAISE EXCEPTION 'Assignment role mismatch was not rejected'; END IF;
 
-  v_rejected := false;
-  BEGIN
-    INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
-    VALUES ('20000000-0000-4000-8000-000000000001',
-            '10000000-0000-4000-8000-000000000003',
-            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'operator');
-  EXCEPTION WHEN unique_violation THEN v_rejected := true;
-  END;
-  IF NOT v_rejected THEN RAISE EXCEPTION 'Second operator for a pump was not rejected'; END IF;
+  INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
+  VALUES ('20000000-0000-4000-8000-000000000001',
+          '10000000-0000-4000-8000-000000000003',
+          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'operator');
+  IF (SELECT count(*) FROM public.pump_assignments
+      WHERE pump_id = '20000000-0000-4000-8000-000000000001'
+        AND assignment_role = 'operator') <> 2 THEN
+    RAISE EXCEPTION 'A pump must allow multiple assigned operators';
+  END IF;
 
   v_rejected := false;
   BEGIN
@@ -2153,13 +2153,6 @@ RESET ROLE;
 -- explicit and independent from the operator recorded on a pump operation.
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
-INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
-VALUES (
-  '20000000-0000-4000-8000-000000000001',
-  '10000000-0000-4000-8000-000000000003',
-  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-  'operator'
-);
 DO $subscriber_operator_initial_assignment$
 DECLARE
   v_result jsonb;
