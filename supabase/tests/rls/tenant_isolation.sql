@@ -1073,7 +1073,7 @@ BEGIN
   BEGIN
     INSERT INTO public.schedule_entries (weekly_schedule_id,subscriber_id,weekday,sort_order,planned_minutes)
     VALUES ('50000000-0000-4000-8000-000000000003','30000000-0000-4000-8000-000000000004',6,20,50);
-  EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
+  EXCEPTION WHEN check_violation THEN v_rejected := true;
   END;
   IF NOT v_rejected THEN RAISE EXCEPTION 'Manager inserted an entry into an active schedule'; END IF;
 END;
