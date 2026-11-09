@@ -285,8 +285,8 @@ BEGIN
   IF p_work_started_at IS NULL OR p_work_ended_at IS NULL
      OR p_work_ended_at <= p_work_started_at
      OR p_stoppage_minutes IS NULL OR p_stoppage_minutes < 0
-     OR jsonb_typeof(p_source_totals) <> 'array'
-     OR jsonb_typeof(p_items) <> 'array'
+     OR COALESCE(jsonb_typeof(p_source_totals), '') <> 'array'
+     OR COALESCE(jsonb_typeof(p_items), '') <> 'array'
      OR jsonb_array_length(p_source_totals) > 30
      OR jsonb_array_length(p_items) > 500 THEN
     RAISE EXCEPTION 'Invalid daily work report payload' USING ERRCODE = '22023';
@@ -308,6 +308,7 @@ BEGIN
   WHERE r.organization_id = v_org_id
     AND r.pump_id = p_pump_id
     AND r.work_date = v_work_date
+    AND (v_role = 'manager'::public.app_role OR r.operator_id = v_user_id)
   FOR UPDATE;
   v_existing := FOUND;
 
@@ -425,8 +426,8 @@ BEGIN
         AND op.operation_date = v_work_date
         AND op.subscriber_id = v_subscriber_id
         AND op.status = 'completed';
-      IF v_manual_minutes > v_scheduled_minutes THEN
-        RAISE EXCEPTION 'Manual weekly minutes cannot exceed the scheduled allocation' USING ERRCODE = '22023';
+      IF v_manual_minutes > GREATEST(0, v_scheduled_minutes - v_app_minutes) THEN
+        RAISE EXCEPTION 'Manual weekly minutes cannot exceed the remaining scheduled allocation' USING ERRCODE = '22023';
       END IF;
     ELSIF v_entry_type = 'additional_registered' THEN
       SELECT s.full_name INTO v_subscriber_name
@@ -469,6 +470,29 @@ BEGIN
   END LOOP;
 
   IF p_submit THEN
+    IF EXISTS (
+      SELECT 1
+      FROM public.weekly_schedules ws
+      JOIN public.schedule_entries se
+        ON se.weekly_schedule_id = ws.id
+       AND se.organization_id = ws.organization_id
+       AND se.pump_id = ws.pump_id
+      WHERE ws.organization_id = v_org_id
+        AND ws.pump_id = p_pump_id
+        AND ws.status = 'active'
+        AND v_work_date >= ws.effective_from
+        AND (ws.effective_to IS NULL OR v_work_date <= ws.effective_to)
+        AND se.weekday = extract(isodow FROM v_work_date)::integer
+        AND NOT EXISTS (
+          SELECT 1 FROM public.daily_work_report_items ri
+          WHERE ri.daily_work_report_id = v_report.id
+            AND ri.schedule_entry_id = se.id
+        )
+    ) THEN
+      RAISE EXCEPTION 'Daily report must include every weekly schedule entry for this pump and date'
+        USING ERRCODE = '23514';
+    END IF;
+
     IF EXISTS (
       SELECT 1 FROM public.pump_operations op
       WHERE op.organization_id = v_org_id
