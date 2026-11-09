@@ -1515,6 +1515,10 @@ BEGIN
      OR pg_catalog.has_function_privilege('anon','public.get_pump_power_usage(date,date,text,uuid)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','public.get_daily_work_report_allocations(uuid,date)','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','public.get_daily_work_report_allocations(uuid,date)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','public.prepare_daily_work_report(uuid,date)','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','public.prepare_daily_work_report(uuid,date)','EXECUTE')
+     OR NOT pg_catalog.has_function_privilege('authenticated','water_management_private.prepare_daily_work_report_internal(uuid,date)','EXECUTE')
+     OR pg_catalog.has_function_privilege('anon','water_management_private.prepare_daily_work_report_internal(uuid,date)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','water_management_private.get_daily_work_report_allocations_internal(uuid,date)','EXECUTE')
      OR pg_catalog.has_function_privilege('anon','water_management_private.get_daily_work_report_allocations_internal(uuid,date)','EXECUTE')
      OR NOT pg_catalog.has_function_privilege('authenticated','water_management_private.save_daily_work_report_internal(uuid,uuid,timestamptz,timestamptz,integer,jsonb,jsonb,boolean,uuid)','EXECUTE')
@@ -2176,10 +2180,18 @@ BEGIN
   WHERE pump_id='20000000-0000-4000-8000-000000000003'
     AND name='طاقة شمسية – مزود 2';
 
-  PERFORM public.generate_daily_queue(
+  PERFORM public.prepare_daily_work_report(
     '20000000-0000-4000-8000-000000000003',
     v_work_date
   );
+
+  IF EXISTS (
+    SELECT 1 FROM public.daily_queues
+    WHERE pump_id = '20000000-0000-4000-8000-000000000003'
+      AND queue_date = v_work_date
+  ) THEN
+    RAISE EXCEPTION 'Preparing a daily report must not generate a runnable daily queue';
+  END IF;
   SELECT a.id INTO v_allocation_id
   FROM public.weekly_entitlement_allocations a
   WHERE a.organization_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
