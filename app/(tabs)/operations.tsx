@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   Pressable,
   ScrollView,
@@ -148,6 +149,7 @@ function OperationsScreenContent() {
   const [queueAdditionName, setQueueAdditionName] = useState("");
   const [queueAdditionMinutes, setQueueAdditionMinutes] = useState("30");
   const [queueOverrideReason, setQueueOverrideReason] = useState("");
+  const [queueItemActionReason, setQueueItemActionReason] = useState("");
   const [powerSources, setPowerSources] = useState<PumpPowerSource[]>([]);
   const [surveyPowerSources, setSurveyPowerSources] = useState<PumpPowerSource[]>([]);
   const [selectedPowerSourceId, setSelectedPowerSourceId] = useState("");
@@ -691,6 +693,60 @@ function OperationsScreenContent() {
       await loadPumpData();
     }
     setBusy(false);
+  };
+
+  const manageQueueItem = async (item: DailyQueueItem, action: "defer" | "cancel") => {
+    if (!dailyQueue || busy) return;
+    const reason = queueItemActionReason.trim();
+    if (reason.length < 2 || reason.length > 240) {
+      setError("أدخل سببًا واضحًا للتأجيل أو الإلغاء (من حرفين إلى 240 حرفًا).");
+      return;
+    }
+    if (action === "defer" && queuedItems.length < 2) {
+      setError("لا يوجد دور آخر يمكن تقديمه؛ أضف دورًا أو اترك الطابور كما هو.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const wasAutoAdvanceTarget = dailyQueue.auto_advance_queue_item_id === item.id;
+    const previousToken = dailyQueue.auto_advance_token;
+    const result = action === "defer"
+      ? await pumpOperationsRepository.deferDailyQueueItem(
+          dailyQueue.id, item.id, dailyQueue.queue_version, reason,
+        )
+      : await pumpOperationsRepository.cancelDailyQueueItem(
+          dailyQueue.id, item.id, dailyQueue.queue_version, reason,
+        );
+
+    if (result.error) {
+      console.error(`daily queue item ${action} failed`, result.error);
+      setError(result.error.code === "40001"
+        ? "تغير الطابور من جهاز آخر. حدّث الطابور ثم أعد المحاولة."
+        : result.error.code === "22023"
+          ? "تحقق من سبب الإجراء وحالة الطابور."
+          : friendlyError(result.error));
+    } else {
+      if (wasAutoAdvanceTarget && previousToken) stopHandoverAlert(previousToken);
+      setQueueItemActionReason("");
+      setNotice(action === "defer"
+        ? `تم تأجيل ${item.subscriber_name_snapshot} إلى نهاية طابور اليوم، وسُجل السبب.`
+        : `تم إلغاء دور ${item.subscriber_name_snapshot} مع الاحتفاظ بسجل التدقيق ودون احتساب دقائق منفذة.`);
+      await loadPumpData();
+    }
+    setBusy(false);
+  };
+
+  const confirmCancelQueueItem = (item: DailyQueueItem) => {
+    Alert.alert(
+      "تأكيد إلغاء الدور",
+      `سيبقى الدور محفوظًا في السجل ولن يبدأ. هل تريد إلغاء ${item.subscriber_name_snapshot}؟`,
+      [
+        { text: "تراجع", style: "cancel" },
+        { text: "إلغاء الدور", style: "destructive", onPress: () => void manageQueueItem(item, "cancel") },
+      ],
+    );
   };
 
   const cancelAutoAdvance = async () => {
@@ -1361,6 +1417,18 @@ function OperationsScreenContent() {
                             style={[styles.reorderButton, (busy || index === queuedItems.length - 1) && styles.disabled]}>
                             <Text style={styles.reorderText}>↓</Text>
                           </Pressable>
+                          <Pressable accessibilityLabel="تأجيل الدور إلى نهاية الطابور"
+                            disabled={busy || queuedItems.length < 2 || queueItemActionReason.trim().length < 2}
+                            onPress={() => void manageQueueItem(item, "defer")}
+                            style={[styles.reorderButton, (busy || queuedItems.length < 2 || queueItemActionReason.trim().length < 2) && styles.disabled]}>
+                            <Text style={styles.reorderText}>تأجيل</Text>
+                          </Pressable>
+                          <Pressable accessibilityLabel="إلغاء هذا الدور"
+                            disabled={busy || queueItemActionReason.trim().length < 2}
+                            onPress={() => confirmCancelQueueItem(item)}
+                            style={[styles.cancelAdvanceButton, (busy || queueItemActionReason.trim().length < 2) && styles.disabled]}>
+                            <Text style={styles.cancelAdvanceText}>إلغاء</Text>
+                          </Pressable>
                         </View>
                         <Pressable disabled={busy || Boolean(activeOperation) || !isFirst || selectedPump.status !== "active" || !selectedPowerSourceId}
                           onPress={() => void startQueueItem(item)}
@@ -1374,6 +1442,11 @@ function OperationsScreenContent() {
                   <Text style={styles.fieldLabel}>سبب تجاوز قاعدة التفرعات (عند الحاجة)</Text>
                   <TextInput value={queueOverrideReason} onChangeText={setQueueOverrideReason}
                     placeholder="يُحفظ السبب عند وضع دورين من التفرع نفسه متتاليين"
+                    maxLength={240} textAlign="right" style={styles.queueReasonInput} />
+
+                  <Text style={styles.fieldLabel}>سبب التأجيل أو الإلغاء (إلزامي)</Text>
+                  <TextInput value={queueItemActionReason} onChangeText={setQueueItemActionReason}
+                    placeholder="مثال: طلب المستفيد تأجيل دوره أو إلغاء الحصة"
                     maxLength={240} textAlign="right" style={styles.queueReasonInput} />
 
                   {completedQueueItems.length > 0 ? (
