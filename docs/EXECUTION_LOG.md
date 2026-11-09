@@ -1055,3 +1055,17 @@
 - لا ندّعي اختبار POST مصادق إلى `/api/admin/accounts` أو دورة إنشاء/إعادة تعيين الحسابات عبر JWT حقيقي حتى الآن. يمكن تنفيذها من جلسة مدير المنصة المصرّح بها بعد إنشاء حساب اختبار من واجهة الإدارة.
 - Security Advisor: ثلاث ملاحظات INFO `rls_enabled_no_policy` مقصودة للجداول الخاصة الثلاثة، وWARN `auth_leaked_password_protection` ما زال قائمًا.
 - PR #2 يبقى Draft وغير مدمج؛ لا تغيير على `main` ولا نشر Production.
+
+
+## 2026-11-09 — إغلاق إنشاء جلسات التشغيل عبر RPC فقط
+
+- أضيفت migration `20261109077000_route_pump_operation_creation_through_guarded_rpc.sql` على فرع `security/tenant-isolation-rls`، وطُبقت على مشروع Supabase `kxdncnswbwktbiphptbr`.
+- سُحبت كل منح INSERT المباشرة على `public.pump_operations` من `PUBLIC` و`anon` و`authenticated`، بما فيها منح الأعمدة التي كانت تسمح بتقديم `organization_id` و`pump_id` و`operator_id` و`planned_minutes`.
+- نُقل إنشاء الجلسة إلى `water_management_private.start_pump_operation_internal` بدالة SECURITY DEFINER و`search_path = ''`. تتحقق الدالة من هوية المستخدم ومؤسسته ودوره ونشاط الغطاس وتكليف المشغّل وانتماء المشترك للغطاس أو صحة اسم المستفيد الخارجي.
+- بقيت `public.start_pump_operation` نقطة دخول SECURITY INVOKER فقط، مع EXECUTE للمستخدم المصادق، دون منح الإدخال المباشر إلى الجدول.
+- أضيفت assertions إلى `supabase/tests/rls/tenant_isolation.sql` للتحقق من غياب امتيازات INSERT الجدولية والعمودية، وفشل محاولة إدخال مباشر، مع نجاح بدء الجلسة عبر RPC.
+- **اختبار Supabase الحي:** داخل معاملة مؤقتة وبهوية manager صحيحة، فشلت محاولة INSERT المباشر بالامتيازات كما هو مطلوب؛ نجحت start ثم pause مع سبب ثم resume ثم complete؛ حُفظت الأحداث الأربعة بالترتيب مع هوية المنفذ، وأُعيدت المعاملة بـROLLBACK.
+- جرت محاولة اختبار أولى بهوية JWT اصطناعية غير صحيحة؛ رفضتها الدالة قبل أي إنشاء. لم تُترك بيانات من المحاولات الفاشلة أو الناجحة.
+- **التوثيق:** حدثت خطة التنفيذ والتصور وسجل الإنجازات لتثبيت قاعدة تعدد المحصّلين وفصل سجل الجلسة الحالي عن سجل الأحداث append-only. المرحلة 4 ما زالت جزئية، والمرحلة 5 (SQLite/Offline First/Outbox) لم تبدأ.
+- **Git/CI:** التغيير موجود على فرع التطوير وPR #2. إعادة CI على رأس الفرع بعد هذه الترحيلة والاختبارات مطلوبة قبل قبولها. لا دمج مقصود ولا نشر Production.
+- **حدود التحقق:** لم يجر اختبار Android فعليًا على جهاز/محاكي لهذه الشاشة؛ CI لا يثبت تشغيل التنبيه الصوتي عند إغلاق التطبيق. لا يوجد تحكم كهربائي بالمضخة، ولا مزامنة Offline حتى الآن.
