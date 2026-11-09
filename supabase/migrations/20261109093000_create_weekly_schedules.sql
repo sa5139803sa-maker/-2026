@@ -1,4 +1,22 @@
 -- Versioned weekly schedule templates scoped to one organization and pump.
+-- A subscriber receives a fixed weekly minute quota; this quota resets each
+-- schedule cycle and unused minutes are never carried into a later week.
+
+ALTER TABLE public.subscribers
+  ADD COLUMN weekly_quota_minutes integer,
+  ADD COLUMN default_weekday smallint,
+  ADD CONSTRAINT subscribers_weekly_entitlement_pair_check CHECK (
+    (weekly_quota_minutes IS NULL AND default_weekday IS NULL)
+    OR (
+      weekly_quota_minutes BETWEEN 1 AND 10080
+      AND default_weekday BETWEEN 1 AND 7
+    )
+  );
+
+COMMENT ON COLUMN public.subscribers.weekly_quota_minutes IS
+  'Recurring weekly quota in minutes. The quota resets every weekly cycle; unused minutes expire and never roll over.';
+COMMENT ON COLUMN public.subscribers.default_weekday IS
+  'Preferred ISO weekday (1 Monday through 7 Sunday) used as the default scheduling day; a weekly quota may be split across multiple weekdays.';
 -- Only draft schedules are editable through the client Data API. Publishing is
 -- intentionally reserved for a guarded server RPC added after conflict rules.
 
@@ -11,6 +29,7 @@ CREATE TABLE public.weekly_schedules (
     CHECK (char_length(btrim(name)) BETWEEN 2 AND 100),
   effective_from date NOT NULL,
   effective_to date,
+  week_starts_on smallint NOT NULL CHECK (week_starts_on BETWEEN 1 AND 7),
   status text NOT NULL DEFAULT 'draft'
     CHECK (status IN ('draft', 'active', 'archived')),
   created_by uuid NOT NULL DEFAULT auth.uid(),
@@ -60,14 +79,16 @@ CREATE TABLE public.schedule_entries (
     FOREIGN KEY (weekly_schedule_id, organization_id, pump_id)
     REFERENCES public.weekly_schedules (id, organization_id, pump_id)
     ON DELETE CASCADE,
-  CONSTRAINT schedule_entries_subscriber_scope_fkey
-    FOREIGN KEY (subscriber_id, organization_id, pump_id)
-    REFERENCES public.subscribers (id, organization_id, pump_id)
-    ON DELETE CASCADE
+  CONSTRAINT schedule_entries_subscriber_fkey
+    FOREIGN KEY (subscriber_id)
+    REFERENCES public.subscribers (id)
+    ON DELETE RESTRICT
 );
 
 CREATE INDEX schedule_entries_schedule_scope_idx
   ON public.schedule_entries (weekly_schedule_id, organization_id, pump_id);
+CREATE INDEX schedule_entries_subscriber_idx
+  ON public.schedule_entries (subscriber_id);
 CREATE INDEX schedule_entries_subscriber_scope_idx
   ON public.schedule_entries (subscriber_id, organization_id, pump_id);
 CREATE INDEX schedule_entries_weekday_order_idx
@@ -83,6 +104,7 @@ AS $prepare_schedule_entry_scope$
 DECLARE
   v_organization_id uuid;
   v_pump_id uuid;
+  v_subscriber_matches boolean;
 BEGIN
   IF TG_OP = 'UPDATE'
      AND NEW.weekly_schedule_id IS DISTINCT FROM OLD.weekly_schedule_id THEN
@@ -97,6 +119,18 @@ BEGIN
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Weekly schedule not found or not visible'
+      USING ERRCODE = '23503';
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM public.subscribers s
+    WHERE s.id = NEW.subscriber_id
+      AND s.organization_id = v_organization_id
+      AND s.pump_id = v_pump_id
+  ) INTO v_subscriber_matches;
+
+  IF NOT v_subscriber_matches THEN
+    RAISE EXCEPTION 'Schedule entry subscriber must belong to the same organization and pump as the weekly schedule'
       USING ERRCODE = '23503';
   END IF;
 
@@ -122,9 +156,9 @@ ALTER TABLE public.schedule_entries ENABLE ROW LEVEL SECURITY;
 
 REVOKE ALL ON TABLE public.weekly_schedules FROM PUBLIC, anon, authenticated;
 GRANT SELECT, DELETE ON TABLE public.weekly_schedules TO authenticated;
-GRANT INSERT (pump_id, name, effective_from, effective_to)
+GRANT INSERT (pump_id, name, effective_from, effective_to, week_starts_on)
   ON TABLE public.weekly_schedules TO authenticated;
-GRANT UPDATE (name, effective_from, effective_to)
+GRANT UPDATE (name, effective_from, effective_to, week_starts_on)
   ON TABLE public.weekly_schedules TO authenticated;
 
 REVOKE ALL ON TABLE public.schedule_entries FROM PUBLIC, anon, authenticated;
@@ -276,9 +310,11 @@ COMMENT ON TABLE public.weekly_schedules IS
   'Versioned weekly schedule templates scoped to one organization and pump; client edits are restricted to draft rows.';
 COMMENT ON COLUMN public.weekly_schedules.effective_from IS
   'First local calendar date on which this schedule version may apply; activation is performed by a guarded server procedure.';
+COMMENT ON COLUMN public.weekly_schedules.week_starts_on IS
+  'ISO weekday (1 Monday through 7 Sunday) that anchors the recurring seven-day quota cycle for this schedule.';
 COMMENT ON TABLE public.schedule_entries IS
   'Recurring weekly subscriber appointments; ISO weekday 1=Monday through 7=Sunday and one planned duration per appointment.';
 COMMENT ON COLUMN public.schedule_entries.weekday IS
   'ISO weekday number: 1 Monday through 7 Sunday.';
 COMMENT ON COLUMN public.schedule_entries.planned_minutes IS
-  'Planned duration for this single weekly appointment, not a weekly subscriber quota.';
+  'Minutes allocated to this single weekday appointment. Across all entries for a subscriber in the published schedule, their sum must equal weekly_quota_minutes.';
