@@ -516,6 +516,27 @@ BEGIN
      OR pg_catalog.has_column_privilege('authenticated', 'public.branches', 'pump_id', 'UPDATE') THEN
     RAISE EXCEPTION 'Authenticated branch grants are not least-privilege column grants';
   END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_trigger t
+    WHERE t.tgname = 'clear_subscriber_branches_before_pump_delete'
+      AND t.tgrelid = 'public.pumps'::regclass
+      AND NOT t.tgisinternal
+  ) THEN
+    RAISE EXCEPTION 'Pump deletion branch cleanup trigger is missing';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'water_management_private'
+      AND p.proname = 'clear_subscriber_branches_before_pump_delete'
+      AND (p.prosecdef OR NOT p.proconfig @> ARRAY['search_path=""'])
+  ) THEN
+    RAISE EXCEPTION 'Pump deletion cleanup trigger must be SECURITY INVOKER with an empty search_path';
+  END IF;
+  IF pg_catalog.has_function_privilege('authenticated', 'water_management_private.clear_subscriber_branches_before_pump_delete()', 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', 'water_management_private.clear_subscriber_branches_before_pump_delete()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Private pump cleanup trigger function must not be executable from the Data API';
+  END IF;
 END;
 $branch_table_acl$;
 
@@ -1580,6 +1601,23 @@ BEGIN
   END IF;
 END;
 $branch_delete_behavior$;
+
+-- Deleting a pump clears branch_id before the existing pump FK clears pump_id.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+DELETE FROM public.pumps WHERE id = '20000000-0000-4000-8000-000000000001';
+RESET ROLE;
+DO $pump_delete_branch_behavior$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.subscribers
+    WHERE id = '30000000-0000-4000-8000-000000000001'
+      AND (branch_id IS NOT NULL OR pump_id IS NOT NULL)
+  ) THEN
+    RAISE EXCEPTION 'Deleting a pump must clear both the subscriber branch and pump assignments';
+  END IF;
+END;
+$pump_delete_branch_behavior$;
 
 -- Organization deletion must cascade organization-owned rows while retaining auth profiles.
 SET CONSTRAINTS pump_assignments_user_tenant_role_fkey DEFERRED;
