@@ -928,7 +928,6 @@ function OperationsScreenContent() {
       }
 
       const [
-        scheduleResult,
         operationsResult,
         usageResult,
         sourceResult,
@@ -936,7 +935,6 @@ function OperationsScreenContent() {
         queueItemsResult,
         energyResult,
       ] = await Promise.all([
-        pumpOperationsRepository.listDailyScheduleEntries(organizationId, selectedPumpId, date),
         pumpOperationsRepository.listPumpOperations(organizationId, selectedPumpId, date),
         pumpOperationsRepository.getPowerUsage(date, date, "day", selectedPumpId),
         pumpOperationsRepository.listPowerSourcesForReport(organizationId, selectedPumpId),
@@ -944,39 +942,35 @@ function OperationsScreenContent() {
         pumpOperationsRepository.listWeeklyQueueItemsForReport(organizationId, selectedPumpId, date),
         pumpOperationsRepository.getDailyPumpEnergyReport(organizationId, selectedPumpId, date),
       ]);
-      if (scheduleResult.error || operationsResult.error || sourceResult.error
+      if (operationsResult.error || sourceResult.error
           || allocationResult.error || queueItemsResult.error || energyResult.error) {
-        throw scheduleResult.error ?? operationsResult.error ?? sourceResult.error
+        throw operationsResult.error ?? sourceResult.error
           ?? allocationResult.error ?? queueItemsResult.error ?? energyResult.error;
       }
 
-      const allocations = ((allocationResult.data ?? []) as unknown as WeeklyEntitlementAllocationForDay[])
-        .filter((allocation) => allocation.subscribers.operator_id === targetOperatorId);
+      // The server resolves subscriber ownership as of this work date. Using
+      // subscribers.operator_id here would silently hide former owners' history.
+      const allocations = (allocationResult.data ?? []) as WeeklyEntitlementAllocationForDay[];
       const allocationIds = new Set(allocations.map((allocation) => allocation.id));
-      const allocationByScheduleEntry = new Map(
-        allocations
-          .filter((allocation) => allocation.source_schedule_entry_id !== null)
-          .map((allocation) => [allocation.source_schedule_entry_id as string, allocation]),
-      );
-      const scheduledEntries = ((scheduleResult.data ?? []) as unknown as DailyScheduleEntry[])
-        .filter((entry) => entry.subscribers.operator_id === targetOperatorId)
-        .flatMap((entry) => {
-          const allocation = allocationByScheduleEntry.get(entry.id);
-          if (!allocation || allocation.allocated_minutes <= 0) return [];
-          return [{
-            ...entry,
-            entry_type: "weekly" as const,
-            schedule_entry_id: entry.id,
-            weekly_entitlement_allocation_id: allocation.id,
-            planned_minutes: allocation.allocated_minutes,
-          }];
-        });
-      const reassignedEntries = allocations
-        .filter((allocation) => allocation.source_schedule_entry_id === null && allocation.allocated_minutes > 0)
+      const scheduledEntries: DailyScheduleEntry[] = allocations
+        .filter((allocation) => allocation.source_schedule_entry_id !== null)
+        .map((allocation) => ({
+          id: allocation.source_schedule_entry_id as string,
+          subscriber_id: allocation.subscriber_id,
+          weekday: allocation.weekday,
+          sort_order: allocation.sort_order,
+          planned_minutes: allocation.allocated_minutes,
+          entry_type: "weekly" as const,
+          schedule_entry_id: allocation.source_schedule_entry_id,
+          weekly_entitlement_allocation_id: allocation.id,
+          subscribers: allocation.subscribers,
+        }));
+      const reassignedEntries: DailyScheduleEntry[] = allocations
+        .filter((allocation) => allocation.source_schedule_entry_id === null)
         .map((allocation, index) => ({
           id: allocation.id,
           subscriber_id: allocation.subscriber_id,
-          weekday: new Date(`${date}T12:00:00Z`).getUTCDay() || 7,
+          weekday: allocation.weekday,
           sort_order: scheduledEntries.length + index,
           planned_minutes: allocation.allocated_minutes,
           entry_type: "weekly_reassigned" as const,
