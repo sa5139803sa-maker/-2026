@@ -940,7 +940,7 @@ BEGIN
 
   IF (SELECT weekly_quota_minutes FROM public.subscribers
       WHERE id='30000000-0000-4000-8000-000000000002') IS DISTINCT FROM v_previous_quota THEN
-    RAISE EXCEPTION 'A saved draft changed the subscriber's current quota before activation';
+    RAISE EXCEPTION 'Saving a draft changed the current subscriber quota before activation';
   END IF;
 
   PERFORM public.activate_weekly_schedule(v_current_schedule_id);
