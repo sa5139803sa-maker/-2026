@@ -2266,8 +2266,10 @@ DO $collector_weekly_entitlement_boundary$
 BEGIN
   IF (SELECT count(*) FROM public.weekly_schedule_subscribers
       WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 1
+     -- daily_queue.sql adds a second same-subscriber entry to split the weekly
+     -- quota across today and the following day. Both remain pump-visible.
      OR (SELECT count(*) FROM public.schedule_entries
-         WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 1 THEN
+         WHERE subscriber_id = '30000000-0000-4000-8000-000000000001') <> 2 THEN
     RAISE EXCEPTION 'Collector lost its existing pump-level weekly schedule visibility';
   END IF;
 
