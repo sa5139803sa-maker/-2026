@@ -113,6 +113,18 @@ export type DailyQueueItem = {
   weekly_entitlement_allocation_id?: string | null;
 };
 
+export type DailyQueueEvent = {
+  id: string;
+  event_type: "queue_generated" | "item_created" | "item_deferred" | "item_cancelled"
+    | "reordered" | "branch_order_override" | "started" | "completed"
+    | "auto_advance_scheduled" | "auto_advance_retargeted"
+    | "auto_advance_cancelled" | "queue_closed";
+  actor_id: string;
+  occurred_at: string;
+  reason: string | null;
+  metadata: Record<string, unknown>;
+};
+
 export type DailyQueue = {
   id: string;
   organization_id: string;
@@ -128,6 +140,7 @@ export type DailyQueue = {
   auto_advance_token: string | null;
   auto_advance_cancelled_at: string | null;
   items: DailyQueueItem[];
+  events: DailyQueueEvent[];
 };
 
 export type DailyWorkReportDetails = {
@@ -279,10 +292,21 @@ export const pumpOperationsRepository = {
 
     if (itemsResult.error) return { data: null, error: itemsResult.error };
 
+    const eventsResult = await supabase
+      .from("queue_item_events")
+      .select("id,event_type,actor_id,occurred_at,reason,metadata")
+      .eq("organization_id", organizationId)
+      .eq("daily_queue_id", queueResult.data.id)
+      .order("event_sequence", { ascending: false })
+      .limit(8);
+
+    if (eventsResult.error) return { data: null, error: eventsResult.error };
+
     return {
       data: {
         ...queueResult.data,
         items: (itemsResult.data ?? []) as DailyQueueItem[],
+        events: (eventsResult.data ?? []) as DailyQueueEvent[],
       } satisfies DailyQueue,
       error: null,
     };
