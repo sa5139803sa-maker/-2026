@@ -49,16 +49,17 @@ export async function startPersistentPumpTimerNotification(
   return true;
 }
 
-export async function stopPersistentPumpTimerNotification() {
+export async function stopPersistentPumpTimerNotification(operationId: string) {
   if (Platform.OS !== "android") return;
-  await enqueueNativeTask((native) => native.stopTimer());
+  if (!operationId) throw new Error("An operation ID is required to stop the persistent timer.");
+  await enqueueNativeTask((native) => native.stopTimer(operationId));
 }
 
 export async function pausePersistentPumpTimerNotification(operation: PumpOperation) {
   if (Platform.OS !== "android") return;
   const permission = await Notifications.getPermissionsAsync();
   if (!permission.granted) {
-    await stopPersistentPumpTimerNotification();
+    await stopPersistentPumpTimerNotification(operation.id);
     return;
   }
   const pausedAt = Date.now();
@@ -79,7 +80,7 @@ export async function resumePersistentPumpTimerNotification(operation: PumpOpera
   if (Platform.OS !== "android") return;
   const permission = await Notifications.getPermissionsAsync();
   if (!permission.granted) {
-    await stopPersistentPumpTimerNotification();
+    await stopPersistentPumpTimerNotification(operation.id);
     return;
   }
   const resumedAt = Date.now();
@@ -101,29 +102,35 @@ export async function resumePersistentPumpTimerNotification(operation: PumpOpera
   );
 }
 
-/** Android's own Chronometer/** Android's own Chronometer updates the visible countdown; JS does not tick in background. */
+/** Android's native Chronometer updates the visible countdown; JS does not tick in background. */
 export async function syncPersistentPumpTimerNotification(
   pumpId: string,
   operations: PumpOperation[],
 ) {
   if (Platform.OS !== "android" || !pumpId) return;
   return enqueueNativeTask(async (native) => {
-    const permission = await Notifications.getPermissionsAsync();
-    if (!permission.granted) {
-      await native.stopTimer();
-      return;
-    }
     const active = operations.find((operation) =>
       operation.pump_id === pumpId
       && (operation.status === "running" || operation.status === "paused"),
     );
+    const completed = operations.filter((operation) =>
+      operation.pump_id === pumpId && operation.status === "completed",
+    );
+    const permission = await Notifications.getPermissionsAsync();
+    if (!permission.granted) {
+      if (active) {
+        await native.stopTimer(active.id);
+      } else {
+        for (const operation of completed) {
+          await native.stopTimer(operation.id);
+        }
+      }
+      return;
+    }
     if (!active) {
       // Do not clear a different pump's foreground timer when this pump has
       // no active operation. Remove only a timer whose matching operation
       // is now marked completed in this pump's successfully loaded data.
-      const completed = operations.filter((operation) =>
-        operation.pump_id === pumpId && operation.status === "completed",
-      );
       for (const operation of completed) {
         await native.stopTimer(operation.id);
       }

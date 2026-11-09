@@ -674,7 +674,7 @@ function OperationsScreenContent() {
       console.error("daily queue item start failed", startError);
       if (persistentCounterStarted) {
         try {
-          await stopPersistentPumpTimerNotification();
+          await stopPersistentPumpTimerNotification(item.id);
         } catch (stopError) {
           console.warn("Could not stop provisional Android timer after server start failed.", stopError);
         }
@@ -933,7 +933,7 @@ function OperationsScreenContent() {
         } else if (action === "resume_pump_operation") {
           await resumePersistentPumpTimerNotification(activeOperation);
         } else {
-          await stopPersistentPumpTimerNotification();
+          await stopPersistentPumpTimerNotification(activeOperation.id);
         }
       } catch (nativeTimerError) {
         console.warn("Could not update the persistent Android timer notification immediately.", nativeTimerError);
