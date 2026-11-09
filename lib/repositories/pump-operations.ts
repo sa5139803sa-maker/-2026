@@ -113,7 +113,7 @@ export const pumpOperationsRepository = {
       .eq("weekday", weekday)
       .eq("weekly_schedules.status", "active")
       .lte("weekly_schedules.effective_from", workDate)
-      .or(`effective_to.is.null,effective_to.gte.${workDate}`, { foreignTable: "weekly_schedules" })
+      .or(`effective_to.is.null,effective_to.gte.${workDate}`, { referencedTable: "weekly_schedules" })
       .order("sort_order", { ascending: true });
   },
 
