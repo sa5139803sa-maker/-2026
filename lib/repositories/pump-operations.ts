@@ -98,7 +98,7 @@ export type WeeklyQueueOperationLink = {
 export type DailyQueueItem = {
   id: string;
   daily_queue_id: string;
-  source_type: "weekly" | "weekly_reassigned" | "additional_registered" | "additional_guest" | "emergency";
+  source_type: "weekly" | "weekly_reassigned" | "additional_registered" | "additional_guest" | "emergency" | "other";
   schedule_entry_id: string | null;
   subscriber_id: string | null;
   subscriber_name_snapshot: string;
@@ -111,6 +111,8 @@ export type DailyQueueItem = {
   started_at: string | null;
   completed_at: string | null;
   weekly_entitlement_allocation_id?: string | null;
+  /** False when this is a redacted placeholder for another operator's turn. */
+  is_owned: boolean;
 };
 
 export type DailyQueueEvent = {
@@ -282,31 +284,24 @@ export const pumpOperationsRepository = {
       return { data: null, error: queueResult.error };
     }
 
-    const itemsResult = await supabase
-      .from("queue_items")
-      .select("id,daily_queue_id,source_type,schedule_entry_id,subscriber_id,subscriber_name_snapshot,branch_id,branch_name_snapshot,planned_minutes,sort_order,status,operation_id,started_at,completed_at,weekly_entitlement_allocation_id")
-      .eq("organization_id", organizationId)
-      .eq("daily_queue_id", queueResult.data.id)
-      .order("sort_order", { ascending: true })
-      .order("id", { ascending: true });
+    const queueViewResult = await supabase.rpc("get_daily_queue_operator_view", {
+      p_queue_id: queueResult.data.id,
+    });
 
-    if (itemsResult.error) return { data: null, error: itemsResult.error };
+    if (queueViewResult.error) {
+      return { data: null, error: queueViewResult.error };
+    }
 
-    const eventsResult = await supabase
-      .from("queue_item_events")
-      .select("id,event_type,actor_id,occurred_at,reason,metadata")
-      .eq("organization_id", organizationId)
-      .eq("daily_queue_id", queueResult.data.id)
-      .order("event_sequence", { ascending: false })
-      .limit(8);
-
-    if (eventsResult.error) return { data: null, error: eventsResult.error };
+    const queueView = (queueViewResult.data ?? {}) as {
+      items?: DailyQueueItem[];
+      events?: DailyQueueEvent[];
+    };
 
     return {
       data: {
         ...queueResult.data,
-        items: (itemsResult.data ?? []) as DailyQueueItem[],
-        events: (eventsResult.data ?? []) as DailyQueueEvent[],
+        items: queueView.items ?? [],
+        events: queueView.events ?? [],
       } satisfies DailyQueue,
       error: null,
     };
