@@ -1677,8 +1677,12 @@ SELECT set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005
 DO $supervisor_power_source_read$
 BEGIN
   IF (SELECT count(*) FROM public.pump_power_sources
-      WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 0 THEN
-    RAISE EXCEPTION 'Supervisor unexpectedly read power sources without an assignment path';
+      WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 3 THEN
+    RAISE EXCEPTION 'Assigned supervisor must read the power sources for their pump';
+  END IF;
+  IF (SELECT count(*) FROM public.pump_operation_power_segments
+      WHERE pump_id='20000000-0000-4000-8000-000000000001') <> 4 THEN
+    RAISE EXCEPTION 'Assigned supervisor must read operation power segments for their pump';
   END IF;
 END;
 $supervisor_power_source_read$;
