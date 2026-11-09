@@ -9,7 +9,7 @@ import { colors, radius, spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth';
 
 export default function SignInScreen() {
-  const { session, signIn, signUp } = useAuth();
+  const { session, profile, signIn, signUp } = useAuth();
   const [mode, setMode] = useState<'signIn' | 'signUp'>('signIn');
   const [displayName, setDisplayName] = useState('');
   const [organizationName, setOrganizationName] = useState('');
@@ -19,14 +19,18 @@ export default function SignInScreen() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (session) router.replace('/(tabs)');
-  }, [session]);
+    if (session && profile && profile.role !== "platform_admin") {
+      router.replace('/(tabs)');
+    }
+  }, [session, profile]);
 
-  if (session) return null;
+  // Wait for the role check before navigating. Platform administrators are
+  // signed out by AuthProvider and receive the web-only access message.
+  if (session && profile && profile.role !== "platform_admin") return null;
 
   const submit = async () => {
     if (!email.trim() || password.length < 6 || (mode === 'signUp' && (!displayName.trim() || !organizationName.trim()))) {
-      setError(mode === 'signUp' ? 'أكمل الاسم واسم المؤسسة والبريد وكلمة مرور من 6 أحرف على الأقل.' : 'أدخل البريد وكلمة المرور بشكل صحيح.');
+      setError(mode === 'signUp' ? 'أكمل الاسم واسم المؤسسة والبريد وكلمة مرور من 6 أحرف على الأقل.' : 'أدخل اسم المستخدم أو البريد وكلمة المرور بشكل صحيح.');
       return;
     }
     setSubmitting(true);
@@ -36,7 +40,7 @@ export default function SignInScreen() {
     if (result) setError(result);
   };
 
-  return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled"><View style={styles.brand}><BrandMark /></View><View style={styles.hero}><Text style={styles.eyebrow}>منصة إدارة المياه</Text><Text style={styles.title}>{mode === 'signIn' ? 'مرحباً بعودتك' : 'أنشئ مؤسستك الآن'}</Text><Text style={styles.subtitle}>{mode === 'signIn' ? 'سجّل الدخول لمتابعة التشغيل والتحصيل والمشتركين.' : 'ابدأ بإعداد مساحة عمل آمنة لإدارة الغواطس والمشتركين.'}</Text></View><View style={styles.form}>{mode === 'signUp' && <><Field icon={<UserRound size={18} color={colors.text.secondary} />} placeholder="الاسم الكامل" value={displayName} onChangeText={setDisplayName} /><Field icon={<Building2 size={18} color={colors.text.secondary} />} placeholder="اسم المؤسسة" value={organizationName} onChangeText={setOrganizationName} /></>}<Field icon={<Mail size={18} color={colors.text.secondary} />} placeholder="البريد الإلكتروني" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" /><Field icon={<LockKeyhole size={18} color={colors.text.secondary} />} placeholder="كلمة المرور" value={password} onChangeText={setPassword} secureTextEntry /><View style={styles.notice}><Text style={styles.noticeText}>بياناتك محمية بصلاحيات منفصلة لكل مؤسسة.</Text></View>{error && <Text style={styles.error}>{error}</Text>}<PrimaryButton label={submitting ? 'جاري المعالجة...' : mode === 'signIn' ? 'تسجيل الدخول' : 'إنشاء الحساب'} icon={<ArrowLeft size={18} color={colors.text.inverse} />} onPress={submit} /></View><Pressable onPress={() => { setMode(mode === 'signIn' ? 'signUp' : 'signIn'); setError(null); }} style={styles.switch}><Text style={styles.switchText}>{mode === 'signIn' ? 'ليس لديك حساب؟ إنشاء مؤسسة جديدة' : 'لديك حساب؟ تسجيل الدخول'}</Text></Pressable></ScrollView></KeyboardAvoidingView>;
+  return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled"><View style={styles.brand}><BrandMark /></View><View style={styles.hero}><Text style={styles.eyebrow}>منصة إدارة المياه</Text><Text style={styles.title}>{mode === 'signIn' ? 'مرحباً بعودتك' : 'أنشئ مؤسستك الآن'}</Text><Text style={styles.subtitle}>{mode === 'signIn' ? 'سجّل الدخول لمتابعة التشغيل والتحصيل والمشتركين.' : 'ابدأ بإعداد مساحة عمل آمنة لإدارة الغواطس والمشتركين.'}</Text></View><View style={styles.form}>{mode === 'signUp' && <><Field icon={<UserRound size={18} color={colors.text.secondary} />} placeholder="الاسم الكامل" value={displayName} onChangeText={setDisplayName} /><Field icon={<Building2 size={18} color={colors.text.secondary} />} placeholder="اسم المؤسسة" value={organizationName} onChangeText={setOrganizationName} /></>}<Field icon={<Mail size={18} color={colors.text.secondary} />} placeholder={mode === "signIn" ? "اسم المستخدم أو البريد الإلكتروني" : "البريد الإلكتروني"} value={email} onChangeText={setEmail} keyboardType={mode === "signIn" ? "default" : "email-address"} autoCapitalize="none" /><Field icon={<LockKeyhole size={18} color={colors.text.secondary} />} placeholder="كلمة المرور" value={password} onChangeText={setPassword} secureTextEntry /><View style={styles.notice}><Text style={styles.noticeText}>بياناتك محمية بصلاحيات منفصلة لكل مؤسسة.</Text></View>{error && <Text style={styles.error}>{error}</Text>}<PrimaryButton label={submitting ? 'جاري المعالجة...' : mode === 'signIn' ? 'تسجيل الدخول' : 'إنشاء الحساب'} icon={<ArrowLeft size={18} color={colors.text.inverse} />} onPress={submit} /></View><Pressable onPress={() => { setMode(mode === 'signIn' ? 'signUp' : 'signIn'); setError(null); }} style={styles.switch}><Text style={styles.switchText}>{mode === 'signIn' ? 'ليس لديك حساب؟ إنشاء مؤسسة جديدة' : 'لديك حساب؟ تسجيل الدخول'}</Text></Pressable></ScrollView></KeyboardAvoidingView>;
 }
 
 function Field({ icon, placeholder, value, onChangeText, secureTextEntry = false, keyboardType = 'default', autoCapitalize = 'sentences' }: { icon: React.ReactNode; placeholder: string; value: string; onChangeText: (value: string) => void; secureTextEntry?: boolean; keyboardType?: 'default' | 'email-address'; autoCapitalize?: 'none' | 'sentences' }) {

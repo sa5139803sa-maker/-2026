@@ -25,8 +25,24 @@ jobs:
           cache: npm
           package-manager-cache: false
 
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Type-check Supabase Edge Functions
+        run: |
+          deno check --node-modules-dir=auto supabase/functions/manage-accounts/index.ts
+          deno check --node-modules-dir=auto supabase/functions/subscriber-portal/index.ts
+
+      - name: Test trusted subscriber gateway IP extraction
+        run: deno test supabase/functions/subscriber-portal/trusted-gateway-ip.deno.ts
+
+      - name: Test account session reset fence
+        run: deno test supabase/functions/manage-accounts/session-token.deno.ts
 
       - name: Dependency vulnerability report
         shell: bash

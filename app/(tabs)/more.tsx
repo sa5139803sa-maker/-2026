@@ -14,7 +14,7 @@ import { colors, spacing, typography } from "@/constants/theme";
 import { useAuth, type AppRole } from "@/lib/auth";
 import { canAccessFeature } from "@/lib/permissions";
 
-const roleLabels: Record<AppRole, string> = {
+const roleLabels: Partial<Record<AppRole, string>> = {
   manager: "مدير المؤسسة",
   operator: "مشغّل",
   collector: "محصّل",
@@ -30,29 +30,34 @@ const items = [
   },
   {
     label: "التقارير",
-    detail: "قيد التطوير",
+    detail: "تقارير التشغيل ومصادر الكهرباء",
     icon: FileText,
-    enabled: false,
+    enabled: true,
   },
   {
-    label: "المستخدمون والصلاحيات",
-    detail: "قيد التطوير",
+    label: "إدارة الحسابات",
+    detail: "إنشاء الحسابات وتعيين كلمات المرور المؤقتة",
     icon: ShieldCheck,
-    enabled: false,
+    enabled: true,
   },
   {
     label: "الإعدادات",
-    detail: "قيد التطوير",
+    detail: "أصوات التنبيهات والاهتزاز وتخصيص صوت الهاتف",
     icon: Settings,
-    enabled: false,
+    enabled: true,
   },
 ];
 
 export default function MoreScreen() {
   const { profile, signOut } = useAuth();
   const displayName = profile?.display_name?.trim() || "المستخدم";
-  const roleLabel = profile ? roleLabels[profile.role] : "دور غير محدد";
-  const visibleItems = items.filter((item) => item.label !== "المشتركون والغواطس" || canAccessFeature(profile?.role, "management"));
+  const roleLabel = profile ? roleLabels[profile.role] ?? "حساب مخصص للويب" : "دور غير محدد";
+  const canViewReports = profile?.role === "manager" || profile?.role === "operator" || profile?.role === "supervisor";
+  const visibleItems = items.filter((item) => {
+    if (item.label === "إدارة الحسابات") return profile?.role === "manager";
+    if (item.label === "التقارير") return canViewReports;
+    return item.label !== "المشتركون والغواطس" || canAccessFeature(profile?.role, "management");
+  });
   const initial = displayName.charAt(0) || "؟";
 
   return (
@@ -74,7 +79,7 @@ export default function MoreScreen() {
         <StatusBadge label="جلسة دخول" status="info" />
       </Card>
 
-      <PreviewBanner description="الأقسام غير المفعّلة معروضة للتعريف ببنية التطبيق فقط. لا يوجد ادعاء بأن التقارير أو المستخدمين أو إعدادات المزامنة تعمل حاليًا." />
+      {profile?.role === "manager" ? <PreviewBanner description="إدارة حسابات موظفي مؤسستك وفق نطاق الصلاحيات وحد الحسابات." /> : null}
 
       <Text style={styles.heading}>الإدارة والإعدادات</Text>
 
@@ -85,7 +90,12 @@ export default function MoreScreen() {
             accessibilityRole="button"
             accessibilityState={{ disabled: !enabled }}
             disabled={!enabled}
-            onPress={() => router.push("/management")}
+            onPress={() => router.push(
+              label === "إدارة الحسابات" ? "/account-management"
+                : label === "التقارير" ? "/reports"
+                  : label === "الإعدادات" ? "/alert-settings"
+                    : "/management",
+            )}
             style={({ pressed }) => [
               styles.menuItem,
               index === items.length - 1 && styles.lastMenuItem,

@@ -20,7 +20,16 @@
       "expo-font",
       "expo-web-browser",
       "expo-splash-screen",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": true,
+          "enableBackgroundRecording": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

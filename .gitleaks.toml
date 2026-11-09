@@ -1,0 +1,11 @@
+title = "Water Management secret scanning rules"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Supabase publishable keys are designed for public client use. This does not allowlist sb_secret_ or legacy service_role credentials."
+regexTarget = "secret"
+regexes = [
+  '''^sb_publishable_[A-Za-z0-9]{22}_[A-Za-z0-9]{8}$'''
+]
