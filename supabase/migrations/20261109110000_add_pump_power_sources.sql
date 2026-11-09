@@ -9,7 +9,7 @@ CREATE TABLE public.pump_power_sources (
   source_type text NOT NULL CHECK (source_type IN ('solar', 'generator', 'grid', 'other')),
   is_active boolean NOT NULL DEFAULT true,
   archived_at timestamptz,
-  created_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+  created_by uuid DEFAULT auth.uid() REFERENCES public.profiles(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT pump_power_sources_id_tenant_pump_key UNIQUE (id, organization_id, pump_id),
   CONSTRAINT pump_power_sources_pump_scope_fkey
@@ -455,7 +455,7 @@ BEGIN
       ended_at = v_now,
       actual_seconds = GREATEST(
         0,
-        floor(extract(epoch FROM (v_now - op.started_at))::integer)
+        floor(extract(epoch FROM (v_now - op.started_at)))::integer
         - op.paused_seconds
         - CASE WHEN op.paused_at IS NULL THEN 0
                ELSE GREATEST(0, floor(extract(epoch FROM (v_now - op.paused_at)))::integer)
@@ -516,180 +516,8 @@ $$;
 REVOKE ALL ON FUNCTION public.resume_pump_operation(uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.resume_pump_operation(uuid, uuid) TO authenticated;
 
-CREATE OR REPLACE FUNCTION public.get_pump_power_usage(
-  p_from date,
-  p_to date,
-  p_period text DEFAULT 'day',
-  p_pump_id uuid DEFAULT NULL
-)
-RETURNS TABLE (
-  pump_id uuid,
-  period_start date,
-  power_source_id uuid,
-  power_source_name text,
-  total_seconds bigint,
-  total_minutes numeric,
-  data_source text
-)
-LANGUAGE sql
-SECURITY INVOKER
-SET search_path = ''
-AS $$
-  SELECT * FROM water_management_private.get_pump_power_usage_internal(p_from, p_to, p_period, p_pump_id)
-$$;
-
-CREATE OR REPLACE FUNCTION water_management_private.get_pump_power_usage_internal(
-  p_from date,
-  p_to date,
-  p_period text,
-  p_pump_id uuid
-)
-RETURNS TABLE (
-  pump_id uuid,
-  period_start date,
-  power_source_id uuid,
-  power_source_name text,
-  total_seconds bigint,
-  total_minutes numeric,
-  data_source text
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = ''
-AS $$
-DECLARE
-  v_user_id uuid := auth.uid();
-  v_org_id uuid := water_management_private.current_user_organization_id();
-  v_role public.app_role := water_management_private.current_user_role();
-BEGIN
-  IF v_user_id IS NULL OR v_org_id IS NULL
-     OR v_role NOT IN ('manager'::public.app_role, 'operator'::public.app_role, 'supervisor'::public.app_role) THEN
-    RAISE EXCEPTION 'Not authorized to view power usage' USING ERRCODE = '42501';
-  END IF;
-  IF p_from IS NULL OR p_to IS NULL OR p_from > p_to OR p_to - p_from > 366 THEN
-    RAISE EXCEPTION 'Invalid power usage date range' USING ERRCODE = '22023';
-  END IF;
-  IF p_period NOT IN ('day', 'week', 'month') THEN
-    RAISE EXCEPTION 'Power usage period must be day, week, or month' USING ERRCODE = '22023';
-  END IF;
-
-  RETURN QUERY
-  WITH raw_days AS (
-    SELECT seg.pump_id,
-           seg.power_source_id,
-           seg.source_name_snapshot,
-           local_day::date AS work_day,
-           GREATEST(
-             0,
-             floor(extract(epoch FROM (
-               LEAST(COALESCE(seg.ended_at, clock_timestamp()), ((local_day::date + 1)::timestamp AT TIME ZONE 'Asia/Hebron'))
-               - GREATEST(seg.started_at, (local_day::date::timestamp AT TIME ZONE 'Asia/Hebron'))
-             )))::bigint
-           ) AS seconds
-    FROM public.pump_operation_power_segments seg
-    CROSS JOIN LATERAL generate_series(
-      (seg.started_at AT TIME ZONE 'Asia/Hebron')::date::timestamp,
-      (COALESCE(seg.ended_at, clock_timestamp()) AT TIME ZONE 'Asia/Hebron')::date::timestamp,
-      interval '1 day'
-    ) AS local_day
-    WHERE seg.organization_id = v_org_id
-      AND (p_pump_id IS NULL OR seg.pump_id = p_pump_id)
-  ),
-  automatic_days AS (
-    SELECT r.pump_id, r.power_source_id, r.source_name_snapshot AS source_name,
-           r.work_day, sum(r.seconds)::bigint AS seconds, 'automatic'::text AS data_source
-    FROM raw_days r
-    WHERE r.work_day BETWEEN p_from AND p_to
-      AND r.seconds > 0
-      AND (
-        v_role = 'manager'
-        OR EXISTS (
-          SELECT 1 FROM public.pump_assignments pa
-          WHERE pa.organization_id = v_org_id AND pa.pump_id = r.pump_id
-            AND pa.user_id = v_user_id
-            AND pa.assignment_role::text = v_role::text
-        )
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM public.daily_work_reports report
-        WHERE report.organization_id = v_org_id
-          AND report.pump_id = r.pump_id
-          AND report.work_date = r.work_day
-          AND report.status = 'submitted'
-      )
-    GROUP BY r.pump_id, r.power_source_id, r.source_name_snapshot, r.work_day
-  ),
-  submitted_days AS (
-    SELECT report.pump_id, totals.power_source_id, totals.source_name_snapshot AS source_name,
-           report.work_date, (totals.minutes::bigint * 60) AS seconds,
-           'daily_survey'::text AS data_source
-    FROM public.daily_work_reports report
-    JOIN public.daily_work_source_totals totals
-      ON totals.daily_work_report_id = report.id
-     AND totals.organization_id = report.organization_id
-     AND totals.pump_id = report.pump_id
-    WHERE report.organization_id = v_org_id
-      AND report.status = 'submitted'
-      AND report.work_date BETWEEN p_from AND p_to
-      AND (p_pump_id IS NULL OR report.pump_id = p_pump_id)
-      AND (
-        v_role = 'manager'
-        OR EXISTS (
-          SELECT 1 FROM public.pump_assignments pa
-          WHERE pa.organization_id = v_org_id AND pa.pump_id = report.pump_id
-            AND pa.user_id = v_user_id
-            AND pa.assignment_role::text = v_role::text
-        )
-      )
-  ),
-  all_days AS (
-    SELECT * FROM automatic_days
-    UNION ALL
-    SELECT * FROM submitted_days
-  ),
-  buckets AS (
-    SELECT d.*,
-           CASE
-             WHEN p_period = 'day' THEN d.work_day
-             WHEN p_period = 'month' THEN date_trunc('month', d.work_day::timestamp)::date
-             ELSE d.work_day - (
-               (extract(isodow FROM d.work_day)::integer
-                 - COALESCE(schedule_week.week_starts_on, 1) + 7) % 7
-             )
-           END AS bucket_start
-    FROM all_days d
-    LEFT JOIN LATERAL (
-      SELECT ws.week_starts_on
-      FROM public.weekly_schedules ws
-      WHERE ws.organization_id = v_org_id
-        AND ws.pump_id = d.pump_id
-        AND ws.status = 'active'
-        AND d.work_day >= ws.effective_from
-        AND (ws.effective_to IS NULL OR d.work_day <= ws.effective_to)
-      ORDER BY ws.effective_from DESC
-      LIMIT 1
-    ) schedule_week ON true
-  )
-  SELECT b.pump_id, b.bucket_start, b.power_source_id, b.source_name,
-         sum(b.seconds)::bigint,
-         round(sum(b.seconds)::numeric / 60, 2),
-         b.data_source
-  FROM buckets b
-  GROUP BY b.pump_id, b.bucket_start, b.power_source_id, b.source_name, b.data_source
-  ORDER BY b.pump_id, b.bucket_start, b.source_name;
-END;
-$$;
-
-REVOKE ALL ON FUNCTION water_management_private.get_pump_power_usage_internal(date, date, text, uuid)
-  FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION water_management_private.get_pump_power_usage_internal(date, date, text, uuid)
-  TO authenticated;
-REVOKE ALL ON FUNCTION public.get_pump_power_usage(date, date, text, uuid)
-  FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.get_pump_power_usage(date, date, text, uuid)
-  TO authenticated;
-
 COMMENT ON TABLE public.pump_power_sources IS
   'Per-pump electricity source catalog. Default sources are seeded for each pump; used sources are archived rather than deleted.';
 COMMENT ON TABLE public.pump_operation_power_segments IS
   'Server-timestamped power source intervals for a pump operation. Paused periods are excluded by closing each segment.';
+
