@@ -505,10 +505,16 @@ BEGIN
     RAISE EXCEPTION 'Anonymous access was granted to public.branches';
   END IF;
   IF NOT pg_catalog.has_table_privilege('authenticated', 'public.branches', 'SELECT')
-     OR NOT pg_catalog.has_table_privilege('authenticated', 'public.branches', 'INSERT')
-     OR NOT pg_catalog.has_table_privilege('authenticated', 'public.branches', 'UPDATE')
-     OR NOT pg_catalog.has_table_privilege('authenticated', 'public.branches', 'DELETE') THEN
-    RAISE EXCEPTION 'Authenticated Data API grants on public.branches are incomplete';
+     OR NOT pg_catalog.has_table_privilege('authenticated', 'public.branches', 'DELETE')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.branches', 'INSERT')
+     OR pg_catalog.has_table_privilege('authenticated', 'public.branches', 'UPDATE')
+     OR NOT pg_catalog.has_column_privilege('authenticated', 'public.branches', 'pump_id', 'INSERT')
+     OR NOT pg_catalog.has_column_privilege('authenticated', 'public.branches', 'name', 'INSERT')
+     OR NOT pg_catalog.has_column_privilege('authenticated', 'public.branches', 'name', 'UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.branches', 'organization_id', 'INSERT')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.branches', 'organization_id', 'UPDATE')
+     OR pg_catalog.has_column_privilege('authenticated', 'public.branches', 'pump_id', 'UPDATE') THEN
+    RAISE EXCEPTION 'Authenticated branch grants are not least-privilege column grants';
   END IF;
 END;
 $branch_table_acl$;
@@ -546,7 +552,7 @@ END;
 $subscriber_number_immutable$;
 SET CONSTRAINTS pump_assignments_user_tenant_role_fkey IMMEDIATE;
 DO $manager_a_write$
-DECLARE v_rows bigint;
+DECLARE v_rows bigint; v_branch_id uuid;
 BEGIN
   UPDATE public.pumps SET status = 'paused'
   WHERE id = '20000000-0000-4000-8000-000000000001';
@@ -555,15 +561,14 @@ BEGIN
   UPDATE public.pumps SET status = 'active'
   WHERE id = '20000000-0000-4000-8000-000000000001';
 
-  INSERT INTO public.branches (id, organization_id, pump_id, name, code, sort_order)
-  VALUES ('40000000-0000-4000-8000-000000000004',
-          'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-          '20000000-0000-4000-8000-000000000001', 'تفرع مؤقت', 'TEMP', 9);
+  INSERT INTO public.branches (pump_id, name, code, sort_order)
+  VALUES ('20000000-0000-4000-8000-000000000001', 'تفرع مؤقت', 'TEMP', 9)
+  RETURNING id INTO v_branch_id;
   UPDATE public.branches SET name = 'تفرع مؤقت معدل'
-  WHERE id = '40000000-0000-4000-8000-000000000004';
+  WHERE id = v_branch_id;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   IF v_rows <> 1 THEN RAISE EXCEPTION 'Manager could not update a branch in their organization'; END IF;
-  DELETE FROM public.branches WHERE id = '40000000-0000-4000-8000-000000000004';
+  DELETE FROM public.branches WHERE id = v_branch_id;
 
   INSERT INTO public.pump_assignments (pump_id, user_id, organization_id, assignment_role)
   VALUES ('20000000-0000-4000-8000-000000000002',
@@ -608,12 +613,28 @@ BEGIN
 
   v_rejected := false;
   BEGIN
-    INSERT INTO public.branches (organization_id, pump_id, name, code)
-    VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-            '20000000-0000-4000-8000-000000000003', 'تفرع عابر', 'CROSS');
+    INSERT INTO public.branches (pump_id, name, code)
+    VALUES ('20000000-0000-4000-8000-000000000003', 'تفرع عابر', 'CROSS');
   EXCEPTION WHEN foreign_key_violation THEN v_rejected := true;
   END;
   IF NOT v_rejected THEN RAISE EXCEPTION 'Cross-organization branch INSERT was not rejected'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    INSERT INTO public.branches (organization_id, pump_id, name)
+    VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            '20000000-0000-4000-8000-000000000003', 'تفرع بمؤسسة خارج النطاق');
+  EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Manager was allowed to supply an organization_id for branch creation'; END IF;
+
+  v_rejected := false;
+  BEGIN
+    UPDATE public.branches SET pump_id = '20000000-0000-4000-8000-000000000002'
+    WHERE id = '40000000-0000-4000-8000-000000000001';
+  EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
+  END;
+  IF NOT v_rejected THEN RAISE EXCEPTION 'Manager was allowed to move a branch to another pump'; END IF;
 
   v_rejected := false;
   BEGIN
@@ -706,9 +727,8 @@ BEGIN
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   IF v_rows <> 0 THEN RAISE EXCEPTION 'Operator updated a branch'; END IF;
   BEGIN
-    INSERT INTO public.branches (organization_id, pump_id, name)
-    VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-            '20000000-0000-4000-8000-000000000001', 'فرع من المشغل');
+    INSERT INTO public.branches (pump_id, name)
+    VALUES ('20000000-0000-4000-8000-000000000001', 'فرع من المشغل');
   EXCEPTION WHEN insufficient_privilege THEN v_rejected := true;
   END;
   IF NOT v_rejected THEN RAISE EXCEPTION 'Operator inserted a branch without manager permission'; END IF;
