@@ -181,6 +181,20 @@ export const pumpOperationsRepository = {
       .order("sort_order", { ascending: true });
   },
 
+  getScheduleWeekStartsOn(organizationId: string, pumpId: string, workDate: string) {
+    return supabase
+      .from("weekly_schedules")
+      .select("week_starts_on,effective_from")
+      .eq("organization_id", organizationId)
+      .eq("pump_id", pumpId)
+      .in("status", ["active", "archived"])
+      .lte("effective_from", workDate)
+      .or(`effective_to.is.null,effective_to.gte.${workDate}`)
+      .order("effective_from", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+  },
+
   getPowerUsage(from: string, to: string, period: "day" | "week" | "month", pumpId: string) {
     return supabase.rpc("get_pump_power_usage", {
       p_from: from,
