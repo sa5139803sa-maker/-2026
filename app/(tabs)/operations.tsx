@@ -60,6 +60,15 @@ function formatTime(value: string | null) {
   return new Date(value).toLocaleTimeString("ar-PS", { timeZone: "Asia/Hebron", hour: "2-digit", minute: "2-digit" });
 }
 
+function localTimeInput(value: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Hebron",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(value));
+}
+
 function hebrewLocalToIso(date: string, time: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
     throw new Error("أدخل تاريخًا ووقتًا صحيحين.");
@@ -139,6 +148,9 @@ function OperationsScreenContent() {
   const organizationId = profile?.organization_id ?? null;
   const [pumps, setPumps] = useState<Pump[]>([]);
   const [selectedPumpId, setSelectedPumpId] = useState("");
+  const [reportOperators, setReportOperators] = useState<{ id: string; display_name: string }[]>([]);
+  const [selectedReportOperatorId, setSelectedReportOperatorId] = useState("");
+  const [sharedEnergySubmitted, setSharedEnergySubmitted] = useState(false);
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [operations, setOperations] = useState<Operation[]>([]);
   const [dailyQueue, setDailyQueue] = useState<DailyQueue | null>(null);
@@ -389,15 +401,17 @@ function OperationsScreenContent() {
     setPowerUsageLoading(false);
   }, [selectedPumpId, usagePeriod]);
 
-  const loadDailyWorkReport = useCallback(async (workDate: string) => {
+  const loadDailyWorkReport = useCallback(async (workDate: string, operatorIdOverride?: string) => {
     if (!organizationId || !selectedPumpId) {
       setDailyWorkReport(null);
       return;
     }
+    const targetOperatorId = operatorIdOverride
+      ?? (profile?.role === "operator" ? profile.id : selectedReportOperatorId);
     setDailyWorkReportLoading(true);
     setDailyWorkReportError(null);
     const { data, error: reportError } = await pumpOperationsRepository.getDailyWorkReport(
-      organizationId, selectedPumpId, workDate,
+      organizationId, selectedPumpId, workDate, targetOperatorId || undefined,
     );
     if (reportError) {
       console.error("daily work report load failed", reportError);
@@ -407,7 +421,7 @@ function OperationsScreenContent() {
       setDailyWorkReport((data ?? null) as DailyWorkReportDetails | null);
     }
     setDailyWorkReportLoading(false);
-  }, [organizationId, selectedPumpId]);
+  }, [organizationId, profile?.id, profile?.role, selectedPumpId, selectedReportOperatorId]);
 
   useEffect(() => {
     let mounted = true;
@@ -880,7 +894,7 @@ function OperationsScreenContent() {
     setBusy(false);
   }, [activeOperation, busy, loadPumpData, pauseReason, resumePowerSourceId]);
 
-  const reloadSurveySeed = async (date: string) => {
+  const reloadSurveySeed = async (date: string, requestedOperatorId?: string) => {
     if (!organizationId || !selectedPumpId) return;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       setError("أدخل تاريخًا صحيحًا بصيغة YYYY-MM-DD.");
@@ -889,6 +903,30 @@ function OperationsScreenContent() {
     setSurveyLoading(true);
     setSurveyStep(1);
     try {
+      let targetOperatorId = requestedOperatorId
+        ?? (profile?.role === "operator" ? profile.id : selectedReportOperatorId);
+
+      if (profile?.role === "manager") {
+        const operatorsResult = await pumpOperationsRepository.listPumpOperators(organizationId, selectedPumpId);
+        if (operatorsResult.error) throw operatorsResult.error;
+        const operators = (operatorsResult.data ?? []) as { id: string; display_name: string }[];
+        setReportOperators(operators);
+        if (!targetOperatorId || !operators.some((operator) => operator.id === targetOperatorId)) {
+          targetOperatorId = operators[0]?.id ?? "";
+        }
+        setSelectedReportOperatorId(targetOperatorId);
+      } else if (profile?.role === "operator") {
+        targetOperatorId = profile.id;
+      }
+
+      if (!targetOperatorId) {
+        setSurveyEntries([]);
+        setSurveyOperations([]);
+        setSurveyQueueItems([]);
+        setError("لا يوجد مشغّل مكلّف بهذا الغطاس لإعداد التقرير.");
+        return;
+      }
+
       const [
         scheduleResult,
         operationsResult,
@@ -896,6 +934,7 @@ function OperationsScreenContent() {
         sourceResult,
         allocationResult,
         queueItemsResult,
+        energyResult,
       ] = await Promise.all([
         pumpOperationsRepository.listDailyScheduleEntries(organizationId, selectedPumpId, date),
         pumpOperationsRepository.listPumpOperations(organizationId, selectedPumpId, date),
@@ -903,20 +942,24 @@ function OperationsScreenContent() {
         pumpOperationsRepository.listPowerSourcesForReport(organizationId, selectedPumpId),
         pumpOperationsRepository.listWeeklyEntitlementAllocationsForDay(organizationId, selectedPumpId, date),
         pumpOperationsRepository.listWeeklyQueueItemsForReport(organizationId, selectedPumpId, date),
+        pumpOperationsRepository.getDailyPumpEnergyReport(organizationId, selectedPumpId, date),
       ]);
       if (scheduleResult.error || operationsResult.error || sourceResult.error
-          || allocationResult.error || queueItemsResult.error) {
+          || allocationResult.error || queueItemsResult.error || energyResult.error) {
         throw scheduleResult.error ?? operationsResult.error ?? sourceResult.error
-          ?? allocationResult.error ?? queueItemsResult.error;
+          ?? allocationResult.error ?? queueItemsResult.error ?? energyResult.error;
       }
 
-      const allocations = (allocationResult.data ?? []) as unknown as WeeklyEntitlementAllocationForDay[];
+      const allocations = ((allocationResult.data ?? []) as unknown as WeeklyEntitlementAllocationForDay[])
+        .filter((allocation) => allocation.subscribers.operator_id === targetOperatorId);
+      const allocationIds = new Set(allocations.map((allocation) => allocation.id));
       const allocationByScheduleEntry = new Map(
         allocations
           .filter((allocation) => allocation.source_schedule_entry_id !== null)
           .map((allocation) => [allocation.source_schedule_entry_id as string, allocation]),
       );
       const scheduledEntries = ((scheduleResult.data ?? []) as unknown as DailyScheduleEntry[])
+        .filter((entry) => entry.subscribers.operator_id === targetOperatorId)
         .flatMap((entry) => {
           const allocation = allocationByScheduleEntry.get(entry.id);
           if (!allocation || allocation.allocated_minutes <= 0) return [];
@@ -942,25 +985,49 @@ function OperationsScreenContent() {
           subscribers: allocation.subscribers,
         }));
       const entries = [...scheduledEntries, ...reassignedEntries];
+      const energyReport = energyResult.data as {
+        work_started_at: string; work_ended_at: string; stoppage_minutes: number;
+        status: "draft" | "submitted";
+        sourceTotals: { power_source_id: string; minutes: number }[];
+      } | null;
 
       setSurveyPowerSources((sourceResult.data ?? []) as PumpPowerSource[]);
       setSurveyEntries(entries);
-      setSurveyOperations((operationsResult.data ?? []) as Operation[]);
-      setSurveyQueueItems((queueItemsResult.data ?? []) as unknown as WeeklyQueueOperationLink[]);
+      const operatorOperations = ((operationsResult.data ?? []) as Operation[]).filter((operation) =>
+        operation.subscriber_operator_id === targetOperatorId
+        || (operation.subscriber_id === null && operation.operator_id === targetOperatorId),
+      );
+      setSurveyOperations(operatorOperations);
+      setSurveyQueueItems(((queueItemsResult.data ?? []) as unknown as WeeklyQueueOperationLink[])
+        .filter((item) => item.weekly_entitlement_allocation_id && allocationIds.has(item.weekly_entitlement_allocation_id)));
       setSurveyManualMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
       setSurveyExtraMinutes(Object.fromEntries(entries.map((entry) => [entry.id, ""])));
-      if (usageResult.error) {
-        console.error("daily source prefill failed", usageResult.error);
+      setSharedEnergySubmitted(energyReport?.status === "submitted");
+
+      if (energyReport) {
+        setWorkStartTime(localTimeInput(energyReport.work_started_at));
+        setWorkEndTime(localTimeInput(energyReport.work_ended_at));
+        setStoppageMinutes(String(energyReport.stoppage_minutes));
+        setSourceMinutes(Object.fromEntries(
+          energyReport.sourceTotals.map((row) => [row.power_source_id, String(row.minutes)]),
+        ));
+      } else {
+        if (usageResult.error) {
+          console.error("daily source prefill failed", usageResult.error);
+        }
+        const usage = (usageResult.data ?? []) as PowerUsageRow[];
+        const automatic = usage.filter((row) => row.data_source === "automatic");
+        setWorkStartTime("");
+        setWorkEndTime("");
+        setStoppageMinutes("0");
+        setSourceMinutes(allocateWholeMinutesByLargestRemainder(
+          automatic.map((row) => ({
+            sourceId: row.power_source_id,
+            totalSeconds: Number(row.total_seconds ?? 0),
+          })),
+        ));
       }
-      const usage = (usageResult.data ?? []) as PowerUsageRow[];
-      const automatic = usage.filter((row) => row.data_source === "automatic");
-      setSourceMinutes(allocateWholeMinutesByLargestRemainder(
-        automatic.map((row) => ({
-          sourceId: row.power_source_id,
-          totalSeconds: Number(row.total_seconds ?? 0),
-        })),
-      ));
-      await loadDailyWorkReport(date);
+      await loadDailyWorkReport(date, targetOperatorId);
     } catch (loadError) {
       console.error("daily work survey seed failed", loadError);
       setError("تعذر تحميل الجدول أو سجلات التشغيل لهذا التاريخ.");
@@ -973,7 +1040,8 @@ function OperationsScreenContent() {
   };
 
   const saveDailySurvey = async (submit: boolean) => {
-    if (!selectedPumpId || surveySaving || activeOperation) return;
+    const targetOperatorId = profile?.role === "operator" ? profile.id : selectedReportOperatorId;
+    if (!selectedPumpId || !targetOperatorId || surveySaving || activeOperation) return;
     setSurveySaving(true);
     setError(null);
     try {
@@ -1005,6 +1073,7 @@ function OperationsScreenContent() {
         return {
           entry_type: entryType,
           schedule_entry_id: entryType === "weekly_reassigned" ? null : (entry.schedule_entry_id ?? entry.id),
+          weekly_entitlement_allocation_id: entry.weekly_entitlement_allocation_id ?? null,
           subscriber_id: entry.subscriber_id,
           sort_order: index,
           manual_minutes: manual,
@@ -1014,6 +1083,7 @@ function OperationsScreenContent() {
       });
       const { error: saveError } = await pumpOperationsRepository.saveDailyWorkReport({
         pumpId: selectedPumpId,
+        operatorId: targetOperatorId,
         workStartedAt: startIso,
         workEndedAt: endIso,
         stoppageMinutes: stops,
@@ -1029,7 +1099,7 @@ function OperationsScreenContent() {
         throw new Error("تعذر حفظ تقرير العمل اليومي. تحقق من الاتصال والبيانات.");
       }
       setNotice(submit ? "تم اعتماد تقرير العمل اليومي." : "تم حفظ مسودة تقرير العمل اليومي.");
-      await loadDailyWorkReport(surveyDate);
+      await loadDailyWorkReport(surveyDate, targetOperatorId);
       if (submit) {
         setSurveyOpen(false);
         setSurveyStep(1);
@@ -1697,6 +1767,30 @@ function OperationsScreenContent() {
             {surveyOpen ? (
               surveyLoading ? <ActivityIndicator color={colors.brand.teal} /> : (
                 <View style={styles.surveyBody}>
+                  {profile?.role === "manager" ? (
+                    <View style={{ gap: 8 }}>
+                      <Text style={styles.fieldLabel}>التقرير الخاص بالمشغّل</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                        {reportOperators.map((operator) => {
+                          const selected = operator.id === selectedReportOperatorId;
+                          return (
+                            <Pressable
+                              key={operator.id}
+                              onPress={() => {
+                                setSelectedReportOperatorId(operator.id);
+                                void reloadSurveySeed(surveyDate, operator.id);
+                              }}
+                              style={[styles.reorderButton, selected && { backgroundColor: colors.brand.teal }]}
+                            >
+                              <Text style={[styles.reorderText, selected && { color: "#ffffff" }]}>
+                                {operator.display_name}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  ) : null}
                   {surveyStep === 1 ? (
                     <>
                       <Text style={styles.surveyStep}>الخطوة 1 من 2 — وقت العمل ومصادر الكهرباء</Text>
@@ -1712,17 +1806,17 @@ function OperationsScreenContent() {
                         <View style={styles.surveyInputCell}>
                           <Text style={styles.fieldLabel}>بداية العمل</Text>
                           <TextInput value={workStartTime} onChangeText={setWorkStartTime} style={styles.surveyTimeInput}
-                            placeholder="07:00" keyboardType="numbers-and-punctuation" />
+                            editable={!sharedEnergySubmitted} placeholder="07:00" keyboardType="numbers-and-punctuation" />
                         </View>
                         <View style={styles.surveyInputCell}>
                           <Text style={styles.fieldLabel}>نهاية العمل</Text>
                           <TextInput value={workEndTime} onChangeText={setWorkEndTime} style={styles.surveyTimeInput}
-                            placeholder="15:00" keyboardType="numbers-and-punctuation" />
+                            editable={!sharedEnergySubmitted} placeholder="15:00" keyboardType="numbers-and-punctuation" />
                         </View>
                         <View style={styles.surveyInputCell}>
                           <Text style={styles.fieldLabel}>التوقفات بالدقائق</Text>
                           <TextInput value={stoppageMinutes} onChangeText={setStoppageMinutes} style={styles.surveyTimeInput}
-                            keyboardType="number-pad" placeholder="0" />
+                            editable={!sharedEnergySubmitted} keyboardType="number-pad" placeholder="0" />
                         </View>
                       </View>
                       <Text style={styles.fieldLabel}>إجمالي دقائق كل مصدر كهرباء (يشمل التشغيل المسجل آليًا)</Text>
@@ -1733,11 +1827,14 @@ function OperationsScreenContent() {
                           </Text>
                           <TextInput value={sourceMinutes[source.id] ?? ""} onChangeText={(value) =>
                             setSourceMinutes((current) => ({ ...current, [source.id]: value }))
-                          } style={styles.surveyMinutesInput} keyboardType="number-pad" placeholder="الدقائق" />
+                          } style={styles.surveyMinutesInput} editable={!sharedEnergySubmitted}
+                            keyboardType="number-pad" placeholder="الدقائق" />
                         </View>
                       ))}
                       <Text style={styles.historyMeta}>
-                        يجب أن يساوي مجموع دقائق المصادر مدة العمل بعد خصم التوقفات. عُبئت الدقائق المسجلة في التطبيق تلقائيًا ويمكنك تصحيحها.
+                        {sharedEnergySubmitted
+                          ? "تم اعتماد توزيع طاقة الغطاس لهذا اليوم، ويُستخدم نفسه في تقارير جميع المشغّلين ولا يمكن تغييره من هذه الشاشة."
+                          : "توزيع طاقة واحد مشترك للغطاس في هذا اليوم. يجب أن يساوي مجموع دقائق المصادر مدة العمل بعد خصم التوقفات."}
                       </Text>
                       <View style={styles.surveyActions}>
                         <Pressable
