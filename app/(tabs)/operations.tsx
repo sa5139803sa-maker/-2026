@@ -14,25 +14,12 @@ import { SectionTitle, StatusBadge } from "@/components/UI";
 import { Card, RoleGate } from "@/components/ui";
 import { colors, radius, spacing, typography } from "@/constants/theme";
 import { useAuth } from "@/lib/auth";
-import { supabase } from "@/lib/supabase";
-
-type Pump = { id: string; name: string; code: string; status: "active" | "paused" | "maintenance" | "inactive" };
-type Subscriber = { id: string; full_name: string; subscriber_number: number; pump_id: string; created_at: string };
-type Operation = {
-  id: string;
-  pump_id: string;
-  subscriber_id: string | null;
-  subscriber_name: string;
-  planned_minutes: number;
-  status: "running" | "paused" | "completed";
-  started_at: string;
-  paused_at: string | null;
-  pause_reason: string | null;
-  paused_seconds: number;
-  ended_at: string | null;
-  actual_seconds: number | null;
-  operation_date: string;
-};
+import {
+  pumpOperationsRepository,
+  type OperationPump as Pump,
+  type OperationSubscriber as Subscriber,
+  type PumpOperation as Operation,
+} from "@/lib/repositories/pump-operations";
 
 function localOperationDate() {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -129,11 +116,7 @@ function OperationsScreenContent() {
     }
     setLoading(true);
     setError(null);
-    const { data, error: queryError } = await supabase
-      .from("pumps")
-      .select("id,name,code,status")
-      .eq("organization_id", organizationId)
-      .order("created_at", { ascending: true });
+    const { data, error: queryError } = await pumpOperationsRepository.listPumps(organizationId);
     if (queryError) {
       console.error("operation pumps load failed", queryError);
       setPumps([]);
@@ -164,18 +147,8 @@ function OperationsScreenContent() {
     try {
       const day = localOperationDate();
       const [subscriberResult, operationResult] = await Promise.all([
-        supabase.from("subscribers")
-          .select("id,full_name,subscriber_number,pump_id,created_at")
-          .eq("organization_id", organizationId)
-          .eq("pump_id", selectedPumpId)
-          .eq("is_active", true)
-          .order("subscriber_number", { ascending: true }),
-        supabase.from("pump_operations")
-          .select("id,pump_id,subscriber_id,subscriber_name,planned_minutes,status,started_at,paused_at,pause_reason,paused_seconds,ended_at,actual_seconds,operation_date")
-          .eq("organization_id", organizationId)
-          .eq("pump_id", selectedPumpId)
-          .or(`operation_date.eq.${day},status.in.(running,paused)`)
-          .order("started_at", { ascending: false }),
+        pumpOperationsRepository.listActiveSubscribers(organizationId, selectedPumpId),
+        pumpOperationsRepository.listPumpOperations(organizationId, selectedPumpId, day),
       ]);
       if (requestId !== dataRequestSequence.current) return;
       if (subscriberResult.error || operationResult.error) {
@@ -247,12 +220,12 @@ function OperationsScreenContent() {
     setBusy(true);
     setError(null);
     setNotice(null);
-    const { error: actionError } = await supabase.rpc("start_pump_operation", {
-      p_pump_id: selectedPumpId,
-      p_subscriber_id: subscriber?.id ?? null,
-      p_subscriber_name: subscriber ? null : emergencyName.trim(),
-      p_planned_minutes: plannedMinutes,
-    });
+    const { error: actionError } = await pumpOperationsRepository.start(
+      selectedPumpId,
+      subscriber?.id ?? null,
+      subscriber ? null : emergencyName.trim(),
+      plannedMinutes,
+    );
     if (actionError) {
       console.error("pump operation start failed", actionError);
       setError(friendlyError(actionError));
@@ -272,11 +245,10 @@ function OperationsScreenContent() {
     setError(null);
     setNotice(null);
     const { error: actionError } = action === "pause_pump_operation"
-      ? await supabase.rpc(action, {
-          p_operation_id: activeOperation.id,
-          p_reason: pauseReason.trim(),
-        })
-      : await supabase.rpc(action, { p_operation_id: activeOperation.id });
+      ? await pumpOperationsRepository.pause(activeOperation.id, pauseReason.trim())
+      : action === "resume_pump_operation"
+        ? await pumpOperationsRepository.resume(activeOperation.id)
+        : await pumpOperationsRepository.complete(activeOperation.id);
     if (actionError) {
       console.error("pump operation state change failed", action, actionError);
       setError(friendlyError(actionError));
@@ -291,7 +263,7 @@ function OperationsScreenContent() {
       await loadPumpData();
     }
     setBusy(false);
-  }, [activeOperation, busy, loadPumpData]);
+  }, [activeOperation, busy, loadPumpData, pauseReason]);
 
   const autoCompletedOperationId = useRef<string | null>(null);
   useEffect(() => {
