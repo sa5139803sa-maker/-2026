@@ -83,7 +83,6 @@ AS $prepare_schedule_entry_scope$
 DECLARE
   v_organization_id uuid;
   v_pump_id uuid;
-  v_schedule_status text;
 BEGIN
   IF TG_OP = 'UPDATE'
      AND NEW.weekly_schedule_id IS DISTINCT FROM OLD.weekly_schedule_id THEN
@@ -91,8 +90,8 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
-  SELECT ws.organization_id, ws.pump_id, ws.status
-    INTO v_organization_id, v_pump_id, v_schedule_status
+  SELECT ws.organization_id, ws.pump_id
+    INTO v_organization_id, v_pump_id
   FROM public.weekly_schedules ws
   WHERE ws.id = NEW.weekly_schedule_id;
 
@@ -101,17 +100,8 @@ BEGIN
       USING ERRCODE = '23503';
   END IF;
 
-  IF v_organization_id IS DISTINCT FROM
-       (SELECT water_management_private.current_user_organization_id())
-     OR (SELECT water_management_private.current_user_role()) IS DISTINCT FROM 'manager'::public.app_role THEN
-    RAISE EXCEPTION 'Only the organization manager may edit weekly schedule entries'
-      USING ERRCODE = '42501';
-  END IF;
-
-  IF v_schedule_status <> 'draft' THEN
-    RAISE EXCEPTION 'Only draft weekly schedules may be edited'
-      USING ERRCODE = '23514';
-  END IF;
+  -- Tenant scope is always derived here. Manager-only writes and draft-only
+  -- edits are enforced by schedule_entries RLS policies, not this trigger.
 
   NEW.organization_id := v_organization_id;
   NEW.pump_id := v_pump_id;
