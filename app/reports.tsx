@@ -62,6 +62,8 @@ export default function ReportsScreen() {
   const organizationId = profile?.organization_id ?? null;
   const [pumps, setPumps] = useState<OperationPump[]>([]);
   const [selectedPumpId, setSelectedPumpId] = useState("");
+  const [reportOperators, setReportOperators] = useState<{ id: string; display_name: string }[]>([]);
+  const [selectedReportOperatorId, setSelectedReportOperatorId] = useState("");
   const [workDate, setWorkDate] = useState(() => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Hebron" }));
   const [report, setReport] = useState<DailyWorkReportDetails | null>(null);
   const [actorNames, setActorNames] = useState<Record<string, string>>({});
@@ -99,8 +101,49 @@ export default function ReportsScreen() {
     return () => { cancelled = true; };
   }, [canViewReports, organizationId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadOperators = async () => {
+      if (!organizationId || !selectedPumpId || !canViewReports || !datePattern.test(workDate)) {
+        setReportOperators([]);
+        setSelectedReportOperatorId("");
+        return;
+      }
+      let result;
+      if (profile?.role === "manager") {
+        result = await pumpOperationsRepository.listPumpOperators(organizationId, selectedPumpId);
+      } else if (profile?.role === "supervisor") {
+        result = await pumpOperationsRepository.listDailyReportOperators(organizationId, selectedPumpId, workDate);
+      } else {
+        setReportOperators(profile?.id
+          ? [{ id: profile.id, display_name: profile.display_name ?? "حساب المشغّل" }]
+          : []);
+        setSelectedReportOperatorId(profile?.id ?? "");
+        return;
+      }
+
+      if (cancelled) return;
+      if (result.error) {
+        console.error("daily report operator list failed", result.error);
+        setReportOperators([]);
+        setSelectedReportOperatorId("");
+        return;
+      }
+      const rows = (result.data ?? []) as { id: string; display_name: string }[];
+      setReportOperators(rows);
+      setSelectedReportOperatorId((current) =>
+        current && rows.some((operator) => operator.id === current)
+          ? current
+          : rows[0]?.id ?? "",
+      );
+    };
+    void loadOperators();
+    return () => { cancelled = true; };
+  }, [canViewReports, organizationId, profile?.display_name, profile?.id, profile?.role, selectedPumpId, workDate]);
+
   const loadReport = useCallback(async () => {
-    if (!canViewReports || !organizationId || !selectedPumpId || !datePattern.test(workDate)) {
+    const targetOperatorId = profile?.role === "operator" ? profile.id : selectedReportOperatorId;
+    if (!canViewReports || !organizationId || !selectedPumpId || !targetOperatorId || !datePattern.test(workDate)) {
       setReport(null);
       return;
     }
@@ -111,6 +154,7 @@ export default function ReportsScreen() {
       organizationId,
       selectedPumpId,
       workDate,
+      targetOperatorId,
     );
     if (loadError) {
       console.error("daily work report read failed", loadError);
@@ -120,7 +164,10 @@ export default function ReportsScreen() {
     } else {
       const reportData = data as DailyWorkReportDetails | null;
       setReport(reportData);
-      setNotice(data ? "تم تحميل تفاصيل تقرير اليوم." : "لا يوجد تقرير محفوظ لهذا الغطاس في التاريخ المحدد.");
+      const selectedOperatorName = reportOperators.find((operator) => operator.id === targetOperatorId)?.display_name;
+      setNotice(data
+        ? `تم تحميل تقرير ${selectedOperatorName ?? "المشغّل"}، مع عرض طاقة الغطاس المشتركة لهذا اليوم.`
+        : `لا يوجد تقرير محفوظ للمشغّل ${selectedOperatorName ?? "المحدد"} في هذا التاريخ.`);
       if (reportData) {
         const actorIds = [...new Set(reportData.events.map((event) => event.actor_id))];
         const actorsResult = await pumpOperationsRepository.getReportActors(organizationId, actorIds);
@@ -137,7 +184,7 @@ export default function ReportsScreen() {
       }
     }
     setReportLoading(false);
-  }, [canViewReports, organizationId, selectedPumpId, workDate]);
+  }, [canViewReports, organizationId, profile?.id, profile?.role, reportOperators, selectedPumpId, selectedReportOperatorId, workDate]);
 
   useEffect(() => {
     void loadReport();
@@ -279,6 +326,32 @@ export default function ReportsScreen() {
             <Text style={styles.refreshText}>عرض</Text>
           </Pressable>
         </View>
+        {profile?.role === "operator" ? (
+          <Text style={styles.smallNote}>يعرض هذا القسم تقرير المشغّل الحالي فقط.</Text>
+        ) : (
+          <>
+            <Text style={styles.fieldLabel}>المشغّل صاحب التقرير</Text>
+            {reportOperators.length === 0 ? (
+              <Text style={styles.muted}>
+                {profile?.role === "manager"
+                  ? "لا يوجد مشغّلون معيّنون لهذا الغطاس."
+                  : "لا توجد تقارير لمشغّلين على هذا الغطاس في التاريخ المحدد."}
+              </Text>
+            ) : (
+              <View style={styles.pumpChoices}>
+                {reportOperators.map((operator) => (
+                  <Pressable key={operator.id}
+                    onPress={() => setSelectedReportOperatorId(operator.id)}
+                    style={[styles.pumpChoice, selectedReportOperatorId === operator.id && styles.pumpChoiceSelected]}>
+                    <Text style={[styles.pumpChoiceText, selectedReportOperatorId === operator.id && styles.pumpChoiceTextSelected]}>
+                      {operator.display_name}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </>
+        )}
       </View>
 
       <View style={styles.card}>
@@ -331,7 +404,7 @@ export default function ReportsScreen() {
         <>
           <View style={styles.card}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>ملخص يوم العمل</Text>
+              <Text style={styles.sectionTitle}>ملخص يوم العمل · {reportOperators.find((operator) => operator.id === report.operator_id)?.display_name ?? "المشغّل"}</Text>
               <View style={[styles.statusPill, report.status === "submitted" ? styles.statusSubmitted : styles.statusDraft]}>
                 <Text style={[styles.statusText, report.status === "submitted" ? styles.statusSubmittedText : styles.statusDraftText]}>
                   {statusLabel(report.status)}
